@@ -423,3 +423,21 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .field-hint { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; }
 .field input.invalid { border-color: var(--color-danger, #d64545) !important; }
 .field input.valid { border-color: var(--color-success) !important; }
+
+/* ---------- Onglet VPO : liste dynamique ---------- */
+.vpo-row { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+.vpo-status { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-conforme, .btn-nc-vpo {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 6px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); cursor: pointer; white-space: nowrap;
+}
+.btn-conforme:hover { border-color: var(--color-success); color: var(--color-success); }
+.btn-conforme.active { background: var(--color-success); color: #10151b; border-color: var(--color-success); }
+.btn-nc-vpo:hover { border-color: var(--color-danger, #d64545); color: var(--color-danger, #d64545); }
+.btn-nc-vpo.active { background: var(--color-danger, #d64545); color: #fff; border-color: var(--color-danger, #d64545); }
+.vpo-input { flex: 1; }
+.btn-vpo-remove {
+  flex-shrink: 0; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  color: var(--color-text-muted); cursor: pointer; width: 30px; height: 30px;
+}
+.btn-vpo-remove:hover { border-color: var(--color-danger, #d64545); color: var(--color-danger, #d64545); }

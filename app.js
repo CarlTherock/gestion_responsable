@@ -56,7 +56,6 @@ const CHECKLISTS = {
       ['securite.armoiresRousseau', 'Matériel utilisé recommandé aux armoires Rousseau'],
       ['securite.materiauxTrop', 'Matériaux en trop retournés au magasin'],
     ],
-    vpo: [],
   },
   demantelement: {
     identification: [],
@@ -93,7 +92,6 @@ const CHECKLISTS = {
       ['securite.nettoyage', 'Lieux de travail nettoyés'],
       ['securite.materiauxRecuperes', 'Matériaux récupérés retournés au magasin'],
     ],
-    vpo: [],
   },
 };
 
@@ -102,7 +100,6 @@ const ATTACH_GROUPS = ['plans', 'programmation', 'systeme', 'information'];
 const GROUP_LABELS = {
   identification: 'IDENTIFICATION', plans: 'PLANS', programmation: 'PROGRAMMATION',
   systeme: 'MISES À JOUR SYSTÈME', information: 'INFORMATION', securite: 'SÉCURITÉ ET GÉNÉRAL',
-  vpo: 'VPO — VÉRIFICATION PRÉ-OPÉRATIONNELLE',
 };
 
 const state = {
@@ -231,6 +228,14 @@ async function dbPut(draft) {
   } catch (err) { return false; }
 }
 
+function generateId() {
+  return 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function newVpoItem() {
+  return { id: generateId(), texte: '', statut: null, raison: '' };
+}
+
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
@@ -246,6 +251,7 @@ function newDraft(numero, mode) {
     casesRaisons: {},
     casesFichiers: {},
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
+    vpoItems: [newVpoItem()],
     approbations: [],
     derniereSauvegardeOfficielle: null,
     meta: { source: 'pwa', modeSauvegarde: 'brouillon-local' },
@@ -260,6 +266,7 @@ function normalizeDraft(d) {
   if (!d.casesFichiers) d.casesFichiers = {};
   if (!d.files) d.files = {};
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
+  if (!d.vpoItems || !d.vpoItems.length) d.vpoItems = [newVpoItem()];
   if (!d.approbations) d.approbations = [];
   if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
   return d;
@@ -338,6 +345,11 @@ function computeProgress() {
   Object.values(groups).forEach((items) => {
     items.forEach(([name]) => { total += 1; if (isTaskDone(name)) done += 1; });
   });
+  (state.draft.vpoItems || []).forEach((item) => {
+    if (!item.texte || !item.texte.trim()) return;
+    total += 1;
+    if (item.statut === 'conforme' || item.statut === 'nc') done += 1;
+  });
   const pct = total ? (done / total) * 100 : 100;
   return { done, total, pct };
 }
@@ -359,9 +371,14 @@ function renderNonConformites() {
   Object.entries(groups).forEach(([group, items]) => {
     items.forEach(([name, label]) => {
       if (state.draft.casesCochees[name] === 'nc') {
-        rows.push({ group, label, reason: state.draft.casesRaisons[name] || '' });
+        rows.push({ section: GROUP_LABELS[group] || group, label, reason: state.draft.casesRaisons[name] || '' });
       }
     });
+  });
+  (state.draft.vpoItems || []).forEach((item) => {
+    if (item.statut === 'nc') {
+      rows.push({ section: 'VPO', label: item.texte || '(sans description)', reason: item.raison || '' });
+    }
   });
   if (!rows.length) {
     el.innerHTML = '<div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>';
@@ -369,9 +386,9 @@ function renderNonConformites() {
   }
   el.innerHTML = rows.map((r) => `
     <div class="nc-summary-item">
-      <div class="nc-section">${GROUP_LABELS[r.group] || r.group}</div>
-      <div class="nc-label">${r.label}</div>
-      ${r.reason ? `<div class="nc-reason">Raison : ${r.reason}</div>` : ''}
+      <div class="nc-section">${r.section}</div>
+      <div class="nc-label">${escapeHtml(r.label)}</div>
+      ${r.reason ? `<div class="nc-reason">Raison : ${escapeHtml(r.reason)}</div>` : ''}
     </div>`).join('');
 }
 
@@ -547,11 +564,26 @@ function buildDashboardHtml() {
 
   const ncItems = [];
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
-    if (d.casesCochees[name] === 'nc') ncItems.push({ group, label, reason: d.casesRaisons[name] || '' });
+    if (d.casesCochees[name] === 'nc') ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '' });
   }));
+  (d.vpoItems || []).forEach((it) => {
+    if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '' });
+  });
   const ncHtml = ncItems.length
-    ? `<ul class="nc-list">${ncItems.map((r) => `<li><strong>${GROUP_LABELS[r.group] || r.group}</strong> — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>`
+    ? `<ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong> — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>`
     : '<p class="empty">Aucune non-conformité relevée.</p>';
+
+  const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  const vpoRowsHtml = vpoFilled.map((it) => {
+    const badge = it.statut === 'conforme' ? '<span class="badge done">\u2705 conforme</span>'
+      : it.statut === 'nc' ? '<span class="badge nc">\ud83d\udd34 non conforme</span>'
+      : '<span class="badge pending">\u2b1c à évaluer</span>';
+    const reason = it.statut === 'nc' && it.raison ? `<div class="reason">Raison : ${escapeHtml(it.raison)}</div>` : '';
+    return `<tr><td>${escapeHtml(it.texte)}</td><td>${badge}</td><td>${reason}</td></tr>`;
+  }).join('');
+  const vpoHtml = vpoRowsHtml
+    ? `<h2>VPO — Vérification pré-opérationnelle</h2><table class="task-table"><thead><tr><th>Point vérifié</th><th>État</th><th>Détails</th></tr></thead><tbody>${vpoRowsHtml}</tbody></table>`
+    : '';
 
   const photos = d.files['mise-a-jour'] || [];
   const photosHtml = photos.length ? attachmentsHtml(photos, 'Photos/') : '<p class="empty">Aucune image de mise à jour.</p>';
@@ -602,6 +634,8 @@ function buildDashboardHtml() {
   </div>
 
   ${sectionsHtml}
+
+  ${vpoHtml}
 
   <h2>Non-conformités</h2>
   ${ncHtml}
@@ -658,6 +692,18 @@ function buildResumeText() {
     });
     lines.push('');
   });
+
+  const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  if (vpoFilled.length) {
+    lines.push('VPO — VÉRIFICATION PRÉ-OPÉRATIONNELLE');
+    lines.push('---------------------------------------');
+    vpoFilled.forEach((it) => {
+      const mark = it.statut === 'conforme' ? 'C' : it.statut === 'nc' ? '!' : ' ';
+      lines.push(`[${mark}] ${it.texte}`);
+      if (it.statut === 'nc' && it.raison) lines.push(`      \u2192 raison : ${it.raison}`);
+    });
+    lines.push('');
+  }
 
   if (d.champs.commentaires) {
     lines.push('COMMENTAIRES / NOTES');
@@ -777,6 +823,7 @@ function openWorkspace() {
   $('#fldRole').value = d.champs.employeeRole || 'technicien';
 
   renderAllChecklists();
+  renderVpoList();
   refreshAllFileLists();
   refreshApprovals();
   updateFilesCount();
@@ -965,8 +1012,92 @@ function updateChecklistProgress(group, done, total) {
 }
 
 function renderAllChecklists() {
-  ['identification', 'plans', 'programmation', 'systeme', 'information', 'securite', 'vpo'].forEach(renderChecklist);
+  ['identification', 'plans', 'programmation', 'systeme', 'information', 'securite'].forEach(renderChecklist);
 }
+
+// ---------- Onglet VPO : liste dynamique (conforme / non conforme) ----------
+function findVpoItem(id) {
+  return (state.draft.vpoItems || []).find((it) => it.id === id);
+}
+
+function renderVpoList() {
+  const container = $('#vpoList');
+  if (!container || !state.draft) return;
+  const items = state.draft.vpoItems || [];
+
+  container.innerHTML = items.map((item) => `
+    <div class="vpo-row" data-vpo-id="${item.id}">
+      <div class="vpo-status">
+        <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpo-conforme="${item.id}">Conforme</button>
+        <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpo-nc="${item.id}">Non conforme</button>
+      </div>
+      <input type="text" class="vpo-input" data-vpo-text="${item.id}" placeholder="Décrire le point vérifié…" value="${escapeHtml(item.texte || '')}">
+      <button type="button" class="btn-vpo-remove" data-vpo-remove="${item.id}" title="Retirer cette ligne">✕</button>
+    </div>
+    ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
+  `).join('');
+
+  $$('[data-vpo-text]', container).forEach((input) => {
+    input.addEventListener('input', () => {
+      const item = findVpoItem(input.dataset.vpoText);
+      if (!item) return;
+      item.texte = input.value;
+      schedulePersist();
+      updateProgressPill();
+    });
+  });
+
+  $$('[data-vpo-conforme]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const item = findVpoItem(btn.dataset.vpoConforme);
+      if (!item) return;
+      item.statut = item.statut === 'conforme' ? null : 'conforme';
+      if (item.statut !== 'nc') item.raison = '';
+      schedulePersist();
+      renderVpoList();
+      updateProgressPill();
+      renderNonConformites();
+    });
+  });
+
+  $$('[data-vpo-nc]', container).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const item = findVpoItem(btn.dataset.vpoNc);
+      if (!item) return;
+      if (item.statut === 'nc') {
+        item.statut = null;
+        item.raison = '';
+      } else {
+        const reason = await askNcReason();
+        if (reason === null) return;
+        item.statut = 'nc';
+        item.raison = reason;
+      }
+      schedulePersist();
+      renderVpoList();
+      updateProgressPill();
+      renderNonConformites();
+    });
+  });
+
+  $$('[data-vpo-remove]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.draft.vpoItems = state.draft.vpoItems.filter((it) => it.id !== btn.dataset.vpoRemove);
+      if (!state.draft.vpoItems.length) state.draft.vpoItems.push(newVpoItem());
+      schedulePersist();
+      renderVpoList();
+      updateProgressPill();
+      renderNonConformites();
+    });
+  });
+}
+
+$('#btnAddVpo').addEventListener('click', () => {
+  if (!state.draft) return;
+  state.draft.vpoItems.push(newVpoItem());
+  schedulePersist();
+  renderVpoList();
+});
 
 // ---------- Onglet Identification : liens hypertextes ----------
 function updateLinkTargets() {
