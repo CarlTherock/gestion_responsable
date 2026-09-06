@@ -525,11 +525,27 @@ function isImageFile(filename) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename);
 }
 
+function ringSvg(pct, size, stroke) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - clamped / 100);
+  const hue = Math.max(0, Math.min(120, (clamped / 100) * 120));
+  const color = `hsl(${hue}, 72%, 52%)`;
+  const fontSize = Math.round(size * 0.22);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="ring-svg">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#232b36" stroke-width="${stroke}"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
+      stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" stroke-linecap="round"
+      transform="rotate(-90 ${size / 2} ${size / 2})" style="transition: stroke-dashoffset 0.6s ease;"/>
+    <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="${fontSize}" font-weight="700" fill="#eef1f4">${Math.round(clamped)}%</text>
+  </svg>`;
+}
+
 function buildDashboardHtml() {
   const d = state.draft;
   const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement d\u2019instrumentation';
   const { done, total, pct } = computeProgress();
-  const hue = Math.max(0, Math.min(120, (pct / 100) * 120));
   const groups = CHECKLISTS[d.mode];
 
   const badgeFor = (v) => {
@@ -550,6 +566,27 @@ function buildDashboardHtml() {
     }).join('')}</div>`;
   };
 
+  // ---- Anneaux par section ----
+  const groupStats = Object.entries(groups).map(([group, items]) => {
+    if (!items.length) return null;
+    const doneCount = items.filter(([name]) => isTaskDone(name)).length;
+    return { label: GROUP_LABELS[group] || group, pct: (doneCount / items.length) * 100, count: `${doneCount}/${items.length}` };
+  }).filter(Boolean);
+
+  const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  if (vpoFilled.length) {
+    const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    groupStats.push({ label: 'VPO', pct: (vpoDone / vpoFilled.length) * 100, count: `${vpoDone}/${vpoFilled.length}` });
+  }
+
+  const ringsHtml = groupStats.map((g) => `
+    <div class="ring-card">
+      ${ringSvg(g.pct, 104, 9)}
+      <div class="ring-card-label">${escapeHtml(g.label)}</div>
+      <div class="ring-card-count">${g.count} tâches</div>
+    </div>`).join('');
+
+  // ---- Sections détaillées par tâche ----
   const sectionsHtml = Object.entries(groups).map(([group, items]) => {
     if (!items.length) return '';
     const rows = items.map(([name, label]) => {
@@ -559,21 +596,13 @@ function buildDashboardHtml() {
       const filesHtml = attachmentsHtml(files, `Documents/${name}__`);
       return `<tr><td>${escapeHtml(label)}</td><td>${badgeFor(v)}</td><td>${reason}${filesHtml}</td></tr>`;
     }).join('');
-    return `<h2>${GROUP_LABELS[group] || group}</h2><table class="task-table"><thead><tr><th>Tâche</th><th>État</th><th>Détails</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<details class="section-card" open>
+      <summary>${GROUP_LABELS[group] || group}</summary>
+      <table class="task-table"><thead><tr><th>Tâche</th><th>État</th><th>Détails</th></tr></thead><tbody>${rows}</tbody></table>
+    </details>`;
   }).join('');
 
-  const ncItems = [];
-  Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
-    if (d.casesCochees[name] === 'nc') ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '' });
-  }));
-  (d.vpoItems || []).forEach((it) => {
-    if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '' });
-  });
-  const ncHtml = ncItems.length
-    ? `<ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong> — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>`
-    : '<p class="empty">Aucune non-conformité relevée.</p>';
-
-  const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  // ---- VPO détaillé ----
   const vpoRowsHtml = vpoFilled.map((it) => {
     const badge = it.statut === 'conforme' ? '<span class="badge done">\u2705 conforme</span>'
       : it.statut === 'nc' ? '<span class="badge nc">\ud83d\udd34 non conforme</span>'
@@ -582,71 +611,181 @@ function buildDashboardHtml() {
     return `<tr><td>${escapeHtml(it.texte)}</td><td>${badge}</td><td>${reason}</td></tr>`;
   }).join('');
   const vpoHtml = vpoRowsHtml
-    ? `<h2>VPO — Vérification pré-opérationnelle</h2><table class="task-table"><thead><tr><th>Point vérifié</th><th>État</th><th>Détails</th></tr></thead><tbody>${vpoRowsHtml}</tbody></table>`
+    ? `<details class="section-card" open><summary>VPO — Vérification pré-opérationnelle</summary><table class="task-table"><thead><tr><th>Point vérifié</th><th>État</th><th>Détails</th></tr></thead><tbody>${vpoRowsHtml}</tbody></table></details>`
     : '';
 
+  // ---- Non-conformités ----
+  const ncItems = [];
+  Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
+    if (d.casesCochees[name] === 'nc') ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '' });
+  }));
+  (d.vpoItems || []).forEach((it) => {
+    if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '' });
+  });
+  const ncBanner = ncItems.length
+    ? `<div class="nc-banner nc-banner-alert">
+        <div class="nc-banner-title">\u26a0 ${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} relevée${ncItems.length > 1 ? 's' : ''}</div>
+        <ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong> — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
+      </div>`
+    : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité relevée pour ce dossier.</div>`;
+
+  // ---- Documents / photos ----
+  const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = d.files['mise-a-jour'] || [];
   const photosHtml = photos.length ? attachmentsHtml(photos, 'Photos/') : '<p class="empty">Aucune image de mise à jour.</p>';
 
+  // ---- Historique ----
   const histHtml = (d.approbations || []).length
-    ? `<table class="task-table"><thead><tr><th>Nom</th><th>Rôle</th><th>Date</th></tr></thead><tbody>${d.approbations.slice().reverse().map((a) => `<tr><td>${escapeHtml(a.nom)}</td><td>${escapeHtml(a.role)}</td><td>${new Date(a.at).toLocaleString('fr-CA')}</td></tr>`).join('')}</tbody></table>`
+    ? `<div class="timeline">${d.approbations.slice().reverse().map((a) => `
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div class="timeline-body">
+            <strong>${escapeHtml(a.nom)}</strong> <span class="timeline-role">${escapeHtml(a.role)}</span>
+            <div class="timeline-date">${new Date(a.at).toLocaleString('fr-CA')}</div>
+          </div>
+        </div>`).join('')}</div>`
     : '<p class="empty">Aucune sauvegarde officielle enregistrée.</p>';
 
-  const titre = `Dashboard \u2014 ${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}`;
+  const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}`;
   const appUrl = buildDossierUrl();
+  const statutLabel = pct >= 100 ? 'Terminé' : pct > 0 ? 'En cours' : 'Non commencé';
+  const statutClass = pct >= 100 ? 'status-done' : pct > 0 ? 'status-progress' : 'status-new';
 
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
-<title>${titre}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard \u2014 ${titre}</title>
 <style>
-  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background:#10151b; color:#e6e9ec; margin:0; padding: 32px; }
-  h1 { margin:0 0 4px; font-size: 22px; } h2 { margin-top: 32px; border-bottom:1px solid #2a323d; padding-bottom:6px; font-size:16px; }
-  .sub { color:#8a97a6; margin-bottom: 16px; font-size: 13px; }
-  .open-app-link {
-    display:inline-flex; align-items:center; gap:8px; background:#ff7a1a; color:#10151b; font-weight:600;
-    padding:10px 18px; border-radius:8px; text-decoration:none; font-size:14px; margin-bottom:24px;
+  :root {
+    --bg: #0c1016; --surface: #141a22; --surface-2: #1a212b; --border: #262e3a;
+    --text: #eef1f4; --text-muted: #8a97a6; --accent: #ff7a1a; --accent-soft: rgba(255,122,26,0.12);
   }
-  .open-app-link:hover { background:#ff8f3f; }
-  .progress-wrap { background:#1a212b; border-radius:8px; padding:16px; margin-bottom:24px; }
-  .progress-bar-bg { background:#2a323d; border-radius:6px; height:20px; overflow:hidden; }
-  .progress-bar-fill { height:100%; border-radius:6px; }
-  table.task-table { width:100%; border-collapse: collapse; margin-bottom: 8px; }
-  table.task-table th, table.task-table td { text-align:left; padding:8px 10px; border-bottom:1px solid #2a323d; vertical-align: top; font-size: 14px; }
-  .badge { padding:2px 8px; border-radius:12px; font-size:12px; white-space:nowrap; }
-  .badge.done { background:#123d24; color:#4ade80; } .badge.pending { background:#2a323d; color:#8a97a6; }
-  .badge.na { background:#3d3212; color:#eab308; } .badge.nc { background:#3d1414; color:#f87171; }
-  .reason, .reason-inline { font-size:12px; color:#8a97a6; font-style:italic; }
-  .reason { margin-top:4px; }
-  .attachments { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
-  .thumb { width:64px; height:64px; object-fit:cover; border-radius:6px; border:1px solid #2a323d; }
-  .doc-link, .thumb-link { color:#38bdf8; text-decoration:none; font-size:13px; }
-  .nc-list { color:#f87171; list-style: none; padding-left: 0; }
-  .nc-list li { margin-bottom: 6px; }
-  .empty { color:#8a97a6; font-style:italic; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, #1a1410 0%, var(--bg) 45%), var(--bg);
+    color: var(--text); margin: 0; padding: 40px 32px 64px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .hero { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+  .hero-left h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.01em; }
+  .hero-sub { color: var(--text-muted); font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .status-done { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .status-progress { background: rgba(234,179,8,0.15); color: #eab308; }
+  .status-new { background: rgba(138,151,166,0.15); color: var(--text-muted); }
+  .open-app-link {
+    display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #10151b; font-weight: 700;
+    padding: 12px 22px; border-radius: 10px; text-decoration: none; font-size: 14px; box-shadow: 0 8px 24px rgba(255,122,26,0.25);
+  }
+  .open-app-link:hover { background: #ff8f3f; }
+
+  .hero-ring { display: flex; align-items: center; gap: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 24px; }
+  .hero-ring-label { font-size: 13px; color: var(--text-muted); }
+  .hero-ring-count { font-size: 20px; font-weight: 700; margin-top: 2px; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 32px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+  .stat-card .num { font-size: 24px; font-weight: 700; }
+  .stat-card .lbl { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  h2.section-title { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 40px 0 16px; }
+
+  .rings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; margin-bottom: 8px; }
+  .ring-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .ring-card-label { font-size: 12px; font-weight: 600; text-align: center; }
+  .ring-card-count { font-size: 11px; color: var(--text-muted); font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+
+  .nc-banner { border-radius: 14px; padding: 18px 22px; margin-bottom: 8px; }
+  .nc-banner-alert { background: rgba(214,69,69,0.1); border: 1px solid rgba(214,69,69,0.4); }
+  .nc-banner-ok { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.35); color: #4ade80; font-weight: 600; }
+  .nc-banner-title { color: #f87171; font-weight: 700; margin-bottom: 8px; }
+  .nc-list { color: #f0a8a8; list-style: none; padding-left: 0; margin: 0; }
+  .nc-list li { margin-bottom: 6px; font-size: 14px; }
+  .reason-inline { color: var(--text-muted); font-style: italic; }
+
+  details.section-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px; overflow: hidden; }
+  details.section-card summary {
+    cursor: pointer; padding: 14px 20px; font-weight: 700; font-size: 14px; list-style: none;
+    display: flex; align-items: center; justify-content: space-between; background: var(--surface-2);
+  }
+  details.section-card summary::-webkit-details-marker { display: none; }
+  details.section-card summary::after { content: '\u2303'; color: var(--text-muted); transform: rotate(180deg); transition: transform 0.2s; }
+  details.section-card:not([open]) summary::after { transform: rotate(0deg); }
+  table.task-table { width: 100%; border-collapse: collapse; }
+  table.task-table th, table.task-table td { text-align: left; padding: 10px 20px; border-top: 1px solid var(--border); vertical-align: top; font-size: 13.5px; }
+  table.task-table th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; border-top: none; padding-bottom: 6px; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: 11.5px; white-space: nowrap; font-weight: 600; }
+  .badge.done { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .badge.pending { background: rgba(138,151,166,0.15); color: var(--text-muted); }
+  .badge.na { background: rgba(234,179,8,0.15); color: #eab308; }
+  .badge.nc { background: rgba(248,113,113,0.15); color: #f87171; }
+  .reason { font-size: 12px; color: var(--text-muted); font-style: italic; margin-top: 4px; }
+  .attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .thumb { width: 68px; height: 68px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); transition: transform 0.15s; }
+  .thumb:hover { transform: scale(1.06); }
+  .doc-link, .thumb-link { color: #5eb8ff; text-decoration: none; font-size: 13px; }
+
+  .timeline { display: flex; flex-direction: column; gap: 4px; }
+  .timeline-item { display: flex; gap: 14px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
+  .timeline-item:last-child { border-bottom: none; }
+  .timeline-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex-shrink: 0; }
+  .timeline-role { color: var(--text-muted); font-size: 12.5px; }
+  .timeline-date { font-size: 12px; color: var(--text-muted); font-family: ui-monospace, "SF Mono", Consolas, monospace; margin-top: 2px; }
+
+  .empty { color: var(--text-muted); font-style: italic; font-size: 14px; }
+  .comment-box { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+  .footer-note { text-align: center; color: var(--text-muted); font-size: 12px; margin-top: 48px; }
 </style></head>
 <body>
-  <h1>${titre}</h1>
-  <div class="sub">${escapeHtml(modeLabel)} \u00b7 généré le ${new Date().toLocaleString('fr-CA')}</div>
-  <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir ce dossier dans l\u2019application pour continuer</a>
-  <div class="progress-wrap">
-    <strong>${Math.round(pct)} % complété</strong> (${done} / ${total} tâches)
-    <div class="progress-bar-bg" style="margin-top:8px;"><div class="progress-bar-fill" style="width:${pct}%; background:hsl(${hue},70%,45%);"></div></div>
+  <div class="wrap">
+    <div class="hero">
+      <div class="hero-left">
+        <h1>${titre}</h1>
+        <div class="hero-sub">
+          <span class="status-pill ${statutClass}">${statutLabel}</span>
+          <span>${escapeHtml(modeLabel)}</span>
+          <span>\u00b7 généré le ${new Date().toLocaleString('fr-CA')}</span>
+        </div>
+      </div>
+      <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
+    </div>
+
+    <div class="hero-ring">
+      ${ringSvg(pct, 96, 10)}
+      <div>
+        <div class="hero-ring-label">Progression globale</div>
+        <div class="hero-ring-count">${done} / ${total} tâches</div>
+      </div>
+    </div>
+
+    <div class="stat-row" style="margin-top:24px;">
+      <div class="stat-card"><div class="num">${done}/${total}</div><div class="lbl">Tâches complétées</div></div>
+      <div class="stat-card"><div class="num">${docCount + photos.length}</div><div class="lbl">Documents / photos</div></div>
+      <div class="stat-card"><div class="num" style="color:${ncItems.length ? '#f87171' : '#4ade80'};">${ncItems.length}</div><div class="lbl">Non-conformités</div></div>
+      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+    </div>
+
+    <h2 class="section-title">Progression par section</h2>
+    <div class="rings-grid">${ringsHtml}</div>
+
+    <h2 class="section-title">Non-conformités</h2>
+    ${ncBanner}
+
+    <h2 class="section-title">Détail des tâches</h2>
+    ${sectionsHtml}
+    ${vpoHtml}
+
+    <h2 class="section-title">Images et documents de mise à jour</h2>
+    ${photosHtml}
+
+    <h2 class="section-title">Historique des sauvegardes officielles</h2>
+    ${histHtml}
+
+    ${d.champs.commentaires ? `<h2 class="section-title">Commentaires</h2><div class="comment-box">${escapeHtml(d.champs.commentaires)}</div>` : ''}
+
+    <div class="footer-note">Gestion responsable \u00b7 Dashboard généré automatiquement</div>
   </div>
-
-  ${sectionsHtml}
-
-  ${vpoHtml}
-
-  <h2>Non-conformités</h2>
-  ${ncHtml}
-
-  <h2>Images et documents de mise à jour</h2>
-  ${photosHtml}
-
-  <h2>Historique des sauvegardes officielles</h2>
-  ${histHtml}
-
-  ${d.champs.commentaires ? `<h2>Commentaires</h2><p>${escapeHtml(d.champs.commentaires).replace(/\n/g, '<br>')}</p>` : ''}
 </body></html>`;
 }
 
@@ -720,7 +859,6 @@ $('#btnOuvrirDossier').addEventListener('click', ouvrirDossier);
 $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirDossier(); });
 
 const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
-const BT_PATTERN = /^\d{3}-[A-Za-z]{2,3}-[A-Za-z0-9]{4,5}$/;
 
 $('#numLoc').addEventListener('input', () => {
   const el = $('#numLoc');
@@ -734,10 +872,8 @@ $('#numLoc').addEventListener('input', () => {
 $('#numBt').addEventListener('input', () => {
   const el = $('#numBt');
   const val = el.value.trim();
-  if (!val) { el.classList.remove('invalid', 'valid'); return; }
-  const ok = BT_PATTERN.test(val);
-  el.classList.toggle('invalid', !ok);
-  el.classList.toggle('valid', ok);
+  el.classList.toggle('valid', !!val);
+  el.classList.remove('invalid');
 });
 
 async function ouvrirDossier() {
@@ -759,10 +895,10 @@ async function ouvrirDossier() {
   }
 
   const bt = $('#numBt').value.trim().toUpperCase();
-  if (bt && !BT_PATTERN.test(bt)) {
+  if (!bt) {
     statusEl.classList.remove('hidden', 'ok', 'new');
     statusEl.classList.add('err');
-    statusEl.textContent = 'Le B.T. doit respecter le format 123-AB-4567X (3 chiffres, 2 ou 3 lettres, 4 ou 5 caractères alphanumériques), ou être laissé vide.';
+    statusEl.textContent = 'Entrez le B.T. (n\u2019importe quel contenu est accepté).';
     $('#numBt').classList.add('invalid');
     $('#numBt').focus();
     return;
@@ -1489,7 +1625,6 @@ $('#btnImportNetwork').addEventListener('click', async () => {
   const numero = $('#numLoc').value.trim().toUpperCase();
   const bt = $('#numBt').value.trim().toUpperCase();
   if (!numero) { toast('Entrez d\u2019abord le numéro de localisation.'); return; }
-  if (bt && !BT_PATTERN.test(bt)) { toast('Le format du B.T. est invalide.'); return; }
   await importFromNetworkFolder(numero, bt);
 });
 
@@ -1515,8 +1650,8 @@ $('#btnImportNetwork').addEventListener('click', async () => {
     toast('Le numéro de localisation contient des caractères invalides.', 4000);
     return;
   }
-  if (bt && !BT_PATTERN.test(bt)) {
-    toast('Le format du B.T. est invalide.', 4000);
+  if (!bt) {
+    toast('Complétez le B.T. pour continuer.', 4000);
     return;
   }
 
