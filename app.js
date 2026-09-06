@@ -537,7 +537,7 @@ function ringSvg(pct, size, stroke) {
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#232b36" stroke-width="${stroke}"/>
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
       stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" stroke-linecap="round"
-      transform="rotate(-90 ${size / 2} ${size / 2})" style="transition: stroke-dashoffset 0.6s ease;"/>
+      transform="rotate(-90 ${size / 2} ${size / 2})"/>
     <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="${fontSize}" font-weight="700" fill="#eef1f4">${Math.round(clamped)}%</text>
   </svg>`;
 }
@@ -548,11 +548,11 @@ function buildDashboardHtml() {
   const { done, total, pct } = computeProgress();
   const groups = CHECKLISTS[d.mode];
 
-  const badgeFor = (v) => {
-    if (v === true) return '<span class="badge done">\u2705 complété</span>';
-    if (v === 'na') return '<span class="badge na">\ud83d\udfe1 N/A</span>';
-    if (v === 'nc') return '<span class="badge nc">\ud83d\udd34 non conforme</span>';
-    return '<span class="badge pending">\u2b1c à faire</span>';
+  const statusDotFor = (v) => {
+    if (v === true) return { cls: 'st-done', icon: '\u2713' };
+    if (v === 'na') return { cls: 'st-na', icon: 'N/A' };
+    if (v === 'nc') return { cls: 'st-nc', icon: '!' };
+    return { cls: 'st-pending', icon: '' };
   };
 
   const attachmentsHtml = (files, baseHref) => {
@@ -566,53 +566,69 @@ function buildDashboardHtml() {
     }).join('')}</div>`;
   };
 
-  // ---- Anneaux par section ----
+  // ---- Anneaux par section (cliquables -> sautent à la section, avec flash) ----
   const groupStats = Object.entries(groups).map(([group, items]) => {
     if (!items.length) return null;
     const doneCount = items.filter(([name]) => isTaskDone(name)).length;
-    return { label: GROUP_LABELS[group] || group, pct: (doneCount / items.length) * 100, count: `${doneCount}/${items.length}` };
+    return { group, label: GROUP_LABELS[group] || group, pct: (doneCount / items.length) * 100, count: `${doneCount}/${items.length}` };
   }).filter(Boolean);
 
   const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
-  if (vpoFilled.length) {
+  const hasVpo = vpoFilled.length > 0;
+  if (hasVpo) {
     const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
-    groupStats.push({ label: 'VPO', pct: (vpoDone / vpoFilled.length) * 100, count: `${vpoDone}/${vpoFilled.length}` });
+    groupStats.push({ group: 'vpo', label: 'VPO', pct: (vpoDone / vpoFilled.length) * 100, count: `${vpoDone}/${vpoFilled.length}` });
   }
 
   const ringsHtml = groupStats.map((g) => `
-    <div class="ring-card">
+    <div class="ring-card" onclick="jumpToSection('sec-${g.group}')" role="button" tabindex="0">
       ${ringSvg(g.pct, 104, 9)}
       <div class="ring-card-label">${escapeHtml(g.label)}</div>
       <div class="ring-card-count">${g.count} tâches</div>
     </div>`).join('');
 
-  // ---- Sections détaillées par tâche ----
-  const sectionsHtml = Object.entries(groups).map(([group, items]) => {
-    if (!items.length) return '';
+  // ---- Sections détaillées par tâche (redessinées, fermées par défaut) ----
+  const taskRowHtml = (label, v, reasonRaw, filesHtml) => {
+    const st = statusDotFor(v);
+    const reason = reasonRaw ? `<div class="task-reason">Raison : ${escapeHtml(reasonRaw)}</div>` : '';
+    return `<div class="task-row ${st.cls}">
+      <div class="task-dot">${st.icon}</div>
+      <div class="task-body">
+        <div class="task-label">${escapeHtml(label)}</div>
+        ${reason}
+        ${filesHtml || ''}
+      </div>
+    </div>`;
+  };
+
+  const sectionsHtml = groupStats.map((g) => {
+    const items = groups[g.group];
     const rows = items.map(([name, label]) => {
       const v = d.casesCochees[name];
-      const reason = (v === 'na' || v === 'nc') && d.casesRaisons[name] ? `<div class="reason">Raison : ${escapeHtml(d.casesRaisons[name])}</div>` : '';
+      const reason = (v === 'na' || v === 'nc') ? d.casesRaisons[name] : '';
       const files = d.casesFichiers[name] || [];
       const filesHtml = attachmentsHtml(files, `Documents/${name}__`);
-      return `<tr><td>${escapeHtml(label)}</td><td>${badgeFor(v)}</td><td>${reason}${filesHtml}</td></tr>`;
+      return taskRowHtml(label, v, reason, filesHtml);
     }).join('');
-    return `<details class="section-card" open>
-      <summary>${GROUP_LABELS[group] || group}</summary>
-      <table class="task-table"><thead><tr><th>Tâche</th><th>État</th><th>Détails</th></tr></thead><tbody>${rows}</tbody></table>
+    return `<details class="section-card" id="sec-${g.group}">
+      <summary><span>${g.label}</span><span class="section-pct">${Math.round(g.pct)} %</span></summary>
+      <div class="task-list">${rows}</div>
     </details>`;
   }).join('');
 
   // ---- VPO détaillé ----
-  const vpoRowsHtml = vpoFilled.map((it) => {
-    const badge = it.statut === 'conforme' ? '<span class="badge done">\u2705 conforme</span>'
-      : it.statut === 'nc' ? '<span class="badge nc">\ud83d\udd34 non conforme</span>'
-      : '<span class="badge pending">\u2b1c à évaluer</span>';
-    const reason = it.statut === 'nc' && it.raison ? `<div class="reason">Raison : ${escapeHtml(it.raison)}</div>` : '';
-    return `<tr><td>${escapeHtml(it.texte)}</td><td>${badge}</td><td>${reason}</td></tr>`;
-  }).join('');
-  const vpoHtml = vpoRowsHtml
-    ? `<details class="section-card" open><summary>VPO — Vérification pré-opérationnelle</summary><table class="task-table"><thead><tr><th>Point vérifié</th><th>État</th><th>Détails</th></tr></thead><tbody>${vpoRowsHtml}</tbody></table></details>`
-    : '';
+  const vpoHtml = hasVpo ? (() => {
+    const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    const vpoPct = (vpoDone / vpoFilled.length) * 100;
+    const rows = vpoFilled.map((it) => {
+      const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
+      return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '');
+    }).join('');
+    return `<details class="section-card" id="sec-vpo">
+      <summary><span>VPO — Vérification pré-opérationnelle</span><span class="section-pct">${Math.round(vpoPct)} %</span></summary>
+      <div class="task-list">${rows}</div>
+    </details>`;
+  })() : '';
 
   // ---- Non-conformités ----
   const ncItems = [];
@@ -648,6 +664,7 @@ function buildDashboardHtml() {
 
   const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}`;
   const appUrl = buildDossierUrl();
+  const qrSvg = generateQrSvg(appUrl);
   const statutLabel = pct >= 100 ? 'Terminé' : pct > 0 ? 'En cours' : 'Non commencé';
   const statutClass = pct >= 100 ? 'status-done' : pct > 0 ? 'status-progress' : 'status-new';
 
@@ -674,15 +691,20 @@ function buildDashboardHtml() {
   .status-done { background: rgba(74,222,128,0.15); color: #4ade80; }
   .status-progress { background: rgba(234,179,8,0.15); color: #eab308; }
   .status-new { background: rgba(138,151,166,0.15); color: var(--text-muted); }
+  .hero-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .open-app-link {
     display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #10151b; font-weight: 700;
     padding: 12px 22px; border-radius: 10px; text-decoration: none; font-size: 14px; box-shadow: 0 8px 24px rgba(255,122,26,0.25);
   }
   .open-app-link:hover { background: #ff8f3f; }
+  .qr-card { background: #fff; border-radius: 12px; padding: 8px; display: flex; align-items: center; justify-content: center; }
+  .qr-card svg { display: block; width: 78px; height: 78px; }
+  .qr-wrap { display: flex; align-items: center; gap: 10px; }
+  .qr-caption { font-size: 11px; color: var(--text-muted); max-width: 90px; line-height: 1.3; }
 
-  .hero-ring { display: flex; align-items: center; gap: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 24px; }
-  .hero-ring-label { font-size: 13px; color: var(--text-muted); }
-  .hero-ring-count { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .hero-ring { display: flex; align-items: center; gap: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 24px 32px; }
+  .hero-ring-label { font-size: 14px; color: var(--text-muted); }
+  .hero-ring-count { font-size: 26px; font-weight: 700; margin-top: 4px; }
 
   .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 32px; }
   .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
@@ -692,7 +714,8 @@ function buildDashboardHtml() {
   h2.section-title { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 40px 0 16px; }
 
   .rings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; margin-bottom: 8px; }
-  .ring-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .ring-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; transition: transform 0.15s, border-color 0.15s; }
+  .ring-card:hover { transform: translateY(-3px); border-color: var(--accent); }
   .ring-card-label { font-size: 12px; font-weight: 600; text-align: center; }
   .ring-card-count { font-size: 11px; color: var(--text-muted); font-family: ui-monospace, "SF Mono", Consolas, monospace; }
 
@@ -704,27 +727,43 @@ function buildDashboardHtml() {
   .nc-list li { margin-bottom: 6px; font-size: 14px; }
   .reason-inline { color: var(--text-muted); font-style: italic; }
 
-  details.section-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px; overflow: hidden; }
+  details.section-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px; overflow: hidden; scroll-margin-top: 24px; }
   details.section-card summary {
-    cursor: pointer; padding: 14px 20px; font-weight: 700; font-size: 14px; list-style: none;
+    cursor: pointer; padding: 16px 20px; font-weight: 700; font-size: 14px; list-style: none;
     display: flex; align-items: center; justify-content: space-between; background: var(--surface-2);
+    gap: 12px;
   }
   details.section-card summary::-webkit-details-marker { display: none; }
-  details.section-card summary::after { content: '\u2303'; color: var(--text-muted); transform: rotate(180deg); transition: transform 0.2s; }
-  details.section-card:not([open]) summary::after { transform: rotate(0deg); }
-  table.task-table { width: 100%; border-collapse: collapse; }
-  table.task-table th, table.task-table td { text-align: left; padding: 10px 20px; border-top: 1px solid var(--border); vertical-align: top; font-size: 13.5px; }
-  table.task-table th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; border-top: none; padding-bottom: 6px; }
-  .badge { padding: 3px 10px; border-radius: 999px; font-size: 11.5px; white-space: nowrap; font-weight: 600; }
-  .badge.done { background: rgba(74,222,128,0.15); color: #4ade80; }
-  .badge.pending { background: rgba(138,151,166,0.15); color: var(--text-muted); }
-  .badge.na { background: rgba(234,179,8,0.15); color: #eab308; }
-  .badge.nc { background: rgba(248,113,113,0.15); color: #f87171; }
-  .reason { font-size: 12px; color: var(--text-muted); font-style: italic; margin-top: 4px; }
+  details.section-card summary::before { content: '\u25b8'; color: var(--text-muted); margin-right: 10px; transition: transform 0.2s; display: inline-block; }
+  details.section-card[open] summary::before { transform: rotate(90deg); }
+  details.section-card summary span:first-child { flex: 1; display: flex; align-items: center; }
+  .section-pct { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; color: var(--accent); background: var(--accent-soft); padding: 3px 10px; border-radius: 999px; }
+
+  @keyframes flashHighlight {
+    0%, 100% { box-shadow: none; }
+    12%, 55% { box-shadow: 0 0 0 3px var(--accent), 0 0 30px rgba(255,122,26,0.55); }
+  }
+  details.section-card.flash { animation: flashHighlight 1.7s ease; }
+
+  .task-list { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .task-row { display: flex; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); border: 1px solid transparent; }
+  .task-row.st-done { border-color: rgba(74,222,128,0.35); }
+  .task-row.st-na { border-color: rgba(234,179,8,0.35); }
+  .task-row.st-nc { border-color: rgba(248,113,113,0.4); background: rgba(214,69,69,0.06); }
+  .task-dot {
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; margin-top: 1px;
+  }
+  .st-done .task-dot { background: rgba(74,222,128,0.18); color: #4ade80; }
+  .st-na .task-dot { background: rgba(234,179,8,0.18); color: #eab308; font-size: 9px; }
+  .st-nc .task-dot { background: rgba(248,113,113,0.2); color: #f87171; }
+  .st-pending .task-dot { background: #232b36; border: 2px solid #384151; }
+  .task-label { font-size: 13.5px; font-weight: 500; }
+  .task-reason { font-size: 12px; color: var(--text-muted); font-style: italic; margin-top: 4px; }
   .attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .thumb { width: 68px; height: 68px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); transition: transform 0.15s; }
-  .thumb:hover { transform: scale(1.06); }
-  .doc-link, .thumb-link { color: #5eb8ff; text-decoration: none; font-size: 13px; }
+  .thumb { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); transition: transform 0.15s; }
+  .thumb:hover { transform: scale(1.08); }
+  .doc-link, .thumb-link { color: #5eb8ff; text-decoration: none; font-size: 12.5px; }
 
   .timeline { display: flex; flex-direction: column; gap: 4px; }
   .timeline-item { display: flex; gap: 14px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
@@ -748,11 +787,17 @@ function buildDashboardHtml() {
           <span>\u00b7 généré le ${new Date().toLocaleString('fr-CA')}</span>
         </div>
       </div>
-      <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
+      <div class="hero-actions">
+        <div class="qr-wrap">
+          <div class="qr-card">${qrSvg || ''}</div>
+          <div class="qr-caption">Scannez pour rouvrir ce dossier</div>
+        </div>
+        <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
+      </div>
     </div>
 
     <div class="hero-ring">
-      ${ringSvg(pct, 96, 10)}
+      ${ringSvg(pct, 150, 14)}
       <div>
         <div class="hero-ring-label">Progression globale</div>
         <div class="hero-ring-count">${done} / ${total} tâches</div>
@@ -766,7 +811,7 @@ function buildDashboardHtml() {
       <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
     </div>
 
-    <h2 class="section-title">Progression par section</h2>
+    <h2 class="section-title">Progression par section — cliquez pour voir le détail</h2>
     <div class="rings-grid">${ringsHtml}</div>
 
     <h2 class="section-title">Non-conformités</h2>
@@ -786,6 +831,19 @@ function buildDashboardHtml() {
 
     <div class="footer-note">Gestion responsable \u00b7 Dashboard généré automatiquement</div>
   </div>
+
+  <script>
+    function jumpToSection(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.open = true;
+      el.classList.remove('flash');
+      void el.offsetWidth;
+      el.classList.add('flash');
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(function () { el.classList.remove('flash'); }, 1700);
+    }
+  </script>
 </body></html>`;
 }
 
