@@ -1,6 +1,6 @@
 {
-  "name": "Suivi de travaux d'instrumentation",
-  "short_name": "Suivi Instr.",
+  "name": "Suivi TEI",
+  "short_name": "Suivi TEI",
   "description": "Suivi d'installation et démantèlement d'instrumentation industrielle",
   "start_url": "./index.html",
   "scope": "./",

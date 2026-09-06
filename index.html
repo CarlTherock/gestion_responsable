@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Suivi de travaux d'instrumentation</title>
+<title>Suivi TEI</title>
 <meta name="description" content="PWA de suivi d'installation et de démantèlement d'instrumentation industrielle">
 <meta name="theme-color" content="#10151b">
 <link rel="manifest" href="./manifest.json">
@@ -13,7 +13,11 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body class="blueprint-bg">
-<div id="app" data-mode="">
+<div id="splashScreen" class="splash-screen">
+  <p class="splash-title">Gestion Responsable</p>
+  <p class="splash-label">BY CTR</p>
+</div>
+<div id="app" data-mode="" hidden>
 
   <header class="topbar">
     <div class="logo">
@@ -27,7 +31,7 @@
         <circle cx="20" cy="20" r="2" fill="var(--mode-accent, var(--color-primary))"/>
       </svg>
       <div>
-        <div class="brand-name">Suivi d'instrumentation</div>
+        <div class="brand-name">Suivi TEI</div>
         <div class="brand-sub" id="brandSub">Usine — module de terrain</div>
       </div>
     </div>
@@ -65,7 +69,7 @@
           <div class="icon-wrap">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
           </div>
-          <h2>Démantèlement d'instrumentation</h2>
+          <h2>Démantèlement TEI</h2>
           <p>Retrait, débranchement et mise hors service d'un instrument existant.</p>
           <span class="go-arrow">Commencer ce dossier →</span>
         </button>
@@ -307,6 +311,11 @@
         <div id="ncSummary">
           <div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>
         </div>
+
+        <div class="panel-title" style="margin-top: var(--space-8); font-size: var(--text-base);">Ajouter une non-conformité supplémentaire</div>
+        <p class="panel-desc">Pour un point non conforme qui ne correspond à aucune tâche existante.</p>
+        <div id="ncExtraList"></div>
+        <button type="button" class="btn btn-outline" id="btnAddNcExtra" style="margin-top: var(--space-3);">+ Ajouter une ligne</button>
       </div>
 
       <!-- ---- Onglet : Commentaire ---- -->
@@ -360,6 +369,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div id="legalFooter"><b>© 2026 Carl Desrochers.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
 
 <script src="./vendor/qrcode.min.js"></script>
 <script src="./app.js"></script>

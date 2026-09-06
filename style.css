@@ -441,3 +441,58 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
   color: var(--color-text-muted); cursor: pointer; width: 30px; height: 30px;
 }
 .btn-vpo-remove:hover { border-color: var(--color-danger, #d64545); color: var(--color-danger, #d64545); }
+
+/* ---------- Mise en évidence : champ manquant / onglet Approbation ---------- */
+@keyframes fieldFlash {
+  0%, 100% { box-shadow: none; }
+  15%, 55% { box-shadow: 0 0 0 3px var(--mode-accent), 0 0 20px rgba(255,122,26,0.5); }
+}
+.flash-field { animation: fieldFlash 1.8s ease; }
+
+.tab-btn[data-tab="approbation"] { position: relative; font-weight: 700; }
+.tab-btn[data-tab="approbation"].needs-attention::after {
+  content: ''; position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--color-danger, #d64545); box-shadow: 0 0 0 2px var(--color-surface);
+  animation: pulseDot 1.6s ease-in-out infinite;
+}
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+
+/* ---------- Splash screen (Gestion Responsable — BY CTR) ---------- */
+.splash-screen {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 99999;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  background-color: #10151b; opacity: 1; transition: opacity 0.5s ease;
+}
+.splash-screen.splash-hide { opacity: 0; pointer-events: none; }
+.splash-title {
+  margin: 0; font-size: clamp(32px, 7vw, 56px); font-weight: 700; letter-spacing: 0.01em; line-height: 1.1;
+  font-family: -apple-system, "Segoe UI", Arial, sans-serif; color: #ffffff; text-align: center;
+  position: relative; padding-bottom: 20px; animation: splashPulse 1.6s ease-in-out infinite;
+}
+.splash-title::after {
+  content: ""; position: absolute; left: 22%; right: 22%; bottom: 0; height: 4px; border-radius: 99px;
+  background: var(--color-primary, #ff7a1a);
+}
+.splash-label { color: #ffffff; font-weight: 700; letter-spacing: 0.18em; font-size: 13px; margin: 0; opacity: 0.85; }
+@keyframes splashPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+
+/* ---------- Barre de copyright permanente ---------- */
+#legalFooter {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10000;
+  text-align: center; padding: 7px 12px;
+  font-family: -apple-system, "Segoe UI", Arial, sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.015em;
+  color: rgba(255,255,255,0.62);
+  background: rgba(8,11,16,0.82);
+  border-top: 1px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+#legalFooter b { color: rgba(255,255,255,0.85); font-weight: 700; }
+@media (max-width: 480px) {
+  #legalFooter { font-size: 9.5px; padding: 6px 10px; line-height: 1.3; }
+}
+body { padding-bottom: 34px; }
+.toast { bottom: calc(var(--space-6) + 34px) !important; }

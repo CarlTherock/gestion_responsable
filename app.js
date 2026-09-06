@@ -115,6 +115,20 @@ const state = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// ---------- Splash screen (3 secondes) ----------
+const splashDonePromise = new Promise((resolve) => {
+  setTimeout(() => {
+    const splash = document.getElementById('splashScreen');
+    const app = document.getElementById('app');
+    if (app) app.hidden = false;
+    if (splash) {
+      splash.classList.add('splash-hide');
+      setTimeout(() => splash.remove(), 550);
+    }
+    resolve();
+  }, 3000);
+});
+
 // ---------- Service worker ----------
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -252,6 +266,7 @@ function newDraft(numero, mode) {
     casesFichiers: {},
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     vpoItems: [newVpoItem()],
+    ncExtra: [],
     approbations: [],
     derniereSauvegardeOfficielle: null,
     meta: { source: 'pwa', modeSauvegarde: 'brouillon-local' },
@@ -267,6 +282,7 @@ function normalizeDraft(d) {
   if (!d.files) d.files = {};
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
   if (!d.vpoItems || !d.vpoItems.length) d.vpoItems = [newVpoItem()];
+  if (!d.ncExtra) d.ncExtra = [];
   if (!d.approbations) d.approbations = [];
   if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
   return d;
@@ -287,15 +303,15 @@ function selectMode(mode) {
   state.mode = mode;
   document.getElementById('app').setAttribute('data-mode', mode);
 
-  const label = mode === 'installation' ? "Suivi d'installation" : "Démantèlement d'instrumentation";
+  const label = mode === 'installation' ? "Suivi d'installation" : "Démantèlement TEI";
   $('#modeBadge').textContent = label;
   $('#modeBadge').classList.remove('hidden');
   $('#brandSub').textContent = label;
   $('#homeBtn').classList.remove('hidden');
   $('#step2Kicker').textContent = `Étape 2 · ${label}`;
   $('#step2Title').textContent = mode === 'installation'
-    ? "Localisation de l'instrument à installer"
-    : "Localisation de l'instrument à démanteler";
+    ? "Localisation de l'équipement à installer"
+    : "Localisation de l'équipement à démanteler";
 
   $('#screenChoice').classList.add('hidden');
   $('#screenDossier').classList.remove('hidden');
@@ -380,6 +396,11 @@ function renderNonConformites() {
       rows.push({ section: 'VPO', label: item.texte || '(sans description)', reason: item.raison || '' });
     }
   });
+  (state.draft.ncExtra || []).forEach((item) => {
+    if (item.texte && item.texte.trim()) {
+      rows.push({ section: 'AJOUT MANUEL', label: item.texte, reason: '' });
+    }
+  });
   if (!rows.length) {
     el.innerHTML = '<div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>';
     return;
@@ -397,8 +418,8 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     toast('La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.', 4000);
     return;
   }
-  if (!state.rootDirHandle) {
-    toast('Choisissez d\u2019abord un emplacement de sauvegarde (étape précédente).', 4000);
+  if (!state.rootDirHandle && !state.dossierDirHandle) {
+    toast('Choisissez d\u2019abord un emplacement de sauvegarde, ou importez un dossier existant.', 4500);
     return;
   }
   const { done, total, pct } = computeProgress();
@@ -415,6 +436,7 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   if (!nom) {
     toast('Entrez le nom de l\u2019employé (onglet Approbation) avant de sauvegarder.', 4500);
     selectTab('approbation');
+    flashField('#fldEmployeeName');
     return;
   }
 
@@ -426,11 +448,17 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   state.draft.champs.employeeRole = role;
 
   try {
-    await ensureLocalDossierFolder(now);
+    if (state.rootDirHandle) {
+      // Emplacement racine choisi : nouveau dossier daté (permet de voir l'évolution).
+      await ensureLocalDossierFolder(now);
+    }
+    // Sinon, state.dossierDirHandle pointe déjà vers le dossier importé — on réécrit dedans.
     await writeEverythingToDisk(now);
     await dbPut(state.draft);
     refreshApprovals();
-    toast(`Dossier ${folderName(now)} sauvegardé avec succès.`);
+    updateApprobationBadge();
+    const label = state.rootDirHandle ? folderName(now) : (state.dossierDirHandle.name || state.numero);
+    toast(`Dossier ${label} sauvegardé avec succès.`);
   } catch (err) {
     toast('Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.', 4500);
   }
@@ -440,6 +468,23 @@ function selectTab(tab) {
   $$('.tab-btn').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
   $$('.tab-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== tab));
   state.currentTab = tab;
+}
+
+function flashField(selector) {
+  const el = $(selector);
+  if (!el) return;
+  el.classList.remove('flash-field');
+  void el.offsetWidth; // force le redémarrage de l'animation
+  el.classList.add('flash-field');
+  el.focus();
+  setTimeout(() => el.classList.remove('flash-field'), 1800);
+}
+
+function updateApprobationBadge() {
+  const btn = $('.tab-btn[data-tab="approbation"]');
+  if (!btn || !state.draft) return;
+  const manque = !(state.draft.champs.employeeName || '').trim();
+  btn.classList.toggle('needs-attention', manque);
 }
 
 function folderName(date) {
@@ -544,7 +589,7 @@ function ringSvg(pct, size, stroke) {
 
 function buildDashboardHtml() {
   const d = state.draft;
-  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement d\u2019instrumentation';
+  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
   const { done, total, pct } = computeProgress();
   const groups = CHECKLISTS[d.mode];
 
@@ -637,6 +682,9 @@ function buildDashboardHtml() {
   }));
   (d.vpoItems || []).forEach((it) => {
     if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '' });
+  });
+  (d.ncExtra || []).forEach((it) => {
+    if (it.texte && it.texte.trim()) ncItems.push({ section: 'AJOUT MANUEL', label: it.texte, reason: '' });
   });
   const ncBanner = ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
@@ -849,7 +897,7 @@ function buildDashboardHtml() {
 
 function buildResumeText() {
   const d = state.draft;
-  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement d\u2019instrumentation';
+  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
   const groups = CHECKLISTS[d.mode];
   const { done, total } = computeProgress();
 
@@ -899,6 +947,14 @@ function buildResumeText() {
       lines.push(`[${mark}] ${it.texte}`);
       if (it.statut === 'nc' && it.raison) lines.push(`      \u2192 raison : ${it.raison}`);
     });
+    lines.push('');
+  }
+
+  const ncExtraFilled = (d.ncExtra || []).filter((it) => it.texte && it.texte.trim());
+  if (ncExtraFilled.length) {
+    lines.push('NON-CONFORMITÉS AJOUTÉES MANUELLEMENT');
+    lines.push('---------------------------------------');
+    ncExtraFilled.forEach((it) => lines.push(`[!] ${it.texte}`));
     lines.push('');
   }
 
@@ -1018,11 +1074,13 @@ function openWorkspace() {
 
   renderAllChecklists();
   renderVpoList();
+  renderNcExtraList();
   refreshAllFileLists();
   refreshApprovals();
   updateFilesCount();
   updateProgressPill();
   renderNonConformites();
+  updateApprobationBadge();
 }
 
 // ---------- Onglets ----------
@@ -1293,6 +1351,47 @@ $('#btnAddVpo').addEventListener('click', () => {
   renderVpoList();
 });
 
+// ---------- Onglet Non-conformité : ajout manuel de lignes ----------
+function findNcExtraItem(id) {
+  return (state.draft.ncExtra || []).find((it) => it.id === id);
+}
+
+function renderNcExtraList() {
+  const container = $('#ncExtraList');
+  if (!container || !state.draft) return;
+  const items = state.draft.ncExtra || [];
+  container.innerHTML = items.map((item) => `
+    <div class="vpo-row" data-ncextra-id="${item.id}">
+      <input type="text" class="vpo-input" data-ncextra-text="${item.id}" placeholder="Décrire la non-conformité…" value="${escapeHtml(item.texte || '')}">
+      <button type="button" class="btn-vpo-remove" data-ncextra-remove="${item.id}" title="Retirer cette ligne">✕</button>
+    </div>`).join('');
+
+  $$('[data-ncextra-text]', container).forEach((input) => {
+    input.addEventListener('input', () => {
+      const item = findNcExtraItem(input.dataset.ncextraText);
+      if (!item) return;
+      item.texte = input.value;
+      schedulePersist();
+      renderNonConformites();
+    });
+  });
+  $$('[data-ncextra-remove]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.draft.ncExtra = state.draft.ncExtra.filter((it) => it.id !== btn.dataset.ncextraRemove);
+      schedulePersist();
+      renderNcExtraList();
+      renderNonConformites();
+    });
+  });
+}
+
+$('#btnAddNcExtra').addEventListener('click', () => {
+  if (!state.draft) return;
+  state.draft.ncExtra.push({ id: generateId(), texte: '' });
+  schedulePersist();
+  renderNcExtraList();
+});
+
 // ---------- Onglet Identification : liens hypertextes ----------
 function updateLinkTargets() {
   $$('[data-link]').forEach((input) => {
@@ -1334,6 +1433,7 @@ Object.keys(GENERAL_FIELD_MAP).forEach((id) => {
     if (!state.draft) return;
     state.draft.champs[GENERAL_FIELD_MAP[id]] = el.value;
     schedulePersist();
+    if (id === 'fldEmployeeName') updateApprobationBadge();
   });
 });
 
@@ -1613,18 +1713,6 @@ $('#btnShowQr').addEventListener('click', () => {
 });
 
 // ---------- Import depuis un dossier réseau existant (vraie synchronisation) ----------
-async function findLatestNetworkFolder(rootHandle, numero, bt) {
-  const prefix = bt ? `${numero} (${bt}) - ` : `${numero} - `;
-  const candidates = [];
-  for await (const [name, handle] of rootHandle.entries()) {
-    if (handle.kind === 'directory' && name.startsWith(prefix)) candidates.push(name);
-  }
-  if (!candidates.length) return null;
-  candidates.sort(); // les noms se terminent par AAAA-MM-JJ, le tri texte suffit
-  const latestName = candidates[candidates.length - 1];
-  return rootHandle.getDirectoryHandle(latestName, { create: false });
-}
-
 async function readBlobFromDir(dirHandle, filename) {
   try {
     const fh = await dirHandle.getFileHandle(filename);
@@ -1632,21 +1720,17 @@ async function readBlobFromDir(dirHandle, filename) {
   } catch (err) { return null; }
 }
 
-async function importFromNetworkFolder(numero, bt) {
+// L'utilisateur choisit directement le dossier (celui qu'il préfère) dans le sélecteur ;
+// les champs Numéro de localisation et B.T. sont ensuite remplis automatiquement à
+// partir de ce qui est lu dans suivi.json. Rien n'ouvre l'espace de travail ici —
+// c'est le bouton « Continuer » qui le fait, une fois les champs vérifiés.
+async function importDossierFromPickedFolder(expectedNumero) {
   if (!FS_ACCESS_SUPPORTED) {
     toast('L\u2019import réseau nécessite Chrome ou Edge sur ordinateur.', 4000);
     return false;
   }
   try {
-    const root = await window.showDirectoryPicker({ mode: 'readwrite' });
-    state.rootDirHandle = root;
-
-    const folder = await findLatestNetworkFolder(root, numero, bt);
-    if (!folder) {
-      toast(`Aucun dossier réseau trouvé pour ${numero}${bt ? ' (' + bt + ')' : ''} à cet emplacement.`, 5000);
-      return false;
-    }
-
+    const folder = await window.showDirectoryPicker({ mode: 'readwrite' });
     const jsonFile = await (await folder.getFileHandle('suivi.json')).getFile();
     const draft = normalizeDraft(JSON.parse(await jsonFile.text()));
 
@@ -1669,27 +1753,36 @@ async function importFromNetworkFolder(numero, bt) {
       }
     }
 
+    if (expectedNumero && draft.localisation !== expectedNumero) {
+      toast(`Attention : ce dossier correspond à ${draft.localisation}, pas à ${expectedNumero}.`, 5500);
+    }
+
+    // Remplit les champs visibles de l'écran d'identification
+    $('#numLoc').value = draft.localisation;
+    $('#numBt').value = draft.champs.bt || '';
+    $('#numLoc').dispatchEvent(new Event('input'));
+    $('#numBt').dispatchEvent(new Event('input'));
+
     state.draft = draft;
     state.numero = draft.localisation;
     state.isNewDraft = false;
-    state.dossierDirHandle = folder;
+    state.dossierDirHandle = folder; // les futures sauvegardes réécrivent ce même dossier
     await dbPut(state.draft);
-    toast(`Dossier ${state.numero} importé depuis le réseau — vous reprenez où c\u2019était rendu.`, 4500);
-    openWorkspace();
+
+    const statusEl = $('#dossierStatus');
+    statusEl.classList.remove('hidden', 'err', 'new');
+    statusEl.classList.add('ok');
+    statusEl.textContent = `Dossier importé : ${draft.localisation}${draft.champs.bt ? ' (' + draft.champs.bt + ')' : ''}. Cliquez sur Continuer pour l\u2019ouvrir.`;
+    toast(`Dossier ${state.numero} importé avec succès.`, 4000);
     return true;
   } catch (err) {
     if (err && err.name === 'AbortError') return false;
-    toast('Impossible d\u2019importer le dossier depuis cet emplacement.', 4500);
+    toast('Ce dossier ne contient pas de fichier suivi.json valide.', 4500);
     return false;
   }
 }
 
-$('#btnImportNetwork').addEventListener('click', async () => {
-  const numero = $('#numLoc').value.trim().toUpperCase();
-  const bt = $('#numBt').value.trim().toUpperCase();
-  if (!numero) { toast('Entrez d\u2019abord le numéro de localisation.'); return; }
-  await importFromNetworkFolder(numero, bt);
-});
+$('#btnImportNetwork').addEventListener('click', () => importDossierFromPickedFolder());
 
 // ---------- Reprise automatique via un lien/QR scanné ----------
 (async function autoResumeFromUrl() {
@@ -1726,13 +1819,15 @@ $('#btnImportNetwork').addEventListener('click', async () => {
   }
 
   // Nouvel appareil : proposer d'importer les vraies données depuis le dossier réseau.
+  await splashDonePromise;
   const confirmed = await showModal({
     title: 'Reprendre ce dossier',
-    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucun brouillon local n\u2019existe sur cet appareil pour <strong>${numero}${bt ? ' (' + bt + ')' : ''}</strong>. Importer les données (cases cochées, documents, photos) depuis le dossier réseau où il a été sauvegardé ?</p>`,
-    confirmLabel: 'Importer depuis le réseau',
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucun brouillon local n\u2019existe sur cet appareil pour <strong>${numero}${bt ? ' (' + bt + ')' : ''}</strong>. Choisissez le dossier réseau où il a été sauvegardé pour l\u2019importer.</p>`,
+    confirmLabel: 'Choisir le dossier',
   });
   if (confirmed) {
-    await importFromNetworkFolder(numero, bt);
+    const ok = await importDossierFromPickedFolder(numero);
+    if (ok) ouvrirDossier();
   } else {
     toast('Cliquez sur Continuer pour démarrer un nouveau brouillon local.', 4500);
   }

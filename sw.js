@@ -1,4 +1,4 @@
-const CACHE = 'suivi-instr-v3';
+const CACHE = 'suivi-instr-v4';
 const CORE = ['./index.html', './base.css', './style.css', './app.js', './manifest.json', './vendor/qrcode.min.js'];
 
 self.addEventListener('install', (e) => {
