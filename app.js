@@ -260,44 +260,47 @@ $('#btnChooseFolder').addEventListener('click', async () => {
 });
 
 $('#btnSaveFolder').addEventListener('click', async () => {
-  const statusEl = $('#folderStatus');
-  if (!state.numero && !$('#numLoc').value.trim()) {
-    statusEl.classList.remove('ok'); statusEl.classList.add('err');
-    statusEl.textContent = 'Entrez d\u2019abord le numéro de localisation.';
-    return;
-  }
   if (!FS_ACCESS_SUPPORTED) {
-    statusEl.classList.remove('ok'); statusEl.classList.add('err');
-    statusEl.textContent = 'La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.';
+    toast('La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.', 4000);
     return;
   }
   if (!state.rootDirHandle) {
-    statusEl.classList.remove('ok'); statusEl.classList.add('err');
-    statusEl.textContent = 'Aucun emplacement de sauvegarde sélectionné.';
+    toast('Choisissez d\u2019abord un emplacement de sauvegarde (étape précédente).', 4000);
     return;
   }
-  if (!state.numero) await ouvrirDossier();
   try {
     await ensureLocalDossierFolder();
     await writeTrackingFiles();
-    statusEl.classList.remove('err'); statusEl.classList.add('ok');
-    statusEl.textContent = `Dossier ${state.numero} sauvegardé avec succès.`;
-    toast(`Dossier ${state.numero} sauvegardé avec succès.`);
+    toast(`Dossier ${folderName()} sauvegardé avec succès.`);
   } catch (err) {
-    statusEl.classList.remove('ok'); statusEl.classList.add('err');
-    statusEl.textContent = 'Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.';
+    toast('Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.', 4500);
   }
 });
 
+function folderName() {
+  const bt = (state.draft && state.draft.champs.bt) || '';
+  return bt ? `${state.numero} (${bt})` : state.numero;
+}
+
 async function ensureLocalDossierFolder() {
   if (!state.rootDirHandle || !state.numero) return;
-  state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(state.numero, { create: true });
+  state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(folderName(), { create: true });
   for (const sub of ['Documents', 'Photos', 'Exports']) {
     await state.dossierDirHandle.getDirectoryHandle(sub, { create: true });
   }
   const pill = $('#wsFolderPill');
-  if (pill) pill.textContent = `📁 lié : ${state.rootDirHandle.name}/${state.numero}`;
+  if (pill) pill.textContent = `📁 lié : ${state.rootDirHandle.name}/${folderName()}`;
 }
+
+// Pré-remplit le B.T. si un brouillon existe déjà pour ce numéro
+$('#numLoc').addEventListener('blur', async () => {
+  const numero = $('#numLoc').value.trim().toUpperCase();
+  if (!numero) return;
+  const existing = await dbGet(numero);
+  if (existing && existing.champs && existing.champs.bt) {
+    $('#numBt').value = existing.champs.bt;
+  }
+});
 
 async function writeFileToLocalFolder(onglet, blob, filename) {
   if (!state.dossierDirHandle) return false;
@@ -396,12 +399,15 @@ async function ouvrirDossier() {
   statusEl.classList.remove('hidden', 'ok', 'err');
   statusEl.textContent = 'Ouverture du dossier local…';
 
+  const bt = $('#numBt').value.trim();
   const existing = await dbGet(numero);
   if (existing) {
     state.draft = existing;
     state.isNewDraft = false;
+    if (bt) state.draft.champs.bt = bt;
   } else {
     state.draft = newDraft(numero, state.mode);
+    state.draft.champs.bt = bt;
     state.isNewDraft = true;
     await dbPut(state.draft);
   }

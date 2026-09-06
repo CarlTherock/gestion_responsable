@@ -81,25 +81,30 @@
       </div>
 
       <div class="dossier-panel">
+        <h3>Emplacement de sauvegarde du dossier</h3>
+        <p class="panel-desc" style="margin-bottom: var(--space-3);">Choisissez l'endroit où vous voulez sauvegarder le dossier de cette localisation. Vous pouvez sélectionner un dossier sur votre ordinateur ou un lecteur réseau déjà accessible dans Windows.</p>
+        <div class="field-row">
+          <button class="btn btn-outline" id="btnChooseFolder">📁 Choisir l'emplacement de sauvegarde</button>
+        </div>
+        <div class="status-line" id="folderStatus" role="status" aria-live="polite" style="margin-top: var(--space-3);">Aucun emplacement de sauvegarde sélectionné.</div>
+      </div>
+
+      <div class="dossier-panel" style="margin-top: var(--space-4);">
         <h3>Identification du dossier</h3>
         <div class="field-row">
           <div class="field">
             <label for="numLoc">Numéro de localisation</label>
             <input type="text" id="numLoc" placeholder="ex. 12-FT-4407">
           </div>
+        </div>
+        <div class="field-row" style="margin-top: var(--space-4);">
+          <div class="field">
+            <label for="numBt">B.T.</label>
+            <input type="text" id="numBt" placeholder="ex. 24-1234">
+          </div>
           <button class="btn btn-primary" id="btnOuvrirDossier">Continuer →</button>
         </div>
         <div class="status-line hidden" id="dossierStatus"></div>
-      </div>
-
-      <div class="dossier-panel" style="margin-top: var(--space-4);">
-        <h3>Emplacement de sauvegarde du dossier</h3>
-        <p class="panel-desc" style="margin-bottom: var(--space-3);">Choisissez l'endroit où vous voulez sauvegarder le dossier de cette localisation. Vous pouvez sélectionner un dossier sur votre ordinateur ou un lecteur réseau déjà accessible dans Windows.</p>
-        <div class="field-row">
-          <button class="btn btn-outline" id="btnChooseFolder">📁 Choisir l'emplacement de sauvegarde</button>
-          <button class="btn btn-primary" id="btnSaveFolder">💾 Sauvegarder le dossier</button>
-        </div>
-        <div class="status-line" id="folderStatus" role="status" aria-live="polite" style="margin-top: var(--space-3);">Aucun emplacement de sauvegarde sélectionné.</div>
       </div>
     </section>
 
@@ -114,6 +119,7 @@
         <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">📁 brouillon local seulement</span>
         <div class="topbar-spacer"></div>
         <span class="tag-pill" id="wsFilesCount">0 document(s)</span>
+        <button class="btn btn-primary" id="btnSaveFolder">💾 Sauvegarder le dossier</button>
       </div>
 
       <nav class="tabs-nav" role="tablist" aria-label="Sections du dossier">
