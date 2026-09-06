@@ -474,6 +474,7 @@ function selectTab(tab) {
   $$('.tab-btn').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
   $$('.tab-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== tab));
   state.currentTab = tab;
+  window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
 function flashField(selector) {
@@ -843,7 +844,8 @@ function buildDashboardHtml() {
 
   .empty { color: var(--text-muted); font-style: italic; font-size: 14px; }
   .comment-box { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
-  .footer-note { text-align: center; color: var(--text-muted); font-size: 12px; margin-top: 48px; }
+  .footer-note { text-align: center; color: var(--text-muted); font-size: 12px; margin-top: 48px; padding-bottom: 8px; }
+  .footer-note b { color: rgba(255,255,255,0.75); }
 </style></head>
 <body>
   <div class="wrap">
@@ -898,7 +900,7 @@ function buildDashboardHtml() {
 
     ${d.champs.commentaires ? `<h2 class="section-title">Commentaires</h2><div class="comment-box">${escapeHtml(d.champs.commentaires)}</div>` : ''}
 
-    <div class="footer-note">Gestion responsable \u00b7 Dashboard généré automatiquement</div>
+    <div class="footer-note"><b>\u00a9 2026 Carl Desrochers.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
   </div>
 
   <script>
@@ -1069,6 +1071,7 @@ function openWorkspace() {
   const d = state.draft;
   $('#screenDossier').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
+  window.scrollTo({ top: 0, behavior: 'auto' });
 
   $('#wsNum').textContent = state.numero + (d.champs.bt ? ` (${d.champs.bt})` : '');
   $('#wsMeta').textContent = `${d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement'} · créé le ${new Date(d.creeLe).toLocaleDateString('fr-CA')}`;
