@@ -673,7 +673,17 @@ function buildResumeText() {
 $('#btnOuvrirDossier').addEventListener('click', ouvrirDossier);
 $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirDossier(); });
 
+const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
 const BT_PATTERN = /^\d{3}-[A-Za-z]{2,3}-[A-Za-z0-9]{4,5}$/;
+
+$('#numLoc').addEventListener('input', () => {
+  const el = $('#numLoc');
+  const val = el.value.trim();
+  if (!val) { el.classList.remove('invalid', 'valid'); return; }
+  const ok = NUMERO_PATTERN.test(val);
+  el.classList.toggle('invalid', !ok);
+  el.classList.toggle('valid', ok);
+});
 
 $('#numBt').addEventListener('input', () => {
   const el = $('#numBt');
@@ -693,12 +703,20 @@ async function ouvrirDossier() {
     statusEl.textContent = 'Entrez d\u2019abord le numéro de localisation.';
     return;
   }
-
-  const bt = $('#numBt').value.trim().toUpperCase();
-  if (!BT_PATTERN.test(bt)) {
+  if (!NUMERO_PATTERN.test(numero)) {
     statusEl.classList.remove('hidden', 'ok', 'new');
     statusEl.classList.add('err');
-    statusEl.textContent = 'Le B.T. doit respecter le format 123-AB-4567X (3 chiffres, 2 ou 3 lettres, 4 ou 5 caractères alphanumériques).';
+    statusEl.textContent = 'Le numéro de localisation ne peut contenir que des lettres, des chiffres et des tirets.';
+    $('#numLoc').classList.add('invalid');
+    $('#numLoc').focus();
+    return;
+  }
+
+  const bt = $('#numBt').value.trim().toUpperCase();
+  if (bt && !BT_PATTERN.test(bt)) {
+    statusEl.classList.remove('hidden', 'ok', 'new');
+    statusEl.classList.add('err');
+    statusEl.textContent = 'Le B.T. doit respecter le format 123-AB-4567X (3 chiffres, 2 ou 3 lettres, 4 ou 5 caractères alphanumériques), ou être laissé vide.';
     $('#numBt').classList.add('invalid');
     $('#numBt').focus();
     return;
@@ -1357,12 +1375,17 @@ $('#btnImportNetwork').addEventListener('click', async () => {
   $('#numLoc').value = numero;
   $('#numBt').value = bt;
   if (bt) $('#numBt').dispatchEvent(new Event('input'));
+  $('#numLoc').dispatchEvent(new Event('input'));
 
   // Nettoyer l'URL pour ne pas reprendre automatiquement à chaque rechargement futur
   history.replaceState({}, '', location.pathname);
 
-  if (!BT_PATTERN.test(bt)) {
-    toast('Complétez le B.T. pour continuer.', 4000);
+  if (!NUMERO_PATTERN.test(numero)) {
+    toast('Le numéro de localisation contient des caractères invalides.', 4000);
+    return;
+  }
+  if (bt && !BT_PATTERN.test(bt)) {
+    toast('Le format du B.T. est invalide.', 4000);
     return;
   }
 
