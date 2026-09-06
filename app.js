@@ -1538,10 +1538,15 @@ $('#btnShowQr').addEventListener('click', () => {
   if (!state.numero || !state.draft) { toast('Ouvrez d\u2019abord un dossier.'); return; }
   const url = buildDossierUrl();
   const svg = generateQrSvg(url);
+  const off = state.draft.derniereSauvegardeOfficielle;
+  const statusHtml = off
+    ? `<p style="font-size:var(--text-sm);color:var(--color-success);">\u2705 Ce dossier a été sauvegardé sur le réseau le ${new Date(off.at).toLocaleString('fr-CA')}. Ce code pointe vers cette sauvegarde.</p>`
+    : `<p style="font-size:var(--text-sm);color:var(--color-warning, #eab308);">\u26a0 Ce dossier n\u2019a pas encore été sauvegardé sur le réseau (bouton \u00ab Sauvegarder le dossier \u00bb). Ce code permet de reprendre sur cet appareil, mais ne trouvera rien sur un autre appareil tant qu\u2019une sauvegarde officielle n\u2019aura pas été faite.</p>`;
   showModal({
     title: 'Code QR du dossier',
     bodyHtml: `
-      <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Scannez ce code pour rouvrir directement ce dossier sur cet appareil, sans retaper le numéro et le B.T.</p>
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Scannez ce code pour rouvrir directement ce dossier — sur cet appareil instantanément, ou sur un autre appareil en important la dernière sauvegarde réseau.</p>
+      ${statusHtml}
       <div style="background:#fff;padding:12px;border-radius:8px;display:flex;justify-content:center;margin:var(--space-3) 0;">${svg || '<span style="color:#900;">Erreur de génération du code QR.</span>'}</div>
       <input type="text" readonly value="${url}" onclick="this.select()" style="font-family:var(--font-mono);font-size:11px;">
     `,
