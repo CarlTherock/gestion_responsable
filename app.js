@@ -964,7 +964,7 @@ function buildDashboardHtml() {
 
     ${d.champs.commentaires ? `<h2 class="section-title">Commentaires</h2><div class="comment-box">${escapeHtml(d.champs.commentaires)}</div>` : ''}
 
-    <div class="footer-note"><b>\u00a9 2026 Carl Desrochers.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
+    <div class="footer-note"><b>\u00a9 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
   </div>
 
   <script>
