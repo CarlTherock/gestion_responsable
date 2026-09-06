@@ -106,6 +106,10 @@
           <button class="btn btn-primary" id="btnOuvrirDossier">Continuer →</button>
         </div>
         <div class="status-line hidden" id="dossierStatus"></div>
+        <div class="field-row" style="margin-top: var(--space-4);">
+          <button class="btn btn-outline" id="btnImportNetwork">📥 Importer un dossier existant depuis le réseau</button>
+        </div>
+        <p class="panel-desc" style="font-size: var(--text-xs); margin-top: var(--space-2);">Reprend un dossier déjà sauvegardé (sur un autre appareil ou après un changement de poste) en relisant ses données directement dans le dossier réseau où il a été enregistré.</p>
       </div>
     </section>
 
@@ -121,6 +125,7 @@
         <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">📁 brouillon local seulement</span>
         <div class="topbar-spacer"></div>
         <span class="tag-pill" id="wsFilesCount">0 document(s)</span>
+        <button class="btn btn-outline" id="btnShowQr" title="Générer un code QR pour retrouver ce dossier">📱 QR</button>
         <button class="btn btn-primary" id="btnSaveFolder">💾 Sauvegarder le dossier</button>
       </div>
 
@@ -355,6 +360,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="./vendor/qrcode.min.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

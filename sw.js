@@ -1,5 +1,5 @@
-const CACHE = 'suivi-instr-v2';
-const CORE = ['./index.html', './base.css', './style.css', './app.js', './manifest.json'];
+const CACHE = 'suivi-instr-v3';
+const CORE = ['./index.html', './base.css', './style.css', './app.js', './manifest.json', './vendor/qrcode.min.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)));

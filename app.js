@@ -276,23 +276,27 @@ function schedulePersist() {
 }
 
 // ---------- Étape 1 : choix du type ----------
+function selectMode(mode) {
+  state.mode = mode;
+  document.getElementById('app').setAttribute('data-mode', mode);
+
+  const label = mode === 'installation' ? "Suivi d'installation" : "Démantèlement d'instrumentation";
+  $('#modeBadge').textContent = label;
+  $('#modeBadge').classList.remove('hidden');
+  $('#brandSub').textContent = label;
+  $('#homeBtn').classList.remove('hidden');
+  $('#step2Kicker').textContent = `Étape 2 · ${label}`;
+  $('#step2Title').textContent = mode === 'installation'
+    ? "Localisation de l'instrument à installer"
+    : "Localisation de l'instrument à démanteler";
+
+  $('#screenChoice').classList.add('hidden');
+  $('#screenDossier').classList.remove('hidden');
+}
+
 $$('.choice-card').forEach((card) => {
   card.addEventListener('click', () => {
-    state.mode = card.dataset.choice;
-    document.getElementById('app').setAttribute('data-mode', state.mode);
-
-    const label = state.mode === 'installation' ? "Suivi d'installation" : "Démantèlement d'instrumentation";
-    $('#modeBadge').textContent = label;
-    $('#modeBadge').classList.remove('hidden');
-    $('#brandSub').textContent = label;
-    $('#homeBtn').classList.remove('hidden');
-    $('#step2Kicker').textContent = `Étape 2 · ${label}`;
-    $('#step2Title').textContent = state.mode === 'installation'
-      ? "Localisation de l'instrument à installer"
-      : "Localisation de l'instrument à démanteler";
-
-    $('#screenChoice').classList.add('hidden');
-    $('#screenDossier').classList.remove('hidden');
+    selectMode(card.dataset.choice);
     $('#numLoc').focus();
   });
 });
@@ -557,6 +561,7 @@ function buildDashboardHtml() {
     : '<p class="empty">Aucune sauvegarde officielle enregistrée.</p>';
 
   const titre = `Dashboard \u2014 ${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}`;
+  const appUrl = buildDossierUrl();
 
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
@@ -564,7 +569,12 @@ function buildDashboardHtml() {
 <style>
   body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background:#10151b; color:#e6e9ec; margin:0; padding: 32px; }
   h1 { margin:0 0 4px; font-size: 22px; } h2 { margin-top: 32px; border-bottom:1px solid #2a323d; padding-bottom:6px; font-size:16px; }
-  .sub { color:#8a97a6; margin-bottom: 24px; font-size: 13px; }
+  .sub { color:#8a97a6; margin-bottom: 16px; font-size: 13px; }
+  .open-app-link {
+    display:inline-flex; align-items:center; gap:8px; background:#ff7a1a; color:#10151b; font-weight:600;
+    padding:10px 18px; border-radius:8px; text-decoration:none; font-size:14px; margin-bottom:24px;
+  }
+  .open-app-link:hover { background:#ff8f3f; }
   .progress-wrap { background:#1a212b; border-radius:8px; padding:16px; margin-bottom:24px; }
   .progress-bar-bg { background:#2a323d; border-radius:6px; height:20px; overflow:hidden; }
   .progress-bar-fill { height:100%; border-radius:6px; }
@@ -585,6 +595,7 @@ function buildDashboardHtml() {
 <body>
   <h1>${titre}</h1>
   <div class="sub">${escapeHtml(modeLabel)} \u00b7 généré le ${new Date().toLocaleString('fr-CA')}</div>
+  <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir ce dossier dans l\u2019application pour continuer</a>
   <div class="progress-wrap">
     <strong>${Math.round(pct)} % complété</strong> (${done} / ${total} tâches)
     <div class="progress-bar-bg" style="margin-top:8px;"><div class="progress-bar-fill" style="width:${pct}%; background:hsl(${hue},70%,45%);"></div></div>
@@ -1211,3 +1222,166 @@ function refreshApprovals() {
       <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
     </div>`).join('');
 }
+
+// ---------- Code QR : retrouver rapidement ce dossier ----------
+function buildDossierUrl() {
+  const base = location.origin + location.pathname;
+  const params = new URLSearchParams({
+    mode: state.draft.mode,
+    numero: state.numero,
+    bt: state.draft.champs.bt || '',
+  });
+  return `${base}?${params.toString()}`;
+}
+
+function generateQrSvg(text) {
+  if (typeof qrcode === 'undefined') return '';
+  for (let type = 4; type <= 40; type++) {
+    try {
+      const qr = qrcode(type, 'M');
+      qr.addData(text);
+      qr.make();
+      return qr.createSvgTag(4, 4);
+    } catch (err) {
+      // ce type est trop petit pour la donnée — on essaie le suivant
+    }
+  }
+  return '';
+}
+
+$('#btnShowQr').addEventListener('click', () => {
+  if (!state.numero || !state.draft) { toast('Ouvrez d\u2019abord un dossier.'); return; }
+  const url = buildDossierUrl();
+  const svg = generateQrSvg(url);
+  showModal({
+    title: 'Code QR du dossier',
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Scannez ce code pour rouvrir directement ce dossier sur cet appareil, sans retaper le numéro et le B.T.</p>
+      <div style="background:#fff;padding:12px;border-radius:8px;display:flex;justify-content:center;margin:var(--space-3) 0;">${svg || '<span style="color:#900;">Erreur de génération du code QR.</span>'}</div>
+      <input type="text" readonly value="${url}" onclick="this.select()" style="font-family:var(--font-mono);font-size:11px;">
+    `,
+    confirmLabel: 'Fermer',
+  });
+});
+
+// ---------- Import depuis un dossier réseau existant (vraie synchronisation) ----------
+async function findLatestNetworkFolder(rootHandle, numero, bt) {
+  const prefix = bt ? `${numero} (${bt}) - ` : `${numero} - `;
+  const candidates = [];
+  for await (const [name, handle] of rootHandle.entries()) {
+    if (handle.kind === 'directory' && name.startsWith(prefix)) candidates.push(name);
+  }
+  if (!candidates.length) return null;
+  candidates.sort(); // les noms se terminent par AAAA-MM-JJ, le tri texte suffit
+  const latestName = candidates[candidates.length - 1];
+  return rootHandle.getDirectoryHandle(latestName, { create: false });
+}
+
+async function readBlobFromDir(dirHandle, filename) {
+  try {
+    const fh = await dirHandle.getFileHandle(filename);
+    return await fh.getFile();
+  } catch (err) { return null; }
+}
+
+async function importFromNetworkFolder(numero, bt) {
+  if (!FS_ACCESS_SUPPORTED) {
+    toast('L\u2019import réseau nécessite Chrome ou Edge sur ordinateur.', 4000);
+    return false;
+  }
+  try {
+    const root = await window.showDirectoryPicker({ mode: 'readwrite' });
+    state.rootDirHandle = root;
+
+    const folder = await findLatestNetworkFolder(root, numero, bt);
+    if (!folder) {
+      toast(`Aucun dossier réseau trouvé pour ${numero}${bt ? ' (' + bt + ')' : ''} à cet emplacement.`, 5000);
+      return false;
+    }
+
+    const jsonFile = await (await folder.getFileHandle('suivi.json')).getFile();
+    const draft = normalizeDraft(JSON.parse(await jsonFile.text()));
+
+    const docsDir = await folder.getDirectoryHandle('Documents', { create: false }).catch(() => null);
+    if (docsDir) {
+      for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
+        for (const f of files) {
+          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const blob = await readBlobFromDir(docsDir, `${name}__${safe}`);
+          if (blob) f.blob = blob;
+        }
+      }
+    }
+    const photosDir = await folder.getDirectoryHandle('Photos', { create: false }).catch(() => null);
+    if (photosDir) {
+      for (const f of (draft.files['mise-a-jour'] || [])) {
+        const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+        const blob = await readBlobFromDir(photosDir, safe);
+        if (blob) f.blob = blob;
+      }
+    }
+
+    state.draft = draft;
+    state.numero = draft.localisation;
+    state.isNewDraft = false;
+    state.dossierDirHandle = folder;
+    await dbPut(state.draft);
+    toast(`Dossier ${state.numero} importé depuis le réseau — vous reprenez où c\u2019était rendu.`, 4500);
+    openWorkspace();
+    return true;
+  } catch (err) {
+    if (err && err.name === 'AbortError') return false;
+    toast('Impossible d\u2019importer le dossier depuis cet emplacement.', 4500);
+    return false;
+  }
+}
+
+$('#btnImportNetwork').addEventListener('click', async () => {
+  const numero = $('#numLoc').value.trim().toUpperCase();
+  const bt = $('#numBt').value.trim().toUpperCase();
+  if (!numero) { toast('Entrez d\u2019abord le numéro de localisation.'); return; }
+  if (bt && !BT_PATTERN.test(bt)) { toast('Le format du B.T. est invalide.'); return; }
+  await importFromNetworkFolder(numero, bt);
+});
+
+// ---------- Reprise automatique via un lien/QR scanné ----------
+(async function autoResumeFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const mode = params.get('mode');
+  const numero = params.get('numero');
+  const bt = params.get('bt') || '';
+  if (mode !== 'installation' && mode !== 'demantelement') return;
+  if (!numero) return;
+
+  selectMode(mode);
+  $('#numLoc').value = numero;
+  $('#numBt').value = bt;
+  if (bt) $('#numBt').dispatchEvent(new Event('input'));
+
+  // Nettoyer l'URL pour ne pas reprendre automatiquement à chaque rechargement futur
+  history.replaceState({}, '', location.pathname);
+
+  if (!BT_PATTERN.test(bt)) {
+    toast('Complétez le B.T. pour continuer.', 4000);
+    return;
+  }
+
+  // Sur cet appareil, un brouillon local existe déjà : on l'ouvre directement (le plus rapide).
+  const existing = await dbGet(numero);
+  if (existing) {
+    ouvrirDossier();
+    return;
+  }
+
+  // Nouvel appareil : proposer d'importer les vraies données depuis le dossier réseau.
+  const confirmed = await showModal({
+    title: 'Reprendre ce dossier',
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucun brouillon local n\u2019existe sur cet appareil pour <strong>${numero}${bt ? ' (' + bt + ')' : ''}</strong>. Importer les données (cases cochées, documents, photos) depuis le dossier réseau où il a été sauvegardé ?</p>`,
+    confirmLabel: 'Importer depuis le réseau',
+  });
+  if (confirmed) {
+    await importFromNetworkFolder(numero, bt);
+  } else {
+    toast('Cliquez sur Continuer pour démarrer un nouveau brouillon local.', 4500);
+  }
+})();
