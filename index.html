@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Suivi de travaux d'instrumentation</title>
+<meta name="description" content="PWA de suivi d'installation et de démantèlement d'instrumentation industrielle">
+<meta name="theme-color" content="#10151b">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./assets/icon-192.png">
+<link rel="apple-touch-icon" href="./assets/icon-192.png">
+<link rel="stylesheet" href="./base.css">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body class="blueprint-bg">
+<div id="app" data-mode="">
+
+  <header class="topbar">
+    <div class="logo">
+      <svg width="30" height="30" viewBox="0 0 40 40" aria-hidden="true">
+        <circle cx="20" cy="20" r="15" fill="none" stroke="var(--mode-accent, var(--color-primary))" stroke-width="2.5"/>
+        <g stroke="var(--mode-accent, var(--color-primary))" stroke-width="2">
+          <line x1="20" y1="7" x2="20" y2="10.5"/><line x1="20" y1="29.5" x2="20" y2="33"/>
+          <line x1="7" y1="20" x2="10.5" y2="20"/><line x1="29.5" y1="20" x2="33" y2="20"/>
+        </g>
+        <line x1="20" y1="20" x2="27" y2="13" stroke="var(--mode-accent, var(--color-primary))" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="20" cy="20" r="2" fill="var(--mode-accent, var(--color-primary))"/>
+      </svg>
+      <div>
+        <div class="brand-name">Suivi d'instrumentation</div>
+        <div class="brand-sub" id="brandSub">Usine — module de terrain</div>
+      </div>
+    </div>
+    <div class="topbar-spacer"></div>
+    <span class="mode-badge hidden" id="modeBadge"></span>
+    <button class="icon-btn" id="themeToggle" aria-label="Changer de thème" title="Thème clair/sombre">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+    <button class="icon-btn hidden" id="homeBtn" aria-label="Nouveau dossier" title="Nouveau dossier">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+    </button>
+  </header>
+  <div class="hazard-strip"></div>
+
+  <main>
+    <!-- ===================== ÉCRAN 1 : CHOIX DU TYPE ===================== -->
+    <section id="screenChoice" class="choice-screen">
+      <div class="choice-heading">
+        <div class="kicker">Étape 1 · Type d'intervention</div>
+        <h1>Qu'est-ce qu'on réalise aujourd'hui ?</h1>
+        <p>Le contenu, les couleurs et les champs du dossier s'adaptent automatiquement selon votre choix.</p>
+      </div>
+
+      <div class="choice-cards">
+        <button class="choice-card card-install" data-choice="installation">
+          <div class="icon-wrap">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          </div>
+          <h2>Suivi d'installation</h2>
+          <p>Création, câblage, calibration et mise en service d'un nouvel instrument ou d'un équipement.</p>
+          <span class="go-arrow">Commencer ce dossier →</span>
+        </button>
+
+        <button class="choice-card card-decom" data-choice="demantelement">
+          <div class="icon-wrap">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+          </div>
+          <h2>Démantèlement d'instrumentation</h2>
+          <p>Retrait, débranchement et mise hors service d'un instrument existant.</p>
+          <span class="go-arrow">Commencer ce dossier →</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===================== ÉCRAN 2 : LOCALISATION / DOSSIER ===================== -->
+    <section id="screenDossier" class="choice-screen hidden">
+      <div class="choice-heading">
+        <div class="kicker" id="step2Kicker">Étape 2 · Localisation</div>
+        <h1 id="step2Title">Numéro de localisation</h1>
+        <p>Entrez le numéro d'emplacement (tag). Le système vérifie si un dossier existe déjà sur le réseau — sinon, il le crée automatiquement.</p>
+      </div>
+
+      <div class="dossier-panel">
+        <h3>Identification du dossier</h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="numLoc">Numéro de localisation</label>
+            <input type="text" id="numLoc" placeholder="ex. 12-FT-4407">
+          </div>
+          <button class="btn btn-primary" id="btnCheckDossier">Vérifier / Créer</button>
+        </div>
+        <div class="status-line hidden" id="dossierStatus"></div>
+      </div>
+
+      <div class="dossier-panel" style="margin-top: var(--space-4);">
+        <h3>Emplacement du dossier sur cet appareil</h3>
+        <p class="panel-desc" style="margin-bottom: var(--space-3);">Choisissez ou créez le dossier (sur votre ordinateur ou un lecteur réseau déjà branché) qui contiendra le fichier de suivi de travaux et tous les documents de cette localisation. Fonctionne sur Chrome/Edge de bureau — sur iPhone, tout reste sauvegardé automatiquement sur le serveur du dossier.</p>
+        <div class="field-row">
+          <button class="btn btn-outline" id="btnChooseFolder">📁 Choisir / créer un dossier</button>
+          <span class="status-line" id="folderStatus" style="margin:0;">Aucun dossier lié — sauvegarde sur le serveur uniquement.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== ÉCRAN 3 : ESPACE DE TRAVAIL DU DOSSIER ===================== -->
+    <section id="screenWorkspace" class="hidden">
+      <div class="workspace-header">
+        <div>
+          <div class="dossier-num" id="wsNum">—</div>
+          <div class="dossier-meta" id="wsMeta">—</div>
+        </div>
+        <span class="tag-pill" id="wsCreated">nouveau dossier</span>
+        <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">📁 serveur seulement</span>
+        <div class="topbar-spacer"></div>
+        <span class="tag-pill" id="wsFilesCount">0 document(s)</span>
+      </div>
+
+      <nav class="tabs-nav" role="tablist" aria-label="Sections du dossier">
+        <button class="tab-btn" role="tab" data-tab="identification" aria-selected="true">Identification</button>
+        <button class="tab-btn" role="tab" data-tab="plans" aria-selected="false">Plans</button>
+        <button class="tab-btn" role="tab" data-tab="programmation" aria-selected="false">Programmation</button>
+        <button class="tab-btn" role="tab" data-tab="mise-a-jour" aria-selected="false">Mise à jour</button>
+        <button class="tab-btn" role="tab" data-tab="information" aria-selected="false">Information</button>
+        <button class="tab-btn" role="tab" data-tab="approbation" aria-selected="false">Approbation</button>
+      </nav>
+
+      <!-- ---- Onglet : Identification ---- -->
+      <div class="tab-panel" data-panel="identification">
+        <div class="panel-title">Identification de l'instrument</div>
+        <p class="panel-desc">Accès direct à vos logiciels d'identification physique. Configurez chaque lien une fois — il sera ensuite réutilisé pour tous les dossiers.</p>
+
+        <div class="link-card">
+          <div class="link-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></div>
+          <div class="link-body">
+            <strong>Carte plastique — imprimante d'identification</strong>
+            <input type="text" data-link="carte-plastique" placeholder="https://impower.domtar.local/carte-plastique">
+          </div>
+          <div class="link-actions">
+            <a class="btn btn-outline" data-open-link="carte-plastique" target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>
+          </div>
+        </div>
+
+        <div class="link-card">
+          <div class="link-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41L11 3.83A2 2 0 0 0 9.59 3.24H4a1 1 0 0 0-1 1v5.59a2 2 0 0 0 .59 1.41l9.58 9.58a2 2 0 0 0 2.82 0l4.6-4.6a2 2 0 0 0 0-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></div>
+          <div class="link-body">
+            <strong>Tag de stainless — logiciel de gravure</strong>
+            <input type="text" data-link="tag-stainless" placeholder="https://impower.domtar.local/tag-stainless">
+          </div>
+          <div class="link-actions">
+            <a class="btn btn-outline" data-open-link="tag-stainless" target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>
+          </div>
+        </div>
+
+        <div class="link-card">
+          <div class="link-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div>
+          <div class="link-body">
+            <strong>TMS — identification des fils</strong>
+            <input type="text" data-link="tms-fils" placeholder="https://impower.domtar.local/tms-fils">
+          </div>
+          <div class="link-actions">
+            <a class="btn btn-outline" data-open-link="tms-fils" target="_blank" rel="noopener noreferrer">Ouvrir ↗</a>
+          </div>
+        </div>
+
+        <div class="dossier-panel" style="margin-top: var(--space-6);">
+          <h3>Fiche d'identification</h3>
+          <div class="field-row">
+            <div class="field"><label>Tag / TAG instrument</label><input type="text" id="fldTag" placeholder="ex. FT-4407"></div>
+            <div class="field"><label>Type d'instrument</label><input type="text" id="fldType" placeholder="ex. débitmètre magnétique"></div>
+          </div>
+          <div class="field-row" style="margin-top: var(--space-4);">
+            <div class="field"><label>Description</label><textarea id="fldDesc" rows="2" placeholder="Description courte de l'équipement / du point de mesure"></textarea></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- Onglet : Plans ---- -->
+      <div class="tab-panel hidden" data-panel="plans">
+        <div class="panel-title">Plans du dossier</div>
+        <p class="panel-desc">Glissez vos plans mis à jour (PDF, JPG, DWG, ou autre). Ils sont sauvegardés directement dans le dossier réseau du numéro de localisation.</p>
+        <div class="dropzone" data-dropzone="plans">
+          <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <strong>Glissez-déposez vos plans ici</strong>
+          <p>PDF, JPG, PNG, DWG — ou cliquez pour parcourir</p>
+          <input type="file" data-file-input="plans" multiple accept=".pdf,.jpg,.jpeg,.png,.dwg,.dxf">
+        </div>
+        <div class="file-list" data-file-list="plans"></div>
+      </div>
+
+      <!-- ---- Onglet : Programmation ---- -->
+      <div class="tab-panel hidden" data-panel="programmation">
+        <div class="panel-title">Programmation</div>
+        <p class="panel-desc">Déposez ou téléchargez les documents de modification de programmation (logique, configuration, paramètres).</p>
+        <div class="dropzone" data-dropzone="programmation">
+          <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+          <strong>Glissez-déposez les documents de modification</strong>
+          <p>PDF, DOCX, XLSX, ou fichiers de configuration</p>
+          <input type="file" data-file-input="programmation" multiple>
+        </div>
+        <div class="file-list" data-file-list="programmation"></div>
+      </div>
+
+      <!-- ---- Onglet : Mise à jour ---- -->
+      <div class="tab-panel hidden" data-panel="mise-a-jour">
+        <div class="panel-title">Mise à jour visuelle</div>
+        <p class="panel-desc">Capturez avec Snagit, annotez directement l'image, ou déposez une capture déjà corrigée ainsi que les documents de route.</p>
+
+        <div class="snagit-bar">
+          <button class="btn snagit-btn" id="btnSnagit">
+            <span class="dot"></span> Capturer avec Snagit
+          </button>
+          <button class="btn btn-outline" id="btnLoadImage">Charger une image existante</button>
+          <button class="btn btn-outline" id="btnPasteClipboard">📋 Coller depuis le presse-papiers</button>
+          <input type="file" id="loadImageInput" accept="image/*" class="hidden">
+        </div>
+        <p class="panel-desc" style="margin: var(--space-2) 0 var(--space-4); font-size: var(--text-sm);">Astuce : après une capture Snagit, appuyez sur Ctrl+V (ou Cmd+V) n'importe où dans cet onglet pour coller l'image directement.</p>
+
+        <div class="canvas-tools">
+          <button class="btn btn-ghost" data-tool="pen">✎ Crayon</button>
+          <button class="btn btn-ghost" data-tool="arrow">↗ Flèche</button>
+          <button class="btn btn-ghost" data-tool="text">A Texte</button>
+          <button class="btn btn-ghost" id="btnClearCanvas">🗑 Effacer</button>
+          <button class="btn btn-primary" id="btnSaveAnnotated">Enregistrer l'image corrigée</button>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="annotateCanvas" width="900" height="500"></canvas>
+        </div>
+
+        <div class="panel-title" style="margin-top: var(--space-8);">Images et documents de route</div>
+        <div class="dropzone" data-dropzone="mise-a-jour">
+          <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <strong>Glissez une image corrigée ou un document de route</strong>
+          <p>JPG, PNG, PDF</p>
+          <input type="file" data-file-input="mise-a-jour" multiple accept="image/*,.pdf">
+        </div>
+        <div class="file-list" data-file-list="mise-a-jour"></div>
+      </div>
+
+      <!-- ---- Onglet : Information ---- -->
+      <div class="tab-panel hidden" data-panel="information">
+        <div class="panel-title">Information et documentation</div>
+        <p class="panel-desc">Déposez toute documentation reliée à cette localisation (fiches techniques, manuels, certificats, notes).</p>
+        <div class="dropzone" data-dropzone="information">
+          <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          <strong>Glissez la documentation ici</strong>
+          <p>Tout format — PDF, DOCX, XLSX, images</p>
+          <input type="file" data-file-input="information" multiple>
+        </div>
+        <div class="file-list" data-file-list="information"></div>
+      </div>
+
+      <!-- ---- Onglet : Approbation ---- -->
+      <div class="tab-panel hidden" data-panel="approbation">
+        <div class="panel-title">Approbation du dossier</div>
+        <p class="panel-desc">Entrez votre identifiant d'employé pour approuver l'état actuel du dossier. Chaque approbation est horodatée et conservée dans l'historique.</p>
+
+        <div class="approval-card">
+          <div class="field-row">
+            <div class="field"><label>Identifiant d'employé</label><input type="text" id="fldEmployeeId" placeholder="ex. 4471-DOM"></div>
+            <div class="field"><label>Rôle</label>
+              <select id="fldRole">
+                <option value="technicien">Technicien(ne) instrumentation</option>
+                <option value="contremaitre">Contremaître</option>
+                <option value="ingenieur">Ingénieur(e) responsable</option>
+                <option value="qualite">Assurance qualité</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="btnApprove">Approuver ce dossier</button>
+          </div>
+        </div>
+
+        <div class="panel-title" style="font-size: var(--text-base);">Historique des approbations</div>
+        <div class="approval-history" id="approvalHistory">
+          <div class="empty-state">Aucune approbation enregistrée pour ce dossier.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="./app.js"></script>
+<script data-pplx-inline-edit>
+(function () {
+  if (window === window.top) return;
+
+  const allowedParentOrigins = ["https://www.perplexity.ai","https://perplexity.ai","https://testing.perplexity.ai","https://staging.perplexity.ai","https://*.preview.i.perplexity.ai","http://perplexity.localhost","http://localhost:1420","http://127.0.0.1:1420","http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173"];
+  const MAX_FONT_BYTES = 500 * 1024;
+  const MAX_TOTAL_FONT_BYTES = 2 * 1024 * 1024;
+  let scrollForwarding = false;
+  let scrollRaf = 0;
+  let trustedTopOrigin = null;
+
+  // Allow entries like "https://*.preview.i.perplexity.ai" — the wildcard
+  // matches a single DNS label (no dots), so "https://*.foo" cannot stretch
+  // across multiple labels.
+  function matchesAllowedOrigin(origin) {
+    if (!origin) return false;
+    for (const entry of allowedParentOrigins) {
+      if (!entry.includes("*")) {
+        if (entry === origin) return true;
+        continue;
+      }
+      const pattern = new RegExp(
+        "^" +
+          entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+") +
+          "$",
+      );
+      if (pattern.test(origin)) return true;
+    }
+    return false;
+  }
+
+  // Trust decision: when the sender is same-origin-visible (event.origin is a
+  // real origin like https://www.perplexity.ai) we trust event.origin directly.
+  // When event.origin is "null" (opaque broker srcdoc), we fall back to the
+  // broker's stamped `parentOrigin` to identify the top window. The fallback
+  // is claim-only — we rely on the browser's native `targetOrigin` enforcement
+  // on the response path (see postToTrustedTop) to ensure replies can't be
+  // delivered to anyone but the actual top window of that claimed origin.
+  function getTrustedParentOrigin(event) {
+    const forwardedParentOrigin =
+      typeof event.data.parentOrigin === "string" ? event.data.parentOrigin : null;
+    const parentOrigin = event.origin === "null" ? forwardedParentOrigin : event.origin;
+    return matchesAllowedOrigin(parentOrigin) ? parentOrigin : null;
+  }
+
+  // All responses go to window.top with targetOrigin = the allowlisted origin.
+  // An attacker that iframes us inside their own null-origin broker can claim
+  // any parentOrigin they like, but the browser will drop the reply whenever
+  // the real top's origin doesn't match — so the screenshot never leaves.
+  function postToTrustedTop(message) {
+    if (!trustedTopOrigin) return;
+    try {
+      window.top.postMessage(message, trustedTopOrigin);
+    } catch (_error) {}
+  }
+
+  function inlineAll(original, clone) {
+    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
+
+    try {
+      const computedStyle = getComputedStyle(original);
+      // cssText on a computed style is the serialized declaration in modern
+      // Chromium/Safari — a single read beats enumerating ~400 longhand
+      // properties. Firefox returns "" here, so we fall back on empty.
+      const serialized = computedStyle.cssText;
+      if (serialized) {
+        clone.style.cssText = serialized;
+      } else {
+        const parts = new Array(computedStyle.length);
+        for (let index = 0; index < computedStyle.length; index += 1) {
+          const property = computedStyle[index];
+          parts[index] = `${property}:${computedStyle.getPropertyValue(property)};`;
+        }
+        clone.style.cssText = parts.join("");
+      }
+    } catch (_error) {}
+
+    const originalChildren = original.children;
+    const clonedChildren = clone.children;
+    for (
+      let index = 0;
+      index < originalChildren.length && index < clonedChildren.length;
+      index += 1
+    ) {
+      inlineAll(originalChildren[index], clonedChildren[index]);
+    }
+  }
+
+  function extractFontUrl(srcValue) {
+    const matches = [
+      ...srcValue.matchAll(
+        /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/gi,
+      ),
+    ];
+    if (matches.length === 0) return null;
+    const woff2 = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff2"));
+    if (woff2) return woff2[1];
+    const woff = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff"));
+    if (woff) return woff[1];
+    return matches[0][1];
+  }
+
+  // Cache resolved font URL -> data URI across captures. Fonts on a page
+  // essentially never change, and a batch run emits multiple captures back to
+  // back — without this we'd refetch + re-base64 every time.
+  const fontDataUriCache = new Map();
+  const SRC_DECLARATION_RE = /src\s*:\s*[^;}]+/i;
+
+  async function fetchAsDataUri(url) {
+    if (fontDataUriCache.has(url)) return fontDataUriCache.get(url);
+    let dataUri = null;
+    try {
+      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (response.ok) {
+        const blob = await response.blob();
+        if (blob.size <= MAX_FONT_BYTES) {
+          dataUri = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () =>
+              resolve(typeof reader.result === "string" ? reader.result : null);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+    } catch (_error) {
+      dataUri = null;
+    }
+    fontDataUriCache.set(url, dataUri);
+    return dataUri;
+  }
+
+  function collectFontFaceRuleTexts() {
+    const rules = [];
+    for (const sheet of document.styleSheets) {
+      let cssRules;
+      try {
+        cssRules = sheet.cssRules;
+      } catch (_error) {
+        continue;
+      }
+      if (!cssRules) continue;
+      for (const rule of cssRules) {
+        const cssText = rule.cssText || "";
+        if (cssText.startsWith("@font-face")) rules.push(cssText);
+      }
+    }
+    return rules;
+  }
+
+  async function buildInlinedFontCss() {
+    const ruleTexts = collectFontFaceRuleTexts();
+    if (ruleTexts.length === 0) return null;
+
+    const resolved = ruleTexts.map((cssText) => {
+      if (!SRC_DECLARATION_RE.test(cssText)) return null;
+      const srcMatch = cssText.match(/src\s*:\s*([^;}]+)[;}]/i);
+      if (!srcMatch) return null;
+      const url = extractFontUrl(srcMatch[1]);
+      if (!url) return null;
+      try {
+        return { cssText, url: new URL(url, document.baseURI).href };
+      } catch (_error) {
+        return null;
+      }
+    });
+
+    const dataUris = await Promise.all(
+      resolved.map((entry) => (entry ? fetchAsDataUri(entry.url) : Promise.resolve(null))),
+    );
+
+    const inlined = [];
+    let totalBytes = 0;
+    for (let index = 0; index < resolved.length; index += 1) {
+      const entry = resolved[index];
+      const dataUri = dataUris[index];
+      if (!entry || !dataUri) continue;
+      const approxBytes = dataUri.length * 0.75;
+      if (totalBytes + approxBytes > MAX_TOTAL_FONT_BYTES) break;
+      totalBytes += approxBytes;
+      inlined.push(entry.cssText.replace(SRC_DECLARATION_RE, `src: url("${dataUri}")`));
+    }
+    return inlined.length > 0 ? inlined.join("\n") : null;
+  }
+
+  function stripExternal(clone) {
+    const images = clone.querySelectorAll("img");
+    for (let index = 0; index < images.length; index += 1) {
+      const src = images[index].getAttribute("src");
+      if (src && !src.startsWith("data:")) images[index].removeAttribute("src");
+    }
+
+    const elements = clone.querySelectorAll("*");
+    for (let index = 0; index < elements.length; index += 1) {
+      const style = elements[index].style.cssText;
+      if (style && style.includes("url(")) {
+        elements[index].style.cssText = style.replace(
+          /url\(["']?(?!data:)[^)"']*["']?\)/gi,
+          "none",
+        );
+      }
+    }
+  }
+
+  function emitScroll() {
+    scrollRaf = 0;
+    if (!scrollForwarding) return;
+    postToTrustedTop({
+      type: "INLINE_EDIT_SCROLL",
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+    });
+  }
+
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (!scrollForwarding || scrollRaf) return;
+      scrollRaf = requestAnimationFrame(emitScroll);
+    },
+    { passive: true, capture: true },
+  );
+
+  async function handleCaptureRequest(event) {
+    const requestId = event.data.requestId;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    function postResult(dataUrl) {
+      postToTrustedTop({
+        type: "INLINE_EDIT_SCREENSHOT_RESULT",
+        requestId,
+        dataUrl,
+        scrollX,
+        scrollY,
+      });
+    }
+
+    try {
+      // Wait for any pending web fonts to resolve so both inline metrics and
+      // the @font-face inlining below see the same loaded faces.
+      if (document.fonts && document.fonts.ready) {
+        try {
+          await document.fonts.ready;
+        } catch (_error) {}
+      }
+
+      const clone = document.documentElement.cloneNode(true);
+      inlineAll(document.documentElement, clone);
+
+      const removedNodes = clone.querySelectorAll("script,link[rel=\"stylesheet\"],style");
+      for (let index = 0; index < removedNodes.length; index += 1) {
+        removedNodes[index].remove();
+      }
+
+      stripExternal(clone);
+
+      // Re-embed web fonts as data-URI @font-face rules so the SVG rasterizer
+      // can resolve them — external font URLs aren't fetched during
+      // foreignObject rendering, which would otherwise force a fallback face
+      // and change text metrics.
+      const inlinedFontCss = await buildInlinedFontCss();
+      if (inlinedFontCss) {
+        const styleEl = document.createElement("style");
+        styleEl.textContent = inlinedFontCss;
+        const head = clone.querySelector("head");
+        if (head) head.appendChild(styleEl);
+        else clone.insertBefore(styleEl, clone.firstChild);
+      }
+
+      const html = new XMLSerializer().serializeToString(clone);
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+        '<foreignObject width="100%" height="100%">' +
+        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">` +
+        `<div style="position:relative;left:-${scrollX}px;top:-${scrollY}px">` +
+        html +
+        "</div></div></foreignObject></svg>";
+      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const image = new Image();
+      image.onload = function () {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(image, 0, 0);
+        postResult(canvas.toDataURL("image/png"));
+      };
+      image.onerror = function () {
+        postResult(null);
+      };
+      image.src = svgUrl;
+    } catch (_error) {
+      postResult(null);
+    }
+  }
+
+  window.addEventListener("message", function (event) {
+    if (!event.data) return;
+    // Only accept messages from the direct parent frame. Blocks sibling /
+    // unrelated-window postMessage senders that could otherwise reach us.
+    if (event.source !== window.parent) return;
+
+    const trustedParentOrigin = getTrustedParentOrigin(event);
+    if (!trustedParentOrigin) return;
+    trustedTopOrigin = trustedParentOrigin;
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_START") {
+      scrollForwarding = true;
+      emitScroll();
+      return;
+    }
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_STOP") {
+      scrollForwarding = false;
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      scrollRaf = 0;
+      return;
+    }
+
+    if (event.data.type !== "INLINE_EDIT_CAPTURE_REQUEST") return;
+
+    handleCaptureRequest(event);
+  });
+})();
+
+
+</script></body>
+</html>
