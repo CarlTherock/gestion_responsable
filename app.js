@@ -372,11 +372,71 @@ function computeProgress() {
 
 function updateProgressPill() {
   const pill = $('#wsProgressPill');
-  if (!pill || !state.draft) return;
-  const { pct } = computeProgress();
-  pill.textContent = `${Math.round(pct)} %`;
-  const hue = Math.max(0, Math.min(120, (pct / 100) * 120));
-  pill.style.background = `hsl(${hue}, 70%, 45%)`;
+  if (pill && state.draft) {
+    const { pct } = computeProgress();
+    pill.textContent = `${Math.round(pct)} %`;
+    const hue = Math.max(0, Math.min(120, (pct / 100) * 120));
+    pill.style.background = `hsl(${hue}, 70%, 45%)`;
+  }
+  renderApercu();
+}
+
+function renderApercu() {
+  const container = $('#apercuContent');
+  if (!container || !state.draft) return;
+  const { done, total, pct } = computeProgress();
+  const groups = CHECKLISTS[state.draft.mode] || {};
+
+  const groupStats = Object.entries(groups).map(([group, items]) => {
+    if (!items.length) return null;
+    const doneCount = items.filter(([name]) => isTaskDone(name)).length;
+    return { group, label: GROUP_LABELS[group] || group, pct: (doneCount / items.length) * 100, count: `${doneCount}/${items.length}` };
+  }).filter(Boolean);
+
+  const vpoFilled = (state.draft.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  if (vpoFilled.length) {
+    const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    groupStats.push({ group: 'vpo', label: 'VPO', pct: (vpoDone / vpoFilled.length) * 100, count: `${vpoDone}/${vpoFilled.length}` });
+  }
+
+  const docCount = Object.values(state.draft.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + (state.draft.files['mise-a-jour'] || []).length;
+
+  let ncCount = 0;
+  Object.entries(groups).forEach(([group, items]) => items.forEach(([name]) => {
+    if (state.draft.casesCochees[name] === 'nc') ncCount++;
+  }));
+  (state.draft.vpoItems || []).forEach((it) => { if (it.statut === 'nc') ncCount++; });
+  (state.draft.ncExtra || []).forEach((it) => { if (it.texte && it.texte.trim()) ncCount++; });
+
+  const ringsHtml = groupStats.map((g) => `
+    <div class="ring-card" data-apercu-jump="${g.group}">
+      ${ringSvg(g.pct, 96, 8)}
+      <div class="ring-card-label">${escapeHtml(g.label)}</div>
+      <div class="ring-card-count">${g.count} tâches</div>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <div class="hero-ring" style="margin-bottom: var(--space-6);">
+      ${ringSvg(pct, 130, 12)}
+      <div>
+        <div class="hero-ring-label">Progression globale</div>
+        <div class="hero-ring-count">${done} / ${total} tâches</div>
+      </div>
+    </div>
+    <div class="stat-row" style="margin-bottom: var(--space-6);">
+      <div class="stat-card"><div class="num">${done}/${total}</div><div class="lbl">Tâches complétées</div></div>
+      <div class="stat-card"><div class="num">${docCount}</div><div class="lbl">Documents / photos</div></div>
+      <div class="stat-card"><div class="num" style="color:${ncCount ? 'var(--color-danger, #d64545)' : 'var(--color-success)'};">${ncCount}</div><div class="lbl">Non-conformités</div></div>
+      <div class="stat-card"><div class="num">${(state.draft.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+    </div>
+    <div class="panel-title" style="font-size: var(--text-base); margin-bottom: var(--space-3);">Progression par section</div>
+    <div class="rings-grid">${ringsHtml}</div>
+  `;
+
+  $$('[data-apercu-jump]', container).forEach((card) => {
+    card.addEventListener('click', () => selectTab(card.dataset.apercuJump));
+  });
 }
 
 function renderNonConformites() {
@@ -1105,6 +1165,7 @@ function openWorkspace() {
   updateProgressPill();
   renderNonConformites();
   updateApprobationBadge();
+  renderQrThumb();
 }
 
 // ---------- Onglets ----------
@@ -1714,6 +1775,12 @@ function generateQrSvg(text) {
     }
   }
   return '';
+}
+
+function renderQrThumb() {
+  const btn = $('#btnShowQr');
+  if (!btn || !state.numero || !state.draft) return;
+  btn.innerHTML = generateQrSvg(buildDossierUrl());
 }
 
 $('#btnShowQr').addEventListener('click', () => {

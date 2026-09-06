@@ -496,3 +496,28 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 }
 body { padding-bottom: 34px; }
 .toast { bottom: calc(var(--space-6) + 34px) !important; }
+
+/* ---------- Aperçu (tableau de bord intégré, écran d'accueil de l'espace de travail) ---------- */
+.hero-ring { display: flex; align-items: center; gap: var(--space-6); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+.hero-ring-label { font-size: var(--text-sm); color: var(--color-text-muted); }
+.hero-ring-count { font-size: var(--text-xl); font-weight: 700; margin-top: 4px; }
+
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); }
+.stat-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); }
+.stat-card .num { font-size: var(--text-xl); font-weight: 700; }
+.stat-card .lbl { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: 2px; }
+
+.rings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--space-3); }
+.ring-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4) var(--space-2); display: flex; flex-direction: column; align-items: center; gap: var(--space-2); cursor: pointer; transition: transform 0.15s, border-color 0.15s; }
+.ring-card:hover { transform: translateY(-2px); border-color: var(--mode-accent); }
+.ring-card-label { font-size: var(--text-sm); font-weight: 600; text-align: center; }
+.ring-card-count { font-size: 11px; color: var(--color-text-muted); font-family: var(--font-mono); }
+
+.ring-svg text { font-family: var(--font-mono); }
+
+/* ---------- Bouton QR sous forme d'image cliquable ---------- */
+.qr-thumb-btn {
+  background: #fff; border: none; border-radius: var(--radius-sm); padding: 4px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; line-height: 0;
+}
+.qr-thumb-btn svg { width: 34px; height: 34px; display: block; }

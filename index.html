@@ -130,12 +130,13 @@
         <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">📁 brouillon local seulement</span>
         <div class="topbar-spacer"></div>
         <span class="tag-pill" id="wsFilesCount">0 document(s)</span>
-        <button class="btn btn-outline" id="btnShowQr" title="Générer un code QR pour retrouver ce dossier">📱 QR</button>
+        <button class="qr-thumb-btn" id="btnShowQr" title="Cliquez pour voir le code QR de ce dossier" aria-label="Afficher le code QR de ce dossier"></button>
         <button class="btn btn-primary" id="btnSaveFolder">💾 Sauvegarder le dossier</button>
       </div>
 
       <nav class="tabs-nav" role="tablist" aria-label="Sections du dossier">
-        <button class="tab-btn" role="tab" data-tab="identification" aria-selected="true">Identification</button>
+        <button class="tab-btn" role="tab" data-tab="apercu" aria-selected="true">Aperçu</button>
+        <button class="tab-btn" role="tab" data-tab="identification" aria-selected="false">Identification</button>
         <button class="tab-btn" role="tab" data-tab="plans" aria-selected="false">Plans</button>
         <button class="tab-btn" role="tab" data-tab="programmation" aria-selected="false">Programmation</button>
         <button class="tab-btn" role="tab" data-tab="systeme" aria-selected="false">Système</button>
@@ -148,8 +149,15 @@
         <button class="tab-btn" role="tab" data-tab="approbation" aria-selected="false">Approbation</button>
       </nav>
 
+      <!-- ---- Onglet : Aperçu ---- -->
+      <div class="tab-panel" data-panel="apercu">
+        <div class="panel-title">Aperçu du dossier</div>
+        <p class="panel-desc">Vue d'ensemble de la progression. Cliquez sur une section pour y accéder directement.</p>
+        <div id="apercuContent"></div>
+      </div>
+
       <!-- ---- Onglet : Identification ---- -->
-      <div class="tab-panel" data-panel="identification">
+      <div class="tab-panel hidden" data-panel="identification">
         <div class="panel-title">Identification de l'instrument</div>
         <p class="panel-desc">Accès direct à vos logiciels d'identification physique. Configurez chaque lien une fois — il sera ensuite réutilisé pour tous les dossiers.</p>
 
