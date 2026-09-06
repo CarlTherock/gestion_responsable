@@ -115,18 +115,22 @@ const state = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-// ---------- Splash screen (3 secondes) ----------
+// ---------- Splash screen (3 secondes, avec clic de secours) ----------
+function hideSplash() {
+  const splash = document.getElementById('splashScreen');
+  const app = document.getElementById('app');
+  if (app) app.classList.remove('app-hidden');
+  if (splash) {
+    splash.classList.add('splash-hide');
+    setTimeout(() => splash.remove(), 550);
+  }
+}
 const splashDonePromise = new Promise((resolve) => {
-  setTimeout(() => {
-    const splash = document.getElementById('splashScreen');
-    const app = document.getElementById('app');
-    if (app) app.hidden = false;
-    if (splash) {
-      splash.classList.add('splash-hide');
-      setTimeout(() => splash.remove(), 550);
-    }
-    resolve();
-  }, 3000);
+  let done = false;
+  const finish = () => { if (done) return; done = true; hideSplash(); resolve(); };
+  setTimeout(finish, 3000);
+  const splashEl = document.getElementById('splashScreen');
+  if (splashEl) splashEl.addEventListener('click', finish);
 });
 
 // ---------- Service worker ----------

@@ -467,6 +467,7 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
   background-color: #10151b; opacity: 1; transition: opacity 0.5s ease;
 }
 .splash-screen.splash-hide { opacity: 0; pointer-events: none; }
+.app-hidden { display: none !important; }
 .splash-title {
   margin: 0; font-size: clamp(32px, 7vw, 56px); font-weight: 700; letter-spacing: 0.01em; line-height: 1.1;
   font-family: -apple-system, "Segoe UI", Arial, sans-serif; color: #ffffff; text-align: center;
