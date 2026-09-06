@@ -363,6 +363,7 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 /* ---------- Cases à cocher : ligne avec N/A + tiroir de pièces jointes ---------- */
 .checklist-item-wrap { display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; }
 .checklist-item-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); cursor: default; }
+.ci-actions { display: contents; }
 .checklist-item-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--mode-accent); flex-shrink: 0; cursor: pointer; }
 .checklist-item-row .ci-label { flex: 1; font-size: var(--text-sm); cursor: pointer; }
 .checklist-item-wrap.checked { border-color: var(--color-success); background: var(--color-success-highlight); }
@@ -522,3 +523,52 @@ body { padding-bottom: 34px; }
   display: flex; align-items: center; justify-content: center; line-height: 0;
 }
 .qr-thumb-btn svg { width: 34px; height: 34px; display: block; }
+
+/* ============================================================
+   AMÉLIORATIONS MOBILE UNIQUEMENT — n'affecte jamais la version PC
+   ============================================================ */
+@media (max-width: 680px) {
+  /* En-tête du dossier : passe d'une rangée surchargée à un empilement clair */
+  .workspace-header {
+    padding: var(--space-4) var(--space-4);
+    gap: var(--space-2);
+  }
+  .workspace-header .topbar-spacer { flex-basis: 100%; height: 0; }
+  .workspace-header > div:first-child { flex-basis: 100%; }
+  .tag-pill { font-size: 10px; padding: 3px 8px; }
+  #btnSaveFolder { flex: 1 1 auto; justify-content: center; }
+  .qr-thumb-btn svg { width: 30px; height: 30px; }
+
+  /* Onglets : plus compacts, indicateur de défilement visible */
+  .tabs-nav { padding: 0 var(--space-3); position: relative; }
+  .tab-btn { padding: var(--space-2) var(--space-3); font-size: 12px; }
+  .tab-panel { padding: var(--space-5) var(--space-4); }
+
+  /* Cartes de tâches : le groupe de boutons passe à la ligne, checkbox+libellé restent ensemble */
+  .checklist-item-row { flex-wrap: wrap; row-gap: var(--space-2); }
+  .ci-actions { display: flex; flex-basis: 100%; gap: var(--space-2); justify-content: flex-end; }
+
+  /* VPO : empile le champ texte au-dessus des boutons plutôt que de tout compresser */
+  .vpo-row { flex-wrap: wrap; }
+  .vpo-row .vpo-input { flex-basis: 100%; order: 1; }
+  .vpo-row .vpo-status { order: 2; }
+  .vpo-row .btn-vpo-remove { order: 3; margin-left: auto; }
+
+  /* Fenêtres modales : ne dépassent jamais la hauteur de l'écran */
+  .modal-box { padding: var(--space-4); max-height: 85vh; overflow-y: auto; }
+
+  /* Aperçu : anneaux plus compacts, moins d'espace perdu */
+  .hero-ring { padding: var(--space-4); gap: var(--space-4); flex-wrap: wrap; }
+  .rings-grid, .stat-row { gap: var(--space-2); }
+  .ring-card { padding: var(--space-3) var(--space-1); }
+
+  /* Snagit et outils d'annotation : boutons pleine largeur, plus faciles à toucher */
+  .snagit-bar .btn, .canvas-tools .btn { flex: 1 1 auto; text-align: center; }
+
+  /* Zone de dépôt par tâche : bouton Snagit sur sa propre ligne */
+  .dropzone-mini { display: flex; flex-direction: column; gap: var(--space-2); align-items: stretch; text-align: center; }
+  .dropzone-mini button { width: 100%; margin-left: 0 !important; }
+
+  /* Boutons pleine largeur plus faciles à toucher au doigt */
+  #btnChooseFolder, #btnImportNetwork, #btnOuvrirDossier { width: 100%; justify-content: center; }
+}

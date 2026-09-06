@@ -1201,9 +1201,11 @@ function renderChecklist(group) {
         <div class="checklist-item-row">
           <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
           <span class="ci-label" data-name="${name}">${label}</span>
-          ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
-          <button type="button" class="btn-na" data-na="${name}">N/A</button>
-          <button type="button" class="btn-nc" data-nc="${name}">Non conforme</button>
+          <div class="ci-actions">
+            ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
+            <button type="button" class="btn-na" data-na="${name}">N/A</button>
+            <button type="button" class="btn-nc" data-nc="${name}">Non conforme</button>
+          </div>
         </div>
         ${(isNa || isNc) && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
         ${canAttach ? `
