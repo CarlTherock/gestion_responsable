@@ -95,8 +95,8 @@ const CHECKLISTS = {
   },
 };
 
-const UPLOAD_TABS = ['plans', 'programmation', 'mise-a-jour', 'information'];
-const PHYSICAL_SUBFOLDER = { plans: 'Documents', programmation: 'Documents', information: 'Documents', 'mise-a-jour': 'Photos' };
+const UPLOAD_TABS = ['mise-a-jour'];
+const ATTACH_GROUPS = ['plans', 'programmation', 'systeme', 'information'];
 
 const state = {
   mode: null,               // 'installation' | 'demantelement'
@@ -136,6 +136,38 @@ function toast(msg, ms = 2600) {
   t.classList.add('show');
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// ---------- Fenêtre modale générique ----------
+function showModal({ title, bodyHtml, confirmLabel = 'Confirmer' }) {
+  return new Promise((resolve) => {
+    const overlay = $('#modalOverlay');
+    $('#modalTitle').textContent = title;
+    $('#modalBody').innerHTML = bodyHtml;
+    $('#modalConfirm').textContent = confirmLabel;
+    overlay.classList.remove('hidden');
+
+    function cleanup(confirmed) {
+      overlay.classList.add('hidden');
+      $('#modalConfirm').removeEventListener('click', onConfirm);
+      $('#modalCancel').removeEventListener('click', onCancel);
+      resolve(confirmed);
+    }
+    function onConfirm() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    $('#modalConfirm').addEventListener('click', onConfirm);
+    $('#modalCancel').addEventListener('click', onCancel);
+  });
+}
+
+async function askNaReason() {
+  const confirmed = await showModal({
+    title: 'Marquer comme non applicable',
+    bodyHtml: '<label style="font-size:var(--text-sm);color:var(--color-text-muted);">Raison (optionnel)</label><textarea id="modalNaReason" rows="3" placeholder="ex. Aucune alimentation électrique sur ce point"></textarea>',
+    confirmLabel: 'Marquer N/A',
+  });
+  if (!confirmed) return null;
+  return $('#modalNaReason').value.trim();
 }
 
 // ============================================================
@@ -185,7 +217,7 @@ async function dbPut(draft) {
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     application: 'Gestion responsable',
     localisation: numero,
     mode,
@@ -194,10 +226,26 @@ function newDraft(numero, mode) {
     champs: {},
     liens: {},
     casesCochees: {},
+    casesRaisons: {},
+    casesFichiers: {},
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     approbations: [],
+    derniereSauvegardeOfficielle: null,
     meta: { source: 'pwa', modeSauvegarde: 'brouillon-local' },
   };
+}
+
+function normalizeDraft(d) {
+  if (!d.champs) d.champs = {};
+  if (!d.liens) d.liens = {};
+  if (!d.casesCochees) d.casesCochees = {};
+  if (!d.casesRaisons) d.casesRaisons = {};
+  if (!d.casesFichiers) d.casesFichiers = {};
+  if (!d.files) d.files = {};
+  UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
+  if (!d.approbations) d.approbations = [];
+  if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
+  return d;
 }
 
 let persistTimer;
@@ -207,7 +255,6 @@ function schedulePersist() {
     if (!state.draft) return;
     state.draft.modifieLe = new Date().toISOString();
     await dbPut(state.draft);
-    if (state.dossierDirHandle) await writeTrackingFiles();
   }, 400);
 }
 
@@ -253,11 +300,35 @@ $('#btnChooseFolder').addEventListener('click', async () => {
     $('#folderStatus').classList.add('ok');
     $('#folderStatus').textContent = `Emplacement choisi : ${handle.name}.`;
     toast(`Emplacement « ${handle.name} » retenu.`);
-    if (state.numero) await ensureLocalDossierFolder();
   } catch (err) {
     // AbortError : l'utilisateur a fermé le sélecteur — rien à signaler
   }
 });
+
+function isTaskDone(name) {
+  const v = state.draft.casesCochees[name];
+  return v === true || v === 'na';
+}
+
+function computeProgress() {
+  if (!state.draft) return { done: 0, total: 0, pct: 100 };
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  let total = 0, done = 0;
+  Object.values(groups).forEach((items) => {
+    items.forEach(([name]) => { total += 1; if (isTaskDone(name)) done += 1; });
+  });
+  const pct = total ? (done / total) * 100 : 100;
+  return { done, total, pct };
+}
+
+function updateProgressPill() {
+  const pill = $('#wsProgressPill');
+  if (!pill || !state.draft) return;
+  const { pct } = computeProgress();
+  pill.textContent = `${Math.round(pct)} %`;
+  const hue = Math.max(0, Math.min(120, (pct / 100) * 120));
+  pill.style.background = `hsl(${hue}, 70%, 45%)`;
+}
 
 $('#btnSaveFolder').addEventListener('click', async () => {
   if (!FS_ACCESS_SUPPORTED) {
@@ -268,28 +339,57 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     toast('Choisissez d\u2019abord un emplacement de sauvegarde (étape précédente).', 4000);
     return;
   }
+  const { done, total, pct } = computeProgress();
+  if (pct < 100) {
+    toast(`Il reste ${total - done} tâche(s) à cocher ou marquer N/A avant de pouvoir sauvegarder.`, 4500);
+    return;
+  }
+  const nom = $('#fldEmployeeName').value.trim();
+  const role = $('#fldRole').value;
+  if (!nom) {
+    toast('Entrez le nom de l\u2019employé (onglet Approbation) avant de sauvegarder.', 4500);
+    selectTab('approbation');
+    return;
+  }
+
+  const now = new Date();
+  const record = { nom, role, at: now.toISOString() };
+  state.draft.approbations.push(record);
+  state.draft.derniereSauvegardeOfficielle = record;
+  state.draft.champs.employeeName = nom;
+  state.draft.champs.employeeRole = role;
+
   try {
-    await ensureLocalDossierFolder();
-    await writeTrackingFiles();
-    toast(`Dossier ${folderName()} sauvegardé avec succès.`);
+    await ensureLocalDossierFolder(now);
+    await writeEverythingToDisk();
+    await dbPut(state.draft);
+    refreshApprovals();
+    toast(`Dossier ${folderName(now)} sauvegardé avec succès.`);
   } catch (err) {
     toast('Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.', 4500);
   }
 });
 
-function folderName() {
-  const bt = (state.draft && state.draft.champs.bt) || '';
-  return bt ? `${state.numero} (${bt})` : state.numero;
+function selectTab(tab) {
+  $$('.tab-btn').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
+  $$('.tab-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== tab));
+  state.currentTab = tab;
 }
 
-async function ensureLocalDossierFolder() {
+function folderName(date) {
+  const bt = (state.draft && state.draft.champs.bt) || '';
+  const ds = (date || new Date()).toISOString().slice(0, 10);
+  return bt ? `${state.numero} (${bt}) - ${ds}` : `${state.numero} - ${ds}`;
+}
+
+async function ensureLocalDossierFolder(date) {
   if (!state.rootDirHandle || !state.numero) return;
-  state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(folderName(), { create: true });
+  state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(folderName(date), { create: true });
   for (const sub of ['Documents', 'Photos', 'Exports']) {
     await state.dossierDirHandle.getDirectoryHandle(sub, { create: true });
   }
   const pill = $('#wsFolderPill');
-  if (pill) pill.textContent = `📁 lié : ${state.rootDirHandle.name}/${folderName()}`;
+  if (pill) pill.textContent = `📁 lié : ${state.rootDirHandle.name}/${folderName(date)}`;
 }
 
 // Pré-remplit le B.T. si un brouillon existe déjà pour ce numéro
@@ -302,33 +402,44 @@ $('#numLoc').addEventListener('blur', async () => {
   }
 });
 
-async function writeFileToLocalFolder(onglet, blob, filename) {
-  if (!state.dossierDirHandle) return false;
-  try {
-    const subName = PHYSICAL_SUBFOLDER[onglet] || 'Documents';
-    const subDir = await state.dossierDirHandle.getDirectoryHandle(subName, { create: true });
-    const fileHandle = await subDir.getFileHandle(filename, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(blob);
-    await writable.close();
-    return true;
-  } catch (err) { return false; }
-}
-
-async function writeTrackingFiles() {
+// Écrit tout le contenu du brouillon (suivi.json, resume.txt, documents par
+// tâche, photos de mise à jour) sur le disque. N'est appelé QUE lors de la
+// sauvegarde officielle (100 % des tâches cochées ou N/A + nom d'employé).
+async function writeEverythingToDisk() {
   if (!state.dossierDirHandle || !state.draft) return;
-  try {
-    const jsonHandle = await state.dossierDirHandle.getFileHandle('suivi.json', { create: true });
-    const w1 = await jsonHandle.createWritable();
-    await w1.write(JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2));
-    await w1.close();
 
-    const resumeHandle = await state.dossierDirHandle.getFileHandle('resume.txt', { create: true });
-    const w2 = await resumeHandle.createWritable();
-    await w2.write(buildResumeText());
-    await w2.close();
-  } catch (err) {
-    // best effort seulement — ne bloque jamais le flux principal
+  const jsonHandle = await state.dossierDirHandle.getFileHandle('suivi.json', { create: true });
+  const w1 = await jsonHandle.createWritable();
+  await w1.write(JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2));
+  await w1.close();
+
+  const resumeHandle = await state.dossierDirHandle.getFileHandle('resume.txt', { create: true });
+  const w2 = await resumeHandle.createWritable();
+  await w2.write(buildResumeText());
+  await w2.close();
+
+  const docsDir = await state.dossierDirHandle.getDirectoryHandle('Documents', { create: true });
+  for (const [name, files] of Object.entries(state.draft.casesFichiers || {})) {
+    for (const f of files) {
+      try {
+        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const fh = await docsDir.getFileHandle(`${name}__${safe}`, { create: true });
+        const w = await fh.createWritable();
+        await w.write(f.blob);
+        await w.close();
+      } catch (err) { /* best effort par fichier */ }
+    }
+  }
+
+  const photosDir = await state.dossierDirHandle.getDirectoryHandle('Photos', { create: true });
+  for (const f of (state.draft.files['mise-a-jour'] || [])) {
+    try {
+      const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const fh = await photosDir.getFileHandle(safe, { create: true });
+      const w = await fh.createWritable();
+      await w.write(f.blob);
+      await w.close();
+    } catch (err) { /* best effort par fichier */ }
   }
 }
 
@@ -336,18 +447,20 @@ function buildResumeText() {
   const d = state.draft;
   const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement d\u2019instrumentation';
   const groups = CHECKLISTS[d.mode];
-  let done = 0, total = 0;
-  Object.values(groups).forEach((items) => {
-    items.forEach(([name]) => { total += 1; if (d.casesCochees[name]) done += 1; });
-  });
+  const { done, total } = computeProgress();
 
   const lines = [];
   lines.push('GESTION RESPONSABLE — SUIVI DE TRAVAUX');
   lines.push('=======================================');
   lines.push('');
   lines.push(`Type d\u2019intervention : ${modeLabel}`);
-  lines.push(`Localisation : ${d.localisation}`);
-  lines.push(`Dernière sauvegarde : ${new Date(d.modifieLe).toLocaleString('fr-CA')}`);
+  lines.push(`Localisation : ${d.localisation}${d.champs.bt ? ' (B.T. ' + d.champs.bt + ')' : ''}`);
+  if (d.derniereSauvegardeOfficielle) {
+    const off = d.derniereSauvegardeOfficielle;
+    const dt = new Date(off.at);
+    lines.push(`Sauvegardée officiellement par : ${off.nom} (${off.role})`);
+    lines.push(`Date de sauvegarde (non modifiable) : ${dt.toLocaleDateString('fr-CA')} ${dt.toLocaleTimeString('fr-CA')}`);
+  }
   lines.push('');
   lines.push(`Employé : ${d.champs.employe || ''}`);
   lines.push(`Chargé de projet : ${d.champs.chargeProjet || ''}`);
@@ -368,7 +481,12 @@ function buildResumeText() {
     const title = GROUP_LABELS[group] || group.toUpperCase();
     lines.push(title);
     lines.push('-'.repeat(title.length));
-    items.forEach(([name, label]) => { lines.push(`[${d.casesCochees[name] ? 'X' : ' '}] ${label}`); });
+    items.forEach(([name, label]) => {
+      const v = d.casesCochees[name];
+      const mark = v === true ? 'X' : v === 'na' ? 'N/A' : ' ';
+      lines.push(`[${mark}] ${label}`);
+      if (v === 'na' && d.casesRaisons[name]) lines.push(`      \u2192 raison : ${d.casesRaisons[name]}`);
+    });
     lines.push('');
   });
 
@@ -402,7 +520,7 @@ async function ouvrirDossier() {
   const bt = $('#numBt').value.trim();
   const existing = await dbGet(numero);
   if (existing) {
-    state.draft = existing;
+    state.draft = normalizeDraft(existing);
     state.isNewDraft = false;
     if (bt) state.draft.champs.bt = bt;
   } else {
@@ -419,9 +537,6 @@ async function ouvrirDossier() {
     ? `Nouveau dossier créé localement pour ${numero}.`
     : `Dossier existant repris — dernière sauvegarde ${new Date(state.draft.modifieLe).toLocaleString('fr-CA')}.`;
 
-  if (state.rootDirHandle) {
-    try { await ensureLocalDossierFolder(); } catch (err) { /* best effort */ }
-  }
   setTimeout(() => openWorkspace(), 400);
 }
 
@@ -431,10 +546,12 @@ function openWorkspace() {
   $('#screenDossier').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
 
-  $('#wsNum').textContent = state.numero;
+  $('#wsNum').textContent = state.numero + (d.champs.bt ? ` (${d.champs.bt})` : '');
   $('#wsMeta').textContent = `${d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement'} · créé le ${new Date(d.creeLe).toLocaleDateString('fr-CA')}`;
   $('#wsCreated').textContent = state.isNewDraft ? 'nouveau dossier' : 'dossier existant';
-  $('#wsFolderPill').textContent = state.dossierDirHandle ? `📁 lié : ${state.rootDirHandle.name}/${state.numero}` : '📁 brouillon local seulement';
+  $('#wsFolderPill').textContent = d.derniereSauvegardeOfficielle
+    ? `📁 dernière sauvegarde : ${new Date(d.derniereSauvegardeOfficielle.at).toLocaleDateString('fr-CA')}`
+    : '📁 brouillon local seulement';
 
   $$('[data-link]').forEach((input) => { input.value = d.liens[input.dataset.link] || ''; });
   updateLinkTargets();
@@ -449,22 +566,19 @@ function openWorkspace() {
   $('#fldDateFin').value = d.champs.dateFin || '';
   $('#fldEtatGeneral').value = d.champs.etatGeneral || '';
   $('#fldCommentaires').value = d.champs.commentaires || '';
+  $('#fldEmployeeName').value = d.champs.employeeName || '';
+  $('#fldRole').value = d.champs.employeeRole || 'technicien';
 
   renderAllChecklists();
   refreshAllFileLists();
   refreshApprovals();
   updateFilesCount();
+  updateProgressPill();
 }
 
 // ---------- Onglets ----------
 $$('.tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    $$('.tab-btn').forEach((b) => b.setAttribute('aria-selected', 'false'));
-    btn.setAttribute('aria-selected', 'true');
-    const tab = btn.dataset.tab;
-    state.currentTab = tab;
-    $$('.tab-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== tab));
-  });
+  btn.addEventListener('click', () => selectTab(btn.dataset.tab));
 });
 
 // ---------- Cases à cocher ----------
@@ -477,27 +591,139 @@ function renderChecklist(group) {
     updateChecklistProgress(group, 0, 0);
     return;
   }
+  const canAttach = ATTACH_GROUPS.includes(group);
+
   container.innerHTML = items.map(([name, label]) => {
-    const checked = !!state.draft.casesCochees[name];
-    return `<label class="checklist-item${checked ? ' checked' : ''}" data-check-name="${name}">
-      <input type="checkbox" ${checked ? 'checked' : ''}>
-      <span>${label}</span>
-    </label>`;
+    const val = state.draft.casesCochees[name];
+    const checked = val === true;
+    const isNa = val === 'na';
+    const files = (state.draft.casesFichiers[name] || []);
+    const reason = state.draft.casesRaisons[name] || '';
+    return `
+      <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}" data-item-wrap="${name}">
+        <div class="checklist-item-row">
+          <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
+          <span class="ci-label" data-name="${name}">${label}</span>
+          ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
+          <button type="button" class="btn-na" data-na="${name}">N/A</button>
+        </div>
+        ${isNa && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
+        ${canAttach ? `
+        <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
+          <div class="dropzone-mini" data-item-dropzone="${name}">
+            📎 Glissez-déposez un document, cliquez pour parcourir, ou
+            <button type="button" class="btn btn-outline" data-item-snagit="${name}">utiliser Snagit</button>
+            <input type="file" data-item-file-input="${name}" multiple class="hidden">
+          </div>
+          <div class="file-list-mini" data-item-file-list="${name}"></div>
+        </div>` : ''}
+      </div>`;
   }).join('');
 
-  $$('[data-check-name]', container).forEach((row) => {
-    const input = row.querySelector('input');
-    input.addEventListener('change', () => {
-      const name = row.dataset.checkName;
-      state.draft.casesCochees[name] = input.checked;
-      row.classList.toggle('checked', input.checked);
+  $$('.ci-checkbox', container).forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const name = cb.dataset.name;
+      state.draft.casesCochees[name] = cb.checked;
+      if (cb.checked) delete state.draft.casesRaisons[name];
+      const wrap = container.querySelector(`[data-item-wrap="${name}"]`);
+      if (wrap) { wrap.classList.toggle('checked', cb.checked); wrap.classList.remove('na'); }
+      const drawer = container.querySelector(`[data-drawer="${name}"]`);
+      if (drawer) drawer.classList.toggle('hidden', !cb.checked);
       schedulePersist();
-      const doneCount = items.filter(([n]) => state.draft.casesCochees[n]).length;
-      updateChecklistProgress(group, doneCount, items.length);
+      refreshChecklistProgressFor(group);
+      updateProgressPill();
     });
   });
-  const doneCount = items.filter(([n]) => state.draft.casesCochees[n]).length;
-  updateChecklistProgress(group, doneCount, items.length);
+
+  $$('.ci-label', container).forEach((lbl) => {
+    lbl.addEventListener('click', () => {
+      const drawer = container.querySelector(`[data-drawer="${lbl.dataset.name}"]`);
+      if (drawer) drawer.classList.toggle('hidden');
+    });
+  });
+
+  $$('.btn-na', container).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.na;
+      const isCurrentlyNa = state.draft.casesCochees[name] === 'na';
+      if (isCurrentlyNa) {
+        state.draft.casesCochees[name] = false;
+        delete state.draft.casesRaisons[name];
+      } else {
+        const reason = await askNaReason();
+        if (reason === null) return;
+        state.draft.casesCochees[name] = 'na';
+        state.draft.casesRaisons[name] = reason;
+      }
+      schedulePersist();
+      renderChecklist(group);
+      refreshChecklistProgressFor(group);
+      updateProgressPill();
+    });
+  });
+
+  if (canAttach) {
+    items.forEach(([name]) => {
+      const dz = container.querySelector(`[data-item-dropzone="${name}"]`);
+      if (!dz) return;
+      const input = dz.querySelector('input[type="file"]');
+      dz.addEventListener('click', (e) => {
+        if (e.target === input || e.target.closest('button')) return;
+        input.click();
+      });
+      input.addEventListener('change', () => attachFilesToTask(group, name, input.files));
+      ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+      ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+      dz.addEventListener('drop', (e) => attachFilesToTask(group, name, e.dataTransfer.files));
+      const snagitBtn = dz.querySelector('[data-item-snagit]');
+      if (snagitBtn) {
+        snagitBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.location.href = 'snagit://capture';
+          toast('Ouverture de Snagit… capturez, puis glissez l\u2019image ici.', 4000);
+        });
+      }
+      renderItemFileList(group, name);
+    });
+  }
+
+  refreshChecklistProgressFor(group);
+}
+
+async function attachFilesToTask(group, name, fileList) {
+  if (!fileList || !fileList.length) return;
+  if (!state.draft.casesFichiers[name]) state.draft.casesFichiers[name] = [];
+  Array.from(fileList).forEach((f) => {
+    state.draft.casesFichiers[name].push({
+      name: f.name, size: f.size, type: f.type, uploadedAt: new Date().toISOString(), blob: f,
+    });
+  });
+  await dbPut(state.draft);
+  renderItemFileList(group, name);
+  updateFilesCount();
+  toast(`${fileList.length} document(s) joint(s) à la tâche.`);
+}
+
+function renderItemFileList(group, name) {
+  const container = $(`[data-checklist="${group}"]`);
+  if (!container) return;
+  const listEl = container.querySelector(`[data-item-file-list="${name}"]`);
+  const countEl = container.querySelector(`[data-attach-count="${name}"]`);
+  const files = state.draft.casesFichiers[name] || [];
+  if (countEl) countEl.textContent = files.length ? `📎 ${files.length}` : '';
+  if (!listEl) return;
+  listEl.innerHTML = files.length ? files.map((f) => `
+    <div class="file-row">
+      <span class="ext-badge">${extBadge(f.name)}</span>
+      <span class="file-name">${f.name}</span>
+      <span class="file-meta">${fmtSize(f.size)}</span>
+    </div>`).join('') : '';
+}
+
+function refreshChecklistProgressFor(group) {
+  const items = (CHECKLISTS[state.draft.mode] && CHECKLISTS[state.draft.mode][group]) || [];
+  const done = items.filter(([n]) => isTaskDone(n)).length;
+  updateChecklistProgress(group, done, items.length);
 }
 
 function updateChecklistProgress(group, done, total) {
@@ -541,6 +767,7 @@ $$('[data-link]').forEach((input) => {
 const GENERAL_FIELD_MAP = {
   fldEmploye: 'employe', fldChargeProjet: 'chargeProjet', fldContracteur: 'contracteur',
   fldDateDebut: 'dateDebut', fldDateFin: 'dateFin', fldEtatGeneral: 'etatGeneral', fldCommentaires: 'commentaires',
+  fldEmployeeName: 'employeeName', fldRole: 'employeeRole',
 };
 Object.keys(GENERAL_FIELD_MAP).forEach((id) => {
   const el = document.getElementById(id);
@@ -567,7 +794,6 @@ async function uploadFiles(onglet, files) {
   if (!state.numero) { toast('Entrez d\u2019abord un numéro de localisation.'); return; }
   if (!files || !files.length) return;
 
-  let localOk = 0;
   for (const f of Array.from(files)) {
     const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const storedAs = `${Date.now()}-${safe}`;
@@ -575,17 +801,10 @@ async function uploadFiles(onglet, files) {
       name: f.name, storedAs, size: f.size, type: f.type,
       uploadedAt: new Date().toISOString(), blob: f,
     });
-    if (state.dossierDirHandle) {
-      if (await writeFileToLocalFolder(onglet, f, storedAs)) localOk++;
-    }
   }
 
   await dbPut(state.draft);
-  if (state.dossierDirHandle) await writeTrackingFiles();
-
-  toast(state.dossierDirHandle
-    ? `${files.length} document(s) enregistré(s) dans « ${onglet} » (+ ${localOk} copié(s) dans le dossier).`
-    : `${files.length} document(s) enregistré(s) localement dans « ${onglet} ».`);
+  toast(`${files.length} document(s) enregistré(s) localement dans « ${onglet} ».`);
   refreshFileList(onglet);
   updateFilesCount();
 }
@@ -609,8 +828,9 @@ function refreshAllFileLists() {
 
 function updateFilesCount() {
   if (!state.draft) return;
-  const total = Object.values(state.draft.files || {}).reduce((sum, arr) => sum + arr.length, 0);
-  $('#wsFilesCount').textContent = `${total} document(s)`;
+  const tabTotal = Object.values(state.draft.files || {}).reduce((sum, arr) => sum + arr.length, 0);
+  const taskTotal = Object.values(state.draft.casesFichiers || {}).reduce((sum, arr) => sum + arr.length, 0);
+  $('#wsFilesCount').textContent = `${tabTotal + taskTotal} document(s)`;
 }
 
 $$('.dropzone').forEach((zone) => {
@@ -774,28 +994,16 @@ $('#btnSaveAnnotated').addEventListener('click', () => {
   }, 'image/png');
 });
 
-// ---------- Approbation ----------
-$('#btnApprove').addEventListener('click', async () => {
-  const id = $('#fldEmployeeId').value.trim();
-  const role = $('#fldRole').value;
-  if (!id) { toast("Entrez votre identifiant d'employé."); return; }
-  if (!state.numero) { toast("Créez d'abord un dossier."); return; }
-  state.draft.approbations.push({ employeeId: id, role, at: new Date().toISOString() });
-  await dbPut(state.draft);
-  if (state.dossierDirHandle) await writeTrackingFiles();
-  refreshApprovals();
-  toast(`Dossier approuvé par ${id}.`);
-  $('#fldEmployeeId').value = '';
-});
-
+// ---------- Approbation : le nom/rôle sont persistés comme champs généraux
+// (voir GENERAL_FIELD_MAP) et lus au moment de la sauvegarde officielle ----------
 function refreshApprovals() {
   const el = $('#approvalHistory');
   const list = state.draft ? state.draft.approbations : [];
-  if (!list || !list.length) { el.innerHTML = '<div class="empty-state">Aucune approbation enregistrée pour ce dossier.</div>'; return; }
+  if (!list || !list.length) { el.innerHTML = '<div class="empty-state">Aucune sauvegarde officielle enregistrée pour ce dossier.</div>'; return; }
   el.innerHTML = list.slice().reverse().map((a) => `
     <div class="approval-row">
       <span class="badge-ok">✓</span>
-      <span class="who">${a.employeeId} <span style="color:var(--color-text-faint);font-weight:400;">(${a.role})</span></span>
+      <span class="who">${a.nom} <span style="color:var(--color-text-faint);font-weight:400;">(${a.role})</span></span>
       <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
     </div>`).join('');
 }

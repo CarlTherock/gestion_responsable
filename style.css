@@ -359,3 +359,47 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .checklist-item:hover { border-color: var(--mode-accent); }
 .checklist-item input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--mode-accent); margin-top: 2px; flex-shrink: 0; }
 .checklist-item.checked { border-color: var(--color-success); background: var(--color-success-highlight); }
+
+/* ---------- Cases à cocher : ligne avec N/A + tiroir de pièces jointes ---------- */
+.checklist-item-wrap { display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; }
+.checklist-item-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); cursor: default; }
+.checklist-item-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--mode-accent); flex-shrink: 0; cursor: pointer; }
+.checklist-item-row .ci-label { flex: 1; font-size: var(--text-sm); cursor: pointer; }
+.checklist-item-wrap.checked { border-color: var(--color-success); background: var(--color-success-highlight); }
+.checklist-item-wrap.na { border-color: var(--color-warning, #c9a227); background: rgba(201, 162, 39, 0.08); }
+.checklist-item-wrap.na .ci-label { text-decoration: line-through; opacity: 0.8; }
+.btn-na {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 4px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); cursor: pointer; flex-shrink: 0;
+}
+.btn-na:hover { border-color: var(--color-warning, #c9a227); color: var(--color-warning, #c9a227); }
+.checklist-item-wrap.na .btn-na { background: var(--color-warning, #c9a227); color: #1a1a1a; border-color: var(--color-warning, #c9a227); }
+.ci-attach-count { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); flex-shrink: 0; min-width: 1.5em; text-align: center; }
+
+.checklist-item-drawer { border-top: 1px solid var(--color-border); padding: var(--space-3); background: var(--color-surface-2, rgba(0,0,0,0.12)); }
+.checklist-item-drawer.hidden { display: none; }
+.dropzone-mini {
+  border: 1px dashed var(--color-border); border-radius: var(--radius-sm); padding: var(--space-4);
+  text-align: center; cursor: pointer; font-size: var(--text-sm); color: var(--color-text-muted);
+}
+.dropzone-mini.dragover { border-color: var(--mode-accent); color: var(--mode-accent); }
+.file-list-mini { margin-top: var(--space-2); display: flex; flex-direction: column; gap: 4px; }
+.file-list-mini .file-row { font-size: var(--text-xs); }
+.na-reason { font-size: var(--text-xs); color: var(--color-text-muted); padding: 0 var(--space-3) var(--space-3); font-style: italic; }
+
+/* ---------- Fenêtre modale générique ---------- */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: var(--space-4);
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-6); max-width: 440px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.modal-box h3 { margin: 0 0 var(--space-3); }
+.modal-box textarea, .modal-box input { width: 100%; margin-top: var(--space-2); }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-3); margin-top: var(--space-5); }
+
+/* ---------- Pastille de progression ---------- */
+#wsProgressPill { font-family: var(--font-mono); font-weight: 600; color: #10151b; }
