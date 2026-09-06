@@ -93,6 +93,8 @@ package.json          Dépendances de server.js uniquement
 
 La sauvegarde physique dans un dossier nécessite Chrome ou Edge sur ordinateur. Sur les autres navigateurs, le dossier reste modifiable en brouillon local, sans perte de données.
 
+Interface adaptée pour mobile (mise en page tactile, boutons pleine largeur, fenêtres limitées à la hauteur d'écran) sans aucun changement à l'affichage sur ordinateur.
+
 ---
 
 ## Utilisation
