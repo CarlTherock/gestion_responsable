@@ -403,3 +403,18 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 
 /* ---------- Pastille de progression ---------- */
 #wsProgressPill { font-family: var(--font-mono); font-weight: 600; color: #10151b; }
+
+/* ---------- Non-conformité ---------- */
+.checklist-item-wrap.nc { border-color: var(--color-danger, #d64545); background: rgba(214, 69, 69, 0.08); }
+.checklist-item-wrap.nc .ci-label { text-decoration: line-through; opacity: 0.85; }
+.btn-nc {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 4px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); cursor: pointer; flex-shrink: 0;
+}
+.btn-nc:hover { border-color: var(--color-danger, #d64545); color: var(--color-danger, #d64545); }
+.checklist-item-wrap.nc .btn-nc { background: var(--color-danger, #d64545); color: #fff; border-color: var(--color-danger, #d64545); }
+
+.nc-summary-item { border: 1px solid var(--color-danger, #d64545); background: rgba(214, 69, 69, 0.08); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-2); }
+.nc-summary-item .nc-section { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.nc-summary-item .nc-label { font-size: var(--text-sm); font-weight: 600; margin: 2px 0; }
+.nc-summary-item .nc-reason { font-size: var(--text-sm); color: var(--color-text-muted); font-style: italic; }

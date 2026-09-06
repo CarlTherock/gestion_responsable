@@ -56,6 +56,7 @@ const CHECKLISTS = {
       ['securite.armoiresRousseau', 'Matériel utilisé recommandé aux armoires Rousseau'],
       ['securite.materiauxTrop', 'Matériaux en trop retournés au magasin'],
     ],
+    vpo: [],
   },
   demantelement: {
     identification: [],
@@ -92,11 +93,17 @@ const CHECKLISTS = {
       ['securite.nettoyage', 'Lieux de travail nettoyés'],
       ['securite.materiauxRecuperes', 'Matériaux récupérés retournés au magasin'],
     ],
+    vpo: [],
   },
 };
 
 const UPLOAD_TABS = ['mise-a-jour'];
 const ATTACH_GROUPS = ['plans', 'programmation', 'systeme', 'information'];
+const GROUP_LABELS = {
+  identification: 'IDENTIFICATION', plans: 'PLANS', programmation: 'PROGRAMMATION',
+  systeme: 'MISES À JOUR SYSTÈME', information: 'INFORMATION', securite: 'SÉCURITÉ ET GÉNÉRAL',
+  vpo: 'VPO — VÉRIFICATION PRÉ-OPÉRATIONNELLE',
+};
 
 const state = {
   mode: null,               // 'installation' | 'demantelement'
@@ -165,6 +172,16 @@ async function askNaReason() {
     title: 'Marquer comme non applicable',
     bodyHtml: '<label style="font-size:var(--text-sm);color:var(--color-text-muted);">Raison (optionnel)</label><textarea id="modalNaReason" rows="3" placeholder="ex. Aucune alimentation électrique sur ce point"></textarea>',
     confirmLabel: 'Marquer N/A',
+  });
+  if (!confirmed) return null;
+  return $('#modalNaReason').value.trim();
+}
+
+async function askNcReason() {
+  const confirmed = await showModal({
+    title: 'Marquer comme non conforme',
+    bodyHtml: '<label style="font-size:var(--text-sm);color:var(--color-text-muted);">Raison (optionnel)</label><textarea id="modalNaReason" rows="3" placeholder="ex. Câblage ne respecte pas le plan"></textarea>',
+    confirmLabel: 'Marquer non conforme',
   });
   if (!confirmed) return null;
   return $('#modalNaReason').value.trim();
@@ -330,6 +347,30 @@ function updateProgressPill() {
   pill.style.background = `hsl(${hue}, 70%, 45%)`;
 }
 
+function renderNonConformites() {
+  const el = $('#ncSummary');
+  if (!el || !state.draft) return;
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  const rows = [];
+  Object.entries(groups).forEach(([group, items]) => {
+    items.forEach(([name, label]) => {
+      if (state.draft.casesCochees[name] === 'nc') {
+        rows.push({ group, label, reason: state.draft.casesRaisons[name] || '' });
+      }
+    });
+  });
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>';
+    return;
+  }
+  el.innerHTML = rows.map((r) => `
+    <div class="nc-summary-item">
+      <div class="nc-section">${GROUP_LABELS[r.group] || r.group}</div>
+      <div class="nc-label">${r.label}</div>
+      ${r.reason ? `<div class="nc-reason">Raison : ${r.reason}</div>` : ''}
+    </div>`).join('');
+}
+
 $('#btnSaveFolder').addEventListener('click', async () => {
   if (!FS_ACCESS_SUPPORTED) {
     toast('La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.', 4000);
@@ -341,8 +382,12 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   }
   const { done, total, pct } = computeProgress();
   if (pct < 100) {
-    toast(`Il reste ${total - done} tâche(s) à cocher ou marquer N/A avant de pouvoir sauvegarder.`, 4500);
-    return;
+    const confirmed = await showModal({
+      title: 'Dossier incomplet',
+      bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Il reste <strong>${total - done}</strong> tâche(s) non cochée(s) ou non marquée(s) N/A. Dans le cadre de la gestion du changement, chaque tâche doit normalement être complétée avant la fermeture du dossier.</p><p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);">Vous pouvez tout de même sauvegarder ce dossier partiel.</p>`,
+      confirmLabel: 'Sauvegarder quand même',
+    });
+    if (!confirmed) return;
   }
   const nom = $('#fldEmployeeName').value.trim();
   const role = $('#fldRole').value;
@@ -472,10 +517,6 @@ function buildResumeText() {
   lines.push(`Tâches terminées : ${done} / ${total}`);
   lines.push('');
 
-  const GROUP_LABELS = {
-    identification: 'IDENTIFICATION', plans: 'PLANS', programmation: 'PROGRAMMATION',
-    systeme: 'MISES À JOUR SYSTÈME', information: 'INFORMATION', securite: 'SÉCURITÉ ET GÉNÉRAL',
-  };
   Object.entries(groups).forEach(([group, items]) => {
     if (!items.length) return;
     const title = GROUP_LABELS[group] || group.toUpperCase();
@@ -483,9 +524,9 @@ function buildResumeText() {
     lines.push('-'.repeat(title.length));
     items.forEach(([name, label]) => {
       const v = d.casesCochees[name];
-      const mark = v === true ? 'X' : v === 'na' ? 'N/A' : ' ';
+      const mark = v === true ? 'X' : v === 'na' ? 'N/A' : v === 'nc' ? '!' : ' ';
       lines.push(`[${mark}] ${label}`);
-      if (v === 'na' && d.casesRaisons[name]) lines.push(`      \u2192 raison : ${d.casesRaisons[name]}`);
+      if ((v === 'na' || v === 'nc') && d.casesRaisons[name]) lines.push(`      \u2192 raison : ${d.casesRaisons[name]}`);
     });
     lines.push('');
   });
@@ -574,6 +615,7 @@ function openWorkspace() {
   refreshApprovals();
   updateFilesCount();
   updateProgressPill();
+  renderNonConformites();
 }
 
 // ---------- Onglets ----------
@@ -597,17 +639,19 @@ function renderChecklist(group) {
     const val = state.draft.casesCochees[name];
     const checked = val === true;
     const isNa = val === 'na';
+    const isNc = val === 'nc';
     const files = (state.draft.casesFichiers[name] || []);
     const reason = state.draft.casesRaisons[name] || '';
     return `
-      <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}" data-item-wrap="${name}">
+      <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}" data-item-wrap="${name}">
         <div class="checklist-item-row">
           <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
           <span class="ci-label" data-name="${name}">${label}</span>
           ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
           <button type="button" class="btn-na" data-na="${name}">N/A</button>
+          <button type="button" class="btn-nc" data-nc="${name}">Non conforme</button>
         </div>
-        ${isNa && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
+        ${(isNa || isNc) && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
         ${canAttach ? `
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
           <div class="dropzone-mini" data-item-dropzone="${name}">
@@ -626,12 +670,13 @@ function renderChecklist(group) {
       state.draft.casesCochees[name] = cb.checked;
       if (cb.checked) delete state.draft.casesRaisons[name];
       const wrap = container.querySelector(`[data-item-wrap="${name}"]`);
-      if (wrap) { wrap.classList.toggle('checked', cb.checked); wrap.classList.remove('na'); }
+      if (wrap) { wrap.classList.toggle('checked', cb.checked); wrap.classList.remove('na', 'nc'); }
       const drawer = container.querySelector(`[data-drawer="${name}"]`);
       if (drawer) drawer.classList.toggle('hidden', !cb.checked);
       schedulePersist();
       refreshChecklistProgressFor(group);
       updateProgressPill();
+      renderNonConformites();
     });
   });
 
@@ -659,6 +704,28 @@ function renderChecklist(group) {
       renderChecklist(group);
       refreshChecklistProgressFor(group);
       updateProgressPill();
+      renderNonConformites();
+    });
+  });
+
+  $$('.btn-nc', container).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.nc;
+      const isCurrentlyNc = state.draft.casesCochees[name] === 'nc';
+      if (isCurrentlyNc) {
+        state.draft.casesCochees[name] = false;
+        delete state.draft.casesRaisons[name];
+      } else {
+        const reason = await askNcReason();
+        if (reason === null) return;
+        state.draft.casesCochees[name] = 'nc';
+        state.draft.casesRaisons[name] = reason;
+      }
+      schedulePersist();
+      renderChecklist(group);
+      refreshChecklistProgressFor(group);
+      updateProgressPill();
+      renderNonConformites();
     });
   });
 
@@ -732,7 +799,7 @@ function updateChecklistProgress(group, done, total) {
 }
 
 function renderAllChecklists() {
-  ['identification', 'plans', 'programmation', 'systeme', 'information', 'securite'].forEach(renderChecklist);
+  ['identification', 'plans', 'programmation', 'systeme', 'information', 'securite', 'vpo'].forEach(renderChecklist);
 }
 
 // ---------- Onglet Identification : liens hypertextes ----------

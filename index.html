@@ -131,6 +131,9 @@
         <button class="tab-btn" role="tab" data-tab="mise-a-jour" aria-selected="false">Mise à jour</button>
         <button class="tab-btn" role="tab" data-tab="information" aria-selected="false">Information</button>
         <button class="tab-btn" role="tab" data-tab="securite" aria-selected="false">Sécurité et général</button>
+        <button class="tab-btn" role="tab" data-tab="vpo" aria-selected="false">VPO</button>
+        <button class="tab-btn" role="tab" data-tab="non-conformite" aria-selected="false">Non-conformité</button>
+        <button class="tab-btn" role="tab" data-tab="commentaire" aria-selected="false">Commentaire</button>
         <button class="tab-btn" role="tab" data-tab="approbation" aria-selected="false">Approbation</button>
       </nav>
 
@@ -279,12 +282,36 @@
             <div class="field"><label>Date de fin</label><input type="text" id="fldDateFin" placeholder="AAAA-MM-JJ"></div>
             <div class="field"><label>État général du travail</label><input type="text" id="fldEtatGeneral" placeholder="ex. terminé, en cours, en attente"></div>
           </div>
-          <div class="field-row" style="margin-top: var(--space-4);">
-            <div class="field"><label>Commentaires / notes</label><textarea id="fldCommentaires" rows="3"></textarea></div>
-          </div>
         </div>
       </div>
 
+      <!-- ---- Onglet : VPO (Vérification pré-opérationnelle) ---- -->
+      <div class="tab-panel hidden" data-panel="vpo">
+        <div class="panel-title">VPO — Vérification pré-opérationnelle</div>
+        <p class="panel-desc">Liste de vérifications à confirmer avant la remise en service. Dis-moi quelles tâches doivent apparaître ici et je les ajouterai — la liste est vide pour l'instant.</p>
+        <div class="checklist-progress" data-checklist-progress="vpo"></div>
+        <div class="checklist" data-checklist="vpo"></div>
+      </div>
+
+      <!-- ---- Onglet : Non-conformité ---- -->
+      <div class="tab-panel hidden" data-panel="non-conformite">
+        <div class="panel-title">Non-conformités relevées</div>
+        <p class="panel-desc">Résumé automatique de toutes les tâches marquées « Non conforme » dans les autres onglets, avec la raison indiquée.</p>
+        <div id="ncSummary">
+          <div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>
+        </div>
+      </div>
+
+      <!-- ---- Onglet : Commentaire ---- -->
+      <div class="tab-panel hidden" data-panel="commentaire">
+        <div class="panel-title">Commentaires généraux</div>
+        <p class="panel-desc">Notes libres sur ce dossier.</p>
+        <div class="dossier-panel">
+          <div class="field-row">
+            <div class="field"><label>Commentaires / notes</label><textarea id="fldCommentaires" rows="8"></textarea></div>
+          </div>
+        </div>
+      </div>
       <!-- ---- Onglet : Approbation ---- -->
       <div class="tab-panel hidden" data-panel="approbation">
         <div class="panel-title">Approbation du dossier</div>
