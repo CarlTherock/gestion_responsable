@@ -454,6 +454,12 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     }
     // Sinon, state.dossierDirHandle pointe déjà vers le dossier importé — on réécrit dedans.
     await writeEverythingToDisk(now);
+
+    // Le nom de l'employé doit être retapé à chaque sauvegarde officielle
+    // (traçabilité : jamais réutilisé silencieusement d'une sauvegarde à l'autre).
+    state.draft.champs.employeeName = '';
+    $('#fldEmployeeName').value = '';
+
     await dbPut(state.draft);
     refreshApprovals();
     updateApprobationBadge();
@@ -528,6 +534,21 @@ async function writeEverythingToDisk(date) {
   const w2 = await resumeHandle.createWritable();
   await w2.write(buildResumeText());
   await w2.close();
+
+  // Archive versionnée : conserve un instantané horodaté de chaque sauvegarde
+  // officielle, pour pouvoir comparer l'évolution entre les versions.
+  try {
+    const histDir = await state.dossierDirHandle.getDirectoryHandle('Historique', { create: true });
+    const stamp = (date || new Date()).toISOString().replace(/[:.]/g, '-');
+    const jh = await histDir.getFileHandle(`suivi_${stamp}.json`, { create: true });
+    const wj = await jh.createWritable();
+    await wj.write(JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2));
+    await wj.close();
+    const rh = await histDir.getFileHandle(`resume_${stamp}.txt`, { create: true });
+    const wr = await rh.createWritable();
+    await wr.write(buildResumeText());
+    await wr.close();
+  } catch (err) { /* best effort */ }
 
   const docsDir = await state.dossierDirHandle.getDirectoryHandle('Documents', { create: true });
   for (const [name, files] of Object.entries(state.draft.casesFichiers || {})) {
