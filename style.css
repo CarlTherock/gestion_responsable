@@ -418,3 +418,8 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .nc-summary-item .nc-section { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
 .nc-summary-item .nc-label { font-size: var(--text-sm); font-weight: 600; margin: 2px 0; }
 .nc-summary-item .nc-reason { font-size: var(--text-sm); color: var(--color-text-muted); font-style: italic; }
+
+/* ---------- Validation du champ B.T. ---------- */
+.field-hint { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; }
+.field input.invalid { border-color: var(--color-danger, #d64545) !important; }
+.field input.valid { border-color: var(--color-success) !important; }

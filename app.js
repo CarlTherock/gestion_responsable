@@ -406,7 +406,7 @@ $('#btnSaveFolder').addEventListener('click', async () => {
 
   try {
     await ensureLocalDossierFolder(now);
-    await writeEverythingToDisk();
+    await writeEverythingToDisk(now);
     await dbPut(state.draft);
     refreshApprovals();
     toast(`Dossier ${folderName(now)} sauvegardé avec succès.`);
@@ -450,7 +450,7 @@ $('#numLoc').addEventListener('blur', async () => {
 // Écrit tout le contenu du brouillon (suivi.json, resume.txt, documents par
 // tâche, photos de mise à jour) sur le disque. N'est appelé QUE lors de la
 // sauvegarde officielle (100 % des tâches cochées ou N/A + nom d'employé).
-async function writeEverythingToDisk() {
+async function writeEverythingToDisk(date) {
   if (!state.dossierDirHandle || !state.draft) return;
 
   const jsonHandle = await state.dossierDirHandle.getFileHandle('suivi.json', { create: true });
@@ -486,6 +486,123 @@ async function writeEverythingToDisk() {
       await w.close();
     } catch (err) { /* best effort par fichier */ }
   }
+
+  try {
+    const dashName = `Dashboard - ${folderName(date)}.html`;
+    const dashHandle = await state.dossierDirHandle.getFileHandle(dashName, { create: true });
+    const w3 = await dashHandle.createWritable();
+    await w3.write(buildDashboardHtml());
+    await w3.close();
+  } catch (err) { /* best effort */ }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function isImageFile(filename) {
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename);
+}
+
+function buildDashboardHtml() {
+  const d = state.draft;
+  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement d\u2019instrumentation';
+  const { done, total, pct } = computeProgress();
+  const hue = Math.max(0, Math.min(120, (pct / 100) * 120));
+  const groups = CHECKLISTS[d.mode];
+
+  const badgeFor = (v) => {
+    if (v === true) return '<span class="badge done">\u2705 complété</span>';
+    if (v === 'na') return '<span class="badge na">\ud83d\udfe1 N/A</span>';
+    if (v === 'nc') return '<span class="badge nc">\ud83d\udd34 non conforme</span>';
+    return '<span class="badge pending">\u2b1c à faire</span>';
+  };
+
+  const attachmentsHtml = (files, baseHref) => {
+    if (!files || !files.length) return '';
+    return `<div class="attachments">${files.map((f) => {
+      const safeStored = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const href = `${baseHref}${safeStored}`;
+      return isImageFile(f.name)
+        ? `<a href="${href}" target="_blank" class="thumb-link" title="${escapeHtml(f.name)}"><img src="${href}" class="thumb" alt="${escapeHtml(f.name)}"></a>`
+        : `<a href="${href}" target="_blank" class="doc-link">\ud83d\udcc4 ${escapeHtml(f.name)}</a>`;
+    }).join('')}</div>`;
+  };
+
+  const sectionsHtml = Object.entries(groups).map(([group, items]) => {
+    if (!items.length) return '';
+    const rows = items.map(([name, label]) => {
+      const v = d.casesCochees[name];
+      const reason = (v === 'na' || v === 'nc') && d.casesRaisons[name] ? `<div class="reason">Raison : ${escapeHtml(d.casesRaisons[name])}</div>` : '';
+      const files = d.casesFichiers[name] || [];
+      const filesHtml = attachmentsHtml(files, `Documents/${name}__`);
+      return `<tr><td>${escapeHtml(label)}</td><td>${badgeFor(v)}</td><td>${reason}${filesHtml}</td></tr>`;
+    }).join('');
+    return `<h2>${GROUP_LABELS[group] || group}</h2><table class="task-table"><thead><tr><th>Tâche</th><th>État</th><th>Détails</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }).join('');
+
+  const ncItems = [];
+  Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
+    if (d.casesCochees[name] === 'nc') ncItems.push({ group, label, reason: d.casesRaisons[name] || '' });
+  }));
+  const ncHtml = ncItems.length
+    ? `<ul class="nc-list">${ncItems.map((r) => `<li><strong>${GROUP_LABELS[r.group] || r.group}</strong> — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>`
+    : '<p class="empty">Aucune non-conformité relevée.</p>';
+
+  const photos = d.files['mise-a-jour'] || [];
+  const photosHtml = photos.length ? attachmentsHtml(photos, 'Photos/') : '<p class="empty">Aucune image de mise à jour.</p>';
+
+  const histHtml = (d.approbations || []).length
+    ? `<table class="task-table"><thead><tr><th>Nom</th><th>Rôle</th><th>Date</th></tr></thead><tbody>${d.approbations.slice().reverse().map((a) => `<tr><td>${escapeHtml(a.nom)}</td><td>${escapeHtml(a.role)}</td><td>${new Date(a.at).toLocaleString('fr-CA')}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="empty">Aucune sauvegarde officielle enregistrée.</p>';
+
+  const titre = `Dashboard \u2014 ${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}`;
+
+  return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<title>${titre}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background:#10151b; color:#e6e9ec; margin:0; padding: 32px; }
+  h1 { margin:0 0 4px; font-size: 22px; } h2 { margin-top: 32px; border-bottom:1px solid #2a323d; padding-bottom:6px; font-size:16px; }
+  .sub { color:#8a97a6; margin-bottom: 24px; font-size: 13px; }
+  .progress-wrap { background:#1a212b; border-radius:8px; padding:16px; margin-bottom:24px; }
+  .progress-bar-bg { background:#2a323d; border-radius:6px; height:20px; overflow:hidden; }
+  .progress-bar-fill { height:100%; border-radius:6px; }
+  table.task-table { width:100%; border-collapse: collapse; margin-bottom: 8px; }
+  table.task-table th, table.task-table td { text-align:left; padding:8px 10px; border-bottom:1px solid #2a323d; vertical-align: top; font-size: 14px; }
+  .badge { padding:2px 8px; border-radius:12px; font-size:12px; white-space:nowrap; }
+  .badge.done { background:#123d24; color:#4ade80; } .badge.pending { background:#2a323d; color:#8a97a6; }
+  .badge.na { background:#3d3212; color:#eab308; } .badge.nc { background:#3d1414; color:#f87171; }
+  .reason, .reason-inline { font-size:12px; color:#8a97a6; font-style:italic; }
+  .reason { margin-top:4px; }
+  .attachments { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+  .thumb { width:64px; height:64px; object-fit:cover; border-radius:6px; border:1px solid #2a323d; }
+  .doc-link, .thumb-link { color:#38bdf8; text-decoration:none; font-size:13px; }
+  .nc-list { color:#f87171; list-style: none; padding-left: 0; }
+  .nc-list li { margin-bottom: 6px; }
+  .empty { color:#8a97a6; font-style:italic; }
+</style></head>
+<body>
+  <h1>${titre}</h1>
+  <div class="sub">${escapeHtml(modeLabel)} \u00b7 généré le ${new Date().toLocaleString('fr-CA')}</div>
+  <div class="progress-wrap">
+    <strong>${Math.round(pct)} % complété</strong> (${done} / ${total} tâches)
+    <div class="progress-bar-bg" style="margin-top:8px;"><div class="progress-bar-fill" style="width:${pct}%; background:hsl(${hue},70%,45%);"></div></div>
+  </div>
+
+  ${sectionsHtml}
+
+  <h2>Non-conformités</h2>
+  ${ncHtml}
+
+  <h2>Images et documents de mise à jour</h2>
+  ${photosHtml}
+
+  <h2>Historique des sauvegardes officielles</h2>
+  ${histHtml}
+
+  ${d.champs.commentaires ? `<h2>Commentaires</h2><p>${escapeHtml(d.champs.commentaires).replace(/\n/g, '<br>')}</p>` : ''}
+</body></html>`;
 }
 
 function buildResumeText() {
@@ -545,6 +662,17 @@ function buildResumeText() {
 $('#btnOuvrirDossier').addEventListener('click', ouvrirDossier);
 $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirDossier(); });
 
+const BT_PATTERN = /^\d{3}-[A-Za-z]{2,3}-[A-Za-z0-9]{4,5}$/;
+
+$('#numBt').addEventListener('input', () => {
+  const el = $('#numBt');
+  const val = el.value.trim();
+  if (!val) { el.classList.remove('invalid', 'valid'); return; }
+  const ok = BT_PATTERN.test(val);
+  el.classList.toggle('invalid', !ok);
+  el.classList.toggle('valid', ok);
+});
+
 async function ouvrirDossier() {
   const numero = $('#numLoc').value.trim().toUpperCase();
   const statusEl = $('#dossierStatus');
@@ -555,15 +683,24 @@ async function ouvrirDossier() {
     return;
   }
 
+  const bt = $('#numBt').value.trim().toUpperCase();
+  if (!BT_PATTERN.test(bt)) {
+    statusEl.classList.remove('hidden', 'ok', 'new');
+    statusEl.classList.add('err');
+    statusEl.textContent = 'Le B.T. doit respecter le format 123-AB-4567X (3 chiffres, 2 ou 3 lettres, 4 ou 5 caractères alphanumériques).';
+    $('#numBt').classList.add('invalid');
+    $('#numBt').focus();
+    return;
+  }
+
   statusEl.classList.remove('hidden', 'ok', 'err');
   statusEl.textContent = 'Ouverture du dossier local…';
 
-  const bt = $('#numBt').value.trim();
   const existing = await dbGet(numero);
   if (existing) {
     state.draft = normalizeDraft(existing);
     state.isNewDraft = false;
-    if (bt) state.draft.champs.bt = bt;
+    state.draft.champs.bt = bt;
   } else {
     state.draft = newDraft(numero, state.mode);
     state.draft.champs.bt = bt;
