@@ -347,3 +347,15 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
   .mode-badge { display: none; }
   .choice-heading h1 { font-size: var(--text-lg); }
 }
+
+/* ---------- Listes de vérification (cases à cocher) ---------- */
+.checklist-progress { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: var(--space-3); min-height: 1em; }
+.checklist { display: flex; flex-direction: column; gap: var(--space-2); }
+.checklist-item {
+  display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  cursor: pointer; font-size: var(--text-sm);
+}
+.checklist-item:hover { border-color: var(--mode-accent); }
+.checklist-item input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--mode-accent); margin-top: 2px; flex-shrink: 0; }
+.checklist-item.checked { border-color: var(--color-success); background: var(--color-success-highlight); }

@@ -77,7 +77,7 @@
       <div class="choice-heading">
         <div class="kicker" id="step2Kicker">Étape 2 · Localisation</div>
         <h1 id="step2Title">Numéro de localisation</h1>
-        <p>Entrez le numéro d'emplacement (tag). Le système vérifie si un dossier existe déjà sur le réseau — sinon, il le crée automatiquement.</p>
+        <p>Entrez le numéro d'emplacement (tag). Le dossier est créé et sauvegardé localement sur cet appareil — aucun serveur requis.</p>
       </div>
 
       <div class="dossier-panel">
@@ -87,18 +87,19 @@
             <label for="numLoc">Numéro de localisation</label>
             <input type="text" id="numLoc" placeholder="ex. 12-FT-4407">
           </div>
-          <button class="btn btn-primary" id="btnCheckDossier">Vérifier / Créer</button>
+          <button class="btn btn-primary" id="btnOuvrirDossier">Continuer →</button>
         </div>
         <div class="status-line hidden" id="dossierStatus"></div>
       </div>
 
       <div class="dossier-panel" style="margin-top: var(--space-4);">
-        <h3>Emplacement du dossier sur cet appareil</h3>
-        <p class="panel-desc" style="margin-bottom: var(--space-3);">Choisissez ou créez le dossier (sur votre ordinateur ou un lecteur réseau déjà branché) qui contiendra le fichier de suivi de travaux et tous les documents de cette localisation. Fonctionne sur Chrome/Edge de bureau — sur iPhone, tout reste sauvegardé automatiquement sur le serveur du dossier.</p>
+        <h3>Emplacement de sauvegarde du dossier</h3>
+        <p class="panel-desc" style="margin-bottom: var(--space-3);">Choisissez l'endroit où vous voulez sauvegarder le dossier de cette localisation. Vous pouvez sélectionner un dossier sur votre ordinateur ou un lecteur réseau déjà accessible dans Windows.</p>
         <div class="field-row">
-          <button class="btn btn-outline" id="btnChooseFolder">📁 Choisir / créer un dossier</button>
-          <span class="status-line" id="folderStatus" style="margin:0;">Aucun dossier lié — sauvegarde sur le serveur uniquement.</span>
+          <button class="btn btn-outline" id="btnChooseFolder">📁 Choisir l'emplacement de sauvegarde</button>
+          <button class="btn btn-primary" id="btnSaveFolder">💾 Sauvegarder le dossier</button>
         </div>
+        <div class="status-line" id="folderStatus" role="status" aria-live="polite" style="margin-top: var(--space-3);">Aucun emplacement de sauvegarde sélectionné.</div>
       </div>
     </section>
 
@@ -110,7 +111,7 @@
           <div class="dossier-meta" id="wsMeta">—</div>
         </div>
         <span class="tag-pill" id="wsCreated">nouveau dossier</span>
-        <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">📁 serveur seulement</span>
+        <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">📁 brouillon local seulement</span>
         <div class="topbar-spacer"></div>
         <span class="tag-pill" id="wsFilesCount">0 document(s)</span>
       </div>
@@ -119,8 +120,10 @@
         <button class="tab-btn" role="tab" data-tab="identification" aria-selected="true">Identification</button>
         <button class="tab-btn" role="tab" data-tab="plans" aria-selected="false">Plans</button>
         <button class="tab-btn" role="tab" data-tab="programmation" aria-selected="false">Programmation</button>
+        <button class="tab-btn" role="tab" data-tab="systeme" aria-selected="false">Système</button>
         <button class="tab-btn" role="tab" data-tab="mise-a-jour" aria-selected="false">Mise à jour</button>
         <button class="tab-btn" role="tab" data-tab="information" aria-selected="false">Information</button>
+        <button class="tab-btn" role="tab" data-tab="securite" aria-selected="false">Sécurité et général</button>
         <button class="tab-btn" role="tab" data-tab="approbation" aria-selected="false">Approbation</button>
       </nav>
 
@@ -172,13 +175,21 @@
             <div class="field"><label>Description</label><textarea id="fldDesc" rows="2" placeholder="Description courte de l'équipement / du point de mesure"></textarea></div>
           </div>
         </div>
+
+        <div class="panel-title" style="margin-top: var(--space-8); font-size: var(--text-base);">Tâches d'identification</div>
+        <div class="checklist-progress" data-checklist-progress="identification"></div>
+        <div class="checklist" data-checklist="identification"></div>
       </div>
 
       <!-- ---- Onglet : Plans ---- -->
       <div class="tab-panel hidden" data-panel="plans">
         <div class="panel-title">Plans du dossier</div>
-        <p class="panel-desc">Glissez vos plans mis à jour (PDF, JPG, DWG, ou autre). Ils sont sauvegardés directement dans le dossier réseau du numéro de localisation.</p>
-        <div class="dropzone" data-dropzone="plans">
+        <p class="panel-desc">Glissez vos plans mis à jour (PDF, JPG, DWG, ou autre). Ils sont sauvegardés dans le dossier « Documents » de cette localisation.</p>
+
+        <div class="checklist-progress" data-checklist-progress="plans"></div>
+        <div class="checklist" data-checklist="plans"></div>
+
+        <div class="dropzone" data-dropzone="plans" style="margin-top: var(--space-6);">
           <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
           <strong>Glissez-déposez vos plans ici</strong>
           <p>PDF, JPG, PNG, DWG — ou cliquez pour parcourir</p>
@@ -191,13 +202,25 @@
       <div class="tab-panel hidden" data-panel="programmation">
         <div class="panel-title">Programmation</div>
         <p class="panel-desc">Déposez ou téléchargez les documents de modification de programmation (logique, configuration, paramètres).</p>
-        <div class="dropzone" data-dropzone="programmation">
+
+        <div class="checklist-progress" data-checklist-progress="programmation"></div>
+        <div class="checklist" data-checklist="programmation"></div>
+
+        <div class="dropzone" data-dropzone="programmation" style="margin-top: var(--space-6);">
           <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
           <strong>Glissez-déposez les documents de modification</strong>
           <p>PDF, DOCX, XLSX, ou fichiers de configuration</p>
           <input type="file" data-file-input="programmation" multiple>
         </div>
         <div class="file-list" data-file-list="programmation"></div>
+      </div>
+
+      <!-- ---- Onglet : Système (Immpower / route d'entretien / livret) ---- -->
+      <div class="tab-panel hidden" data-panel="systeme">
+        <div class="panel-title">Mises à jour système</div>
+        <p class="panel-desc">Immpower, route d'entretien et livret d'instrumentation.</p>
+        <div class="checklist-progress" data-checklist-progress="systeme"></div>
+        <div class="checklist" data-checklist="systeme"></div>
       </div>
 
       <!-- ---- Onglet : Mise à jour ---- -->
@@ -240,13 +263,43 @@
       <div class="tab-panel hidden" data-panel="information">
         <div class="panel-title">Information et documentation</div>
         <p class="panel-desc">Déposez toute documentation reliée à cette localisation (fiches techniques, manuels, certificats, notes).</p>
-        <div class="dropzone" data-dropzone="information">
+
+        <div class="checklist-progress" data-checklist-progress="information"></div>
+        <div class="checklist" data-checklist="information"></div>
+
+        <div class="dropzone" data-dropzone="information" style="margin-top: var(--space-6);">
           <svg class="dz-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
           <strong>Glissez la documentation ici</strong>
           <p>Tout format — PDF, DOCX, XLSX, images</p>
           <input type="file" data-file-input="information" multiple>
         </div>
         <div class="file-list" data-file-list="information"></div>
+      </div>
+
+      <!-- ---- Onglet : Sécurité et général ---- -->
+      <div class="tab-panel hidden" data-panel="securite">
+        <div class="panel-title">Sécurité et général</div>
+        <p class="panel-desc">Fiches de cadenassage, nettoyage des lieux, matériel, et champs généraux du dossier.</p>
+
+        <div class="checklist-progress" data-checklist-progress="securite"></div>
+        <div class="checklist" data-checklist="securite"></div>
+
+        <div class="dossier-panel" style="margin-top: var(--space-6);">
+          <h3>Champs généraux</h3>
+          <div class="field-row">
+            <div class="field"><label>Employé</label><input type="text" id="fldEmploye" placeholder="ex. 4471-DOM"></div>
+            <div class="field"><label>Chargé de projet</label><input type="text" id="fldChargeProjet"></div>
+            <div class="field"><label>Contracteur</label><input type="text" id="fldContracteur"></div>
+          </div>
+          <div class="field-row" style="margin-top: var(--space-4);">
+            <div class="field"><label>Date de début</label><input type="text" id="fldDateDebut" placeholder="AAAA-MM-JJ"></div>
+            <div class="field"><label>Date de fin</label><input type="text" id="fldDateFin" placeholder="AAAA-MM-JJ"></div>
+            <div class="field"><label>État général du travail</label><input type="text" id="fldEtatGeneral" placeholder="ex. terminé, en cours, en attente"></div>
+          </div>
+          <div class="field-row" style="margin-top: var(--space-4);">
+            <div class="field"><label>Commentaires / notes</label><textarea id="fldCommentaires" rows="3"></textarea></div>
+          </div>
+        </div>
       </div>
 
       <!-- ---- Onglet : Approbation ---- -->
@@ -281,333 +334,5 @@
 <div class="toast" id="toast"></div>
 
 <script src="./app.js"></script>
-<script data-pplx-inline-edit>
-(function () {
-  if (window === window.top) return;
-
-  const allowedParentOrigins = ["https://www.perplexity.ai","https://perplexity.ai","https://testing.perplexity.ai","https://staging.perplexity.ai","https://*.preview.i.perplexity.ai","http://perplexity.localhost","http://localhost:1420","http://127.0.0.1:1420","http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173"];
-  const MAX_FONT_BYTES = 500 * 1024;
-  const MAX_TOTAL_FONT_BYTES = 2 * 1024 * 1024;
-  let scrollForwarding = false;
-  let scrollRaf = 0;
-  let trustedTopOrigin = null;
-
-  // Allow entries like "https://*.preview.i.perplexity.ai" — the wildcard
-  // matches a single DNS label (no dots), so "https://*.foo" cannot stretch
-  // across multiple labels.
-  function matchesAllowedOrigin(origin) {
-    if (!origin) return false;
-    for (const entry of allowedParentOrigins) {
-      if (!entry.includes("*")) {
-        if (entry === origin) return true;
-        continue;
-      }
-      const pattern = new RegExp(
-        "^" +
-          entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+") +
-          "$",
-      );
-      if (pattern.test(origin)) return true;
-    }
-    return false;
-  }
-
-  // Trust decision: when the sender is same-origin-visible (event.origin is a
-  // real origin like https://www.perplexity.ai) we trust event.origin directly.
-  // When event.origin is "null" (opaque broker srcdoc), we fall back to the
-  // broker's stamped `parentOrigin` to identify the top window. The fallback
-  // is claim-only — we rely on the browser's native `targetOrigin` enforcement
-  // on the response path (see postToTrustedTop) to ensure replies can't be
-  // delivered to anyone but the actual top window of that claimed origin.
-  function getTrustedParentOrigin(event) {
-    const forwardedParentOrigin =
-      typeof event.data.parentOrigin === "string" ? event.data.parentOrigin : null;
-    const parentOrigin = event.origin === "null" ? forwardedParentOrigin : event.origin;
-    return matchesAllowedOrigin(parentOrigin) ? parentOrigin : null;
-  }
-
-  // All responses go to window.top with targetOrigin = the allowlisted origin.
-  // An attacker that iframes us inside their own null-origin broker can claim
-  // any parentOrigin they like, but the browser will drop the reply whenever
-  // the real top's origin doesn't match — so the screenshot never leaves.
-  function postToTrustedTop(message) {
-    if (!trustedTopOrigin) return;
-    try {
-      window.top.postMessage(message, trustedTopOrigin);
-    } catch (_error) {}
-  }
-
-  function inlineAll(original, clone) {
-    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
-
-    try {
-      const computedStyle = getComputedStyle(original);
-      // cssText on a computed style is the serialized declaration in modern
-      // Chromium/Safari — a single read beats enumerating ~400 longhand
-      // properties. Firefox returns "" here, so we fall back on empty.
-      const serialized = computedStyle.cssText;
-      if (serialized) {
-        clone.style.cssText = serialized;
-      } else {
-        const parts = new Array(computedStyle.length);
-        for (let index = 0; index < computedStyle.length; index += 1) {
-          const property = computedStyle[index];
-          parts[index] = `${property}:${computedStyle.getPropertyValue(property)};`;
-        }
-        clone.style.cssText = parts.join("");
-      }
-    } catch (_error) {}
-
-    const originalChildren = original.children;
-    const clonedChildren = clone.children;
-    for (
-      let index = 0;
-      index < originalChildren.length && index < clonedChildren.length;
-      index += 1
-    ) {
-      inlineAll(originalChildren[index], clonedChildren[index]);
-    }
-  }
-
-  function extractFontUrl(srcValue) {
-    const matches = [
-      ...srcValue.matchAll(
-        /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/gi,
-      ),
-    ];
-    if (matches.length === 0) return null;
-    const woff2 = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff2"));
-    if (woff2) return woff2[1];
-    const woff = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff"));
-    if (woff) return woff[1];
-    return matches[0][1];
-  }
-
-  // Cache resolved font URL -> data URI across captures. Fonts on a page
-  // essentially never change, and a batch run emits multiple captures back to
-  // back — without this we'd refetch + re-base64 every time.
-  const fontDataUriCache = new Map();
-  const SRC_DECLARATION_RE = /src\s*:\s*[^;}]+/i;
-
-  async function fetchAsDataUri(url) {
-    if (fontDataUriCache.has(url)) return fontDataUriCache.get(url);
-    let dataUri = null;
-    try {
-      const response = await fetch(url, { mode: "cors", credentials: "omit" });
-      if (response.ok) {
-        const blob = await response.blob();
-        if (blob.size <= MAX_FONT_BYTES) {
-          dataUri = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () =>
-              resolve(typeof reader.result === "string" ? reader.result : null);
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(blob);
-          });
-        }
-      }
-    } catch (_error) {
-      dataUri = null;
-    }
-    fontDataUriCache.set(url, dataUri);
-    return dataUri;
-  }
-
-  function collectFontFaceRuleTexts() {
-    const rules = [];
-    for (const sheet of document.styleSheets) {
-      let cssRules;
-      try {
-        cssRules = sheet.cssRules;
-      } catch (_error) {
-        continue;
-      }
-      if (!cssRules) continue;
-      for (const rule of cssRules) {
-        const cssText = rule.cssText || "";
-        if (cssText.startsWith("@font-face")) rules.push(cssText);
-      }
-    }
-    return rules;
-  }
-
-  async function buildInlinedFontCss() {
-    const ruleTexts = collectFontFaceRuleTexts();
-    if (ruleTexts.length === 0) return null;
-
-    const resolved = ruleTexts.map((cssText) => {
-      if (!SRC_DECLARATION_RE.test(cssText)) return null;
-      const srcMatch = cssText.match(/src\s*:\s*([^;}]+)[;}]/i);
-      if (!srcMatch) return null;
-      const url = extractFontUrl(srcMatch[1]);
-      if (!url) return null;
-      try {
-        return { cssText, url: new URL(url, document.baseURI).href };
-      } catch (_error) {
-        return null;
-      }
-    });
-
-    const dataUris = await Promise.all(
-      resolved.map((entry) => (entry ? fetchAsDataUri(entry.url) : Promise.resolve(null))),
-    );
-
-    const inlined = [];
-    let totalBytes = 0;
-    for (let index = 0; index < resolved.length; index += 1) {
-      const entry = resolved[index];
-      const dataUri = dataUris[index];
-      if (!entry || !dataUri) continue;
-      const approxBytes = dataUri.length * 0.75;
-      if (totalBytes + approxBytes > MAX_TOTAL_FONT_BYTES) break;
-      totalBytes += approxBytes;
-      inlined.push(entry.cssText.replace(SRC_DECLARATION_RE, `src: url("${dataUri}")`));
-    }
-    return inlined.length > 0 ? inlined.join("\n") : null;
-  }
-
-  function stripExternal(clone) {
-    const images = clone.querySelectorAll("img");
-    for (let index = 0; index < images.length; index += 1) {
-      const src = images[index].getAttribute("src");
-      if (src && !src.startsWith("data:")) images[index].removeAttribute("src");
-    }
-
-    const elements = clone.querySelectorAll("*");
-    for (let index = 0; index < elements.length; index += 1) {
-      const style = elements[index].style.cssText;
-      if (style && style.includes("url(")) {
-        elements[index].style.cssText = style.replace(
-          /url\(["']?(?!data:)[^)"']*["']?\)/gi,
-          "none",
-        );
-      }
-    }
-  }
-
-  function emitScroll() {
-    scrollRaf = 0;
-    if (!scrollForwarding) return;
-    postToTrustedTop({
-      type: "INLINE_EDIT_SCROLL",
-      scrollX: window.scrollX,
-      scrollY: window.scrollY,
-    });
-  }
-
-  window.addEventListener(
-    "scroll",
-    function () {
-      if (!scrollForwarding || scrollRaf) return;
-      scrollRaf = requestAnimationFrame(emitScroll);
-    },
-    { passive: true, capture: true },
-  );
-
-  async function handleCaptureRequest(event) {
-    const requestId = event.data.requestId;
-    const scrollX = window.scrollX;
-    const scrollY = window.scrollY;
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-
-    function postResult(dataUrl) {
-      postToTrustedTop({
-        type: "INLINE_EDIT_SCREENSHOT_RESULT",
-        requestId,
-        dataUrl,
-        scrollX,
-        scrollY,
-      });
-    }
-
-    try {
-      // Wait for any pending web fonts to resolve so both inline metrics and
-      // the @font-face inlining below see the same loaded faces.
-      if (document.fonts && document.fonts.ready) {
-        try {
-          await document.fonts.ready;
-        } catch (_error) {}
-      }
-
-      const clone = document.documentElement.cloneNode(true);
-      inlineAll(document.documentElement, clone);
-
-      const removedNodes = clone.querySelectorAll("script,link[rel=\"stylesheet\"],style");
-      for (let index = 0; index < removedNodes.length; index += 1) {
-        removedNodes[index].remove();
-      }
-
-      stripExternal(clone);
-
-      // Re-embed web fonts as data-URI @font-face rules so the SVG rasterizer
-      // can resolve them — external font URLs aren't fetched during
-      // foreignObject rendering, which would otherwise force a fallback face
-      // and change text metrics.
-      const inlinedFontCss = await buildInlinedFontCss();
-      if (inlinedFontCss) {
-        const styleEl = document.createElement("style");
-        styleEl.textContent = inlinedFontCss;
-        const head = clone.querySelector("head");
-        if (head) head.appendChild(styleEl);
-        else clone.insertBefore(styleEl, clone.firstChild);
-      }
-
-      const html = new XMLSerializer().serializeToString(clone);
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-        '<foreignObject width="100%" height="100%">' +
-        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">` +
-        `<div style="position:relative;left:-${scrollX}px;top:-${scrollY}px">` +
-        html +
-        "</div></div></foreignObject></svg>";
-      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-      const image = new Image();
-      image.onload = function () {
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext("2d").drawImage(image, 0, 0);
-        postResult(canvas.toDataURL("image/png"));
-      };
-      image.onerror = function () {
-        postResult(null);
-      };
-      image.src = svgUrl;
-    } catch (_error) {
-      postResult(null);
-    }
-  }
-
-  window.addEventListener("message", function (event) {
-    if (!event.data) return;
-    // Only accept messages from the direct parent frame. Blocks sibling /
-    // unrelated-window postMessage senders that could otherwise reach us.
-    if (event.source !== window.parent) return;
-
-    const trustedParentOrigin = getTrustedParentOrigin(event);
-    if (!trustedParentOrigin) return;
-    trustedTopOrigin = trustedParentOrigin;
-
-    if (event.data.type === "INLINE_EDIT_SCROLL_START") {
-      scrollForwarding = true;
-      emitScroll();
-      return;
-    }
-
-    if (event.data.type === "INLINE_EDIT_SCROLL_STOP") {
-      scrollForwarding = false;
-      if (scrollRaf) cancelAnimationFrame(scrollRaf);
-      scrollRaf = 0;
-      return;
-    }
-
-    if (event.data.type !== "INLINE_EDIT_CAPTURE_REQUEST") return;
-
-    handleCaptureRequest(event);
-  });
-})();
-
-
-</script></body>
+</body>
 </html>
