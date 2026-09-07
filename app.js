@@ -1077,48 +1077,26 @@ function mobileFilterTabsByCategory(catId) {
   });
   const subNav = $('.tabs-nav');
   if (subNav) subNav.classList.toggle('single-tab-category', visibleCount <= 1);
-  layoutMobileBottomBars();
 }
 
-// Empile correctement (sous-onglets + catégories + copyright) en bas de l'écran
-// sur mobile, en mesurant les hauteurs réelles au lieu de valeurs fixes qui se
-// désynchronisent dès qu'une bande apparaît ou disparaît (ex. Aperçu seul).
-function layoutMobileBottomBars() {
-  const footer = document.getElementById('legalFooter');
+// Affine la hauteur réelle de la seule barre fixe qui reste (category-nav) via une
+// variable CSS. Ceci est une AMÉLIORATION seulement : le CSS de base (--mobile-nav-height
+// avec une valeur de secours généreuse, voir style.css) protège déjà correctement
+// l'interface même si ce code ne s'exécute jamais ou s'exécute en retard.
+function refineMobileNavHeight() {
+  if (window.innerWidth > 680) return;
   const categoryNav = document.querySelector('.category-nav');
-  const tabsNav = document.querySelector('.tabs-nav');
-  if (!footer) return;
-
-  if (window.innerWidth > 680) {
-    footer.style.bottom = '';
-    if (tabsNav) tabsNav.style.bottom = '';
-    document.querySelectorAll('.tab-panel').forEach((p) => { p.style.paddingBottom = ''; });
-    return;
-  }
-
-  const catH = categoryNav ? categoryNav.offsetHeight : 0;
-  const tabsH = tabsNav ? tabsNav.offsetHeight : 0;
-  if (tabsNav) tabsNav.style.bottom = catH + 'px';
-  footer.style.bottom = (catH + tabsH) + 'px';
-
-  const totalStack = catH + tabsH + footer.offsetHeight;
-  document.querySelectorAll('.tab-panel').forEach((p) => { p.style.paddingBottom = totalStack + 'px'; });
+  if (!categoryNav || !categoryNav.offsetHeight) return;
+  document.documentElement.style.setProperty('--mobile-nav-height', categoryNav.offsetHeight + 'px');
 }
-window.addEventListener('resize', layoutMobileBottomBars);
-window.addEventListener('load', layoutMobileBottomBars);
-document.addEventListener('DOMContentLoaded', layoutMobileBottomBars);
+window.addEventListener('resize', refineMobileNavHeight);
+window.addEventListener('load', refineMobileNavHeight);
+document.addEventListener('DOMContentLoaded', refineMobileNavHeight);
+window.addEventListener('orientationchange', refineMobileNavHeight);
 
-// Filet de robustesse : recalcule automatiquement dès que la barre de catégories,
-// la bande de sous-onglets ou le copyright changent de taille pour QUELQUE raison
-// que ce soit (police qui finit de charger, contenu qui change, rotation d'écran…).
-// Élimine toute dépendance au bon minutage d'exécution du JavaScript.
 if (window.ResizeObserver) {
-  const mobileBarsObserver = new ResizeObserver(() => layoutMobileBottomBars());
-  ['legalFooter'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) mobileBarsObserver.observe(el);
-  });
-  document.querySelectorAll('.category-nav, .tabs-nav').forEach((el) => mobileBarsObserver.observe(el));
+  const navHeightObserver = new ResizeObserver(() => refineMobileNavHeight());
+  document.querySelectorAll('.category-nav').forEach((el) => navHeightObserver.observe(el));
 }
 
 $$('.category-btn').forEach((btn) => {
