@@ -116,6 +116,30 @@ const state = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// ---------- Icônes SVG des onglets (traits fins, style professionnel) ----------
+const ICONS = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+  clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/>',
+  camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
+  shieldCheck: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  tag: '<path d="M20.59 13.41L11 3.83A2 2 0 0 0 9.59 3.24H4a1 1 0 0 0-1 1v5.59a2 2 0 0 0 .59 1.41l9.58 9.58a2 2 0 0 0 2.82 0l4.6-4.6a2 2 0 0 0 0-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+  info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  checkCircle: '<circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/>',
+  alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  messageCircle: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
+  edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+};
+$$('.tab-icon[data-icon]').forEach((span) => {
+  const inner = ICONS[span.dataset.icon];
+  if (inner) span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+});
+
 // ---------- Splash screen (3 secondes, avec clic de secours) ----------
 function hideSplash() {
   const splash = document.getElementById('splashScreen');
@@ -1020,11 +1044,47 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   }
 });
 
+// ---------- Navigation mobile par catégories (Aperçu / Exécution / Terrain / Qualité / Dossier) ----------
+const TAB_CATEGORIES = {
+  apercu: 'apercu',
+  identification: 'execution', plans: 'execution', programmation: 'execution',
+  systeme: 'execution', information: 'execution', securite: 'execution',
+  'mise-a-jour': 'terrain', documents: 'terrain',
+  vpo: 'qualite', 'non-conformite': 'qualite',
+  commentaire: 'dossier', approbation: 'dossier',
+};
+
+function mobileFilterTabsByCategory(catId) {
+  const tabBtns = $$('.tab-btn');
+  let visibleCount = 0;
+  tabBtns.forEach((btn) => {
+    const belongs = TAB_CATEGORIES[btn.dataset.tab] === catId;
+    btn.classList.toggle('mobile-hidden-tab', !belongs);
+    if (belongs) visibleCount += 1;
+  });
+  const subNav = $('.tabs-nav');
+  if (subNav) subNav.classList.toggle('single-tab-category', visibleCount <= 1);
+}
+
+$$('.category-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const cat = btn.dataset.category;
+    const firstTab = Object.entries(TAB_CATEGORIES).find(([, c]) => c === cat)?.[0];
+    if (firstTab) selectTab(firstTab);
+  });
+});
+
 function selectTab(tab) {
   $$('.tab-btn').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
   $$('.tab-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== tab));
   state.currentTab = tab;
   window.scrollTo({ top: 0, behavior: 'auto' });
+
+  const cat = TAB_CATEGORIES[tab];
+  if (cat) {
+    $$('.category-btn').forEach((b) => b.classList.toggle('active', b.dataset.category === cat));
+    mobileFilterTabsByCategory(cat);
+  }
 }
 
 function flashField(selector) {
@@ -1701,6 +1761,7 @@ function openWorkspace() {
   updateApprobationBadge();
   renderQrThumb();
   updateOfflineIndicator();
+  selectTab('apercu');
 }
 
 // ---------- Onglets ----------
