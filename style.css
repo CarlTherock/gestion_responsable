@@ -95,6 +95,33 @@
   --shadow-lg: 0 16px 40px rgba(20,20,10,0.14);
 }
 
+/* Mobile : le thème clair s'applique par défaut, en CSS pur — aucune dépendance
+   au JavaScript ni à son ordre d'exécution. Le bouton de thème peut forcer le
+   sombre explicitement (data-theme="dark" a alors priorité, voir :not() ci-dessous). */
+@media (max-width: 680px) {
+  :root:not([data-theme='dark']) {
+    --color-bg: #eef0ec;
+    --color-surface: #f8f8f5;
+    --color-surface-2: #ffffff;
+    --color-surface-offset: #e9e9e2;
+    --color-divider: #d7d7cd;
+    --color-border: #c7c8bd;
+    --color-text: #1a2027;
+    --color-text-muted: #5b6470;
+    --color-text-faint: #909aa4;
+    --color-text-inverse: #f8f8f5;
+    --color-primary-highlight: #d5eef1;
+    --color-install-highlight: #ffe6d1;
+    --color-decom-highlight: #fbdadb;
+    --color-warning-highlight: #fbecc0;
+    --color-success-highlight: #d9f0e1;
+    --color-error-highlight: #fbdadb;
+    --shadow-sm: 0 1px 2px rgba(20,20,10,0.08);
+    --shadow-md: 0 6px 18px rgba(20,20,10,0.10);
+    --shadow-lg: 0 16px 40px rgba(20,20,10,0.14);
+  }
+}
+
 [data-mode='installation'] {
   --mode-accent: var(--color-install);
   --mode-accent-hover: var(--color-install-hover);
@@ -122,7 +149,7 @@
 }
 
 /* ---------- Layout shell ---------- */
-#app { min-height: 100dvh; display: flex; flex-direction: column; }
+#app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 
 .topbar {
   display: flex; align-items: center; gap: var(--space-4);
@@ -484,23 +511,19 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .splash-label { color: #ffffff; font-weight: 700; letter-spacing: 0.18em; font-size: 13px; margin: 0; opacity: 0.85; }
 @keyframes splashPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
 
-/* ---------- Barre de copyright permanente ---------- */
-#legalFooter {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10000;
+/* ---------- Barre de copyright — fait partie du flux normal du contenu,
+   dernier élément de chaque écran (jamais fixed/absolute/sticky) ---------- */
+.legal-footer {
   text-align: center; padding: 7px 12px;
   font-family: -apple-system, "Segoe UI", Arial, sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.015em;
   color: rgba(255,255,255,0.62);
   background: rgba(8,11,16,0.82);
   border-top: 1px solid rgba(255,255,255,0.10);
-  backdrop-filter: blur(4px);
-  pointer-events: none;
 }
-#legalFooter b { color: rgba(255,255,255,0.85); font-weight: 700; }
+.legal-footer b { color: rgba(255,255,255,0.85); font-weight: 700; }
 @media (max-width: 480px) {
-  #legalFooter { font-size: 9.5px; padding: 6px 10px; line-height: 1.3; }
+  .legal-footer { font-size: 9.5px; padding: 6px 10px; line-height: 1.3; }
 }
-body { padding-bottom: 34px; }
-.toast { bottom: calc(var(--space-6) + 34px) !important; }
 
 /* ---------- Aperçu (tableau de bord intégré, écran d'accueil de l'espace de travail) ---------- */
 .hero-ring { display: flex; align-items: center; gap: var(--space-6); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
@@ -542,12 +565,13 @@ body { padding-bottom: 34px; }
   #btnSaveFolder { flex: 1 1 auto; justify-content: center; }
   .qr-thumb-btn svg { width: 30px; height: 30px; }
 
-  /* Sous-onglets : bande fixe juste au-dessus de la barre de catégories,
-     ne montre que les onglets de la catégorie active (filtrés en JS) */
+  /* Sous-onglets : bande EN FLUX NORMAL juste sous l'en-tête, scrolle avec la
+     page. Ne montre que les onglets de la catégorie active (filtrés en JS).
+     N'est jamais "fixed" : une seule barre fixe existe (.category-nav). */
   .tabs-nav {
-    position: fixed; left: 0; right: 0; bottom: 54px; z-index: 499;
+    position: static;
     padding: 4px var(--space-2); overflow-x: auto; overflow-y: hidden;
-    background: var(--color-surface); border-top: 1px solid var(--color-divider); border-bottom: 1px solid var(--color-divider);
+    background: var(--color-surface); border-bottom: 1px solid var(--color-divider);
     box-shadow: none;
     gap: 0;
   }
@@ -561,26 +585,48 @@ body { padding-bottom: 34px; }
   .tab-icon { display: block; line-height: 1; }
   .tab-icon svg { width: 19px; height: 19px; display: block; margin: 0 auto; }
   .tab-label { line-height: 1.1; }
-  .tab-btn[aria-selected="true"] { border-bottom: none; }
+  /* Navigation : bleu pétrole stable (indépendant du mode installation/démantèlement) */
+  .tab-btn[aria-selected="true"] { color: var(--color-primary); border-bottom: none; }
   .tab-btn[data-tab="approbation"].needs-attention::after { top: 2px; right: 6px; }
 
-  /* Catégories : barre principale fixe tout en bas (5 destinations) */
+  /* Catégories : SEULE barre fixe tout en bas de l'écran (4 destinations).
+     padding-bottom respecte la zone sûre iPhone (encoche/barre d'accueil) —
+     les boutons ne sont donc jamais coupés. */
   .category-nav {
     display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 500;
     background: var(--color-surface); border-top: 1px solid var(--color-divider);
-    box-shadow: 0 -2px 14px rgba(0,0,0,0.28);
+    box-shadow: none;
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
   }
   .category-btn {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     padding: 6px 2px 8px; background: none; border: none; color: var(--color-text-muted);
     font-family: var(--font-body); font-size: 10px; cursor: pointer;
+    min-height: 44px;
   }
   .category-btn .tab-icon svg { width: 21px; height: 21px; }
-  .category-btn.active { color: var(--mode-accent); }
+  .category-btn.active { color: var(--color-primary); }
 
-  #legalFooter { bottom: 118px; }
-  #screenWorkspace { padding-bottom: 130px; }
-  .tab-panel { padding: var(--space-5) var(--space-4) var(--space-8); }
+  /* Espace de sécurité pour que le dernier élément (et le copyright, qui suit
+     dans le flux normal) ne se retrouve jamais caché sous la barre fixe.
+     --mobile-nav-height a une valeur de secours sûre en CSS (fonctionne même
+     sans JS) ; le JS l'affine ensuite à la hauteur exacte mesurée. */
+  .tab-panel {
+    padding: var(--space-5) var(--space-4);
+    padding-bottom: calc(var(--mobile-nav-height, 64px) + env(safe-area-inset-bottom) + var(--space-4));
+  }
+
+  /* Le copyright de l'écran de travail doit aussi rester au-dessus de la barre fixe */
+  #screenWorkspace > .legal-footer {
+    padding-bottom: calc(var(--mobile-nav-height, 64px) + env(safe-area-inset-bottom) + var(--space-4));
+  }
+  /* Sur les écrans sans barre fixe, seule la zone sûre de l'iPhone compte */
+  #screenChoice > .legal-footer, #screenDossier > .legal-footer {
+    padding-bottom: max(7px, env(safe-area-inset-bottom));
+  }
+
+  /* Le fil (toast) ne doit pas non plus être caché par la barre fixe */
+  .toast { bottom: calc(var(--mobile-nav-height, 64px) + env(safe-area-inset-bottom) + var(--space-3)) !important; }
 
   /* Cartes de tâches : le groupe de boutons passe à la ligne, checkbox+libellé restent ensemble */
   .checklist-item-row { flex-wrap: wrap; row-gap: var(--space-2); }
@@ -593,7 +639,8 @@ body { padding-bottom: 34px; }
   .vpo-row .btn-vpo-remove { order: 3; margin-left: auto; }
 
   /* Fenêtres modales : ne dépassent jamais la hauteur de l'écran */
-  .modal-box { padding: var(--space-4); max-height: 85vh; overflow-y: auto; }
+  .modal-box { padding: var(--space-4); max-height: min(85vh, calc(85dvh - env(safe-area-inset-bottom))); overflow-y: auto; }
+  .modal-overlay { padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) max(var(--space-4), env(safe-area-inset-bottom)); }
 
   /* Aperçu : anneaux plus compacts, moins d'espace perdu */
   .hero-ring { padding: var(--space-4); gap: var(--space-4); flex-wrap: wrap; }
@@ -609,6 +656,34 @@ body { padding-bottom: 34px; }
 
   /* Boutons pleine largeur plus faciles à toucher au doigt */
   #btnChooseFolder, #btnImportNetwork, #btnOuvrirDossier { width: 100%; justify-content: center; }
+
+  /* ---- Résumé (mobile) : écran allégé — on retire les anneaux et cartes secondaires ---- */
+  .tab-panel[data-panel="apercu"] .rings-grid,
+  .tab-panel[data-panel="apercu"] .stat-row,
+  .tab-panel[data-panel="apercu"] > .panel-title,
+  .tab-panel[data-panel="apercu"] #timelineSection { display: none; }
+  .hero-ring { padding: var(--space-3); gap: var(--space-3); }
+  .cockpit-header-meta #btnExportApercu, .cockpit-header-meta #btnShareApercu, .cockpit-header-meta #btnPrintApercu { display: none; }
+
+  /* ---- Checklist (mobile) : lignes compactes, N/A et Non conforme discrets ---- */
+  .checklist-item-row { padding: var(--space-2) var(--space-3); gap: var(--space-2); }
+  .ci-label { font-size: var(--text-sm); }
+  .btn-na, .btn-nc, .btn-preuve, .btn-note {
+    font-size: 10px; padding: 2px 6px; opacity: 0.65; border: none; background: transparent;
+  }
+  .btn-na:active, .btn-nc:active { opacity: 1; }
+  .checklist-item-wrap { border-radius: var(--radius-sm); box-shadow: none; }
+
+  /* ---- Écarts (mobile) : cartes plus compactes ---- */
+  .nc-summary-item { padding: var(--space-3); box-shadow: none; }
+
+  /* ---- Moins d'ombres et de coins arrondis, esprit terrain sobre ---- */
+  .next-action-card, .closure-card, .stat-card, .ring-card, .status-banner { box-shadow: none; border-radius: var(--radius-sm); }
+
+  /* ---- Transitions courtes (100-150 ms), pas d'effet "flashy" ---- */
+  .tab-panel { animation: tabFadeIn 0.12s ease; }
+  .timeline-item { animation: timelineFadeIn 0.12s ease; }
+  .checklist-item-wrap.checked { animation: taskCompletePulse 0.15s ease; }
 }
 
 /* ---------- Gravité des non-conformités ---------- */
@@ -677,7 +752,7 @@ body { padding-bottom: 34px; }
 
 /* ---------- Impression ---------- */
 @media print {
-  .topbar, .hazard-strip, .tabs-nav, .workspace-header, .toast, #legalFooter,
+  .topbar, .hazard-strip, .tabs-nav, .workspace-header, .toast, .legal-footer, .category-nav,
   .btn, button, .dropzone-mini, .incomplete-filter-row, .modal-overlay { display: none !important; }
   .tab-panel.hidden { display: block !important; }
   body { background: #fff !important; color: #000 !important; padding: 0 !important; }
@@ -733,3 +808,6 @@ select.ncextra-gravite {
 
 /* ---------- Boutons d'action sur l'Assistant de clôture ---------- */
 .closure-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+
+/* ---------- Rangée d'accès rapide (QR/Exporter/Partager) — onglet Documents ---------- */
+.quick-actions-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-5); }

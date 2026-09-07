@@ -118,6 +118,7 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 // ---------- Icônes SVG des onglets (traits fins, style professionnel) ----------
 const ICONS = {
+  menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
   clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/>',
   camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
@@ -177,10 +178,18 @@ if ('serviceWorker' in navigator) {
 // ---------- Theme toggle ----------
 (function () {
   const root = document.documentElement;
-  let theme = 'dark'; // industriel : sombre par défaut
-  root.setAttribute('data-theme', theme);
+  // Le thème par défaut (clair sur mobile, sombre sur PC) est géré entièrement
+  // en CSS via une media query — jamais de dépendance au JS pour l'affichage
+  // initial, donc aucun risque de désynchronisation selon le moment d'exécution.
+  // Ce bouton sert seulement à forcer manuellement l'autre thème si désiré.
+  let theme = null;
   $('#themeToggle').addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
+    if (theme === null) {
+      const currentlyLight = window.matchMedia('(max-width: 680px)').matches;
+      theme = currentlyLight ? 'dark' : 'light';
+    } else {
+      theme = theme === 'dark' ? 'light' : 'dark';
+    }
     root.setAttribute('data-theme', theme);
   });
 })();
@@ -770,7 +779,7 @@ function renderApercu() {
 
     <div class="next-action-card">
       <div class="next-action-body">
-        <div class="next-action-kicker">Prochaine meilleure action</div>
+        <div class="next-action-kicker">Prochaine action</div>
         <div class="next-action-text">${escapeHtml(nextAction.text)}</div>
       </div>
       <button type="button" class="btn btn-primary" data-apercu-jump="${nextAction.tab}">Y aller →</button>
@@ -792,7 +801,7 @@ function renderApercu() {
     </div>
 
     <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}">
-      <div class="closure-title">${closure.ready ? '\u2705 Assistant de clôture' : '\u26d4 Assistant de clôture'}</div>
+      <div class="closure-title">${closure.ready ? '\u2705 Vérification avant fermeture' : '\u26d4 Vérification avant fermeture'}</div>
       <div class="closure-text">${escapeHtml(closure.text)}</div>
       ${!closure.ready ? `<div class="closure-actions">
         ${(total - done) > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="${groupStats.find((g) => g.pct < 100)?.group || 'identification'}">Voir les tâches incomplètes</button>` : ''}
@@ -812,8 +821,10 @@ function renderApercu() {
       </label>
     </div>
 
-    <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Activité récente</div>
-    <div class="timeline">${journalHtml}</div>
+    <div id="timelineSection">
+      <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Activité récente</div>
+      <div class="timeline">${journalHtml}</div>
+    </div>
   `;
 
   $$('[data-apercu-jump]', container).forEach((card) => {
@@ -832,35 +843,38 @@ function renderApercu() {
   if (printBtn) printBtn.addEventListener('click', () => window.print());
 
   const exportBtn = $('#btnExportApercu', container);
-  if (exportBtn) {
-    exportBtn.addEventListener('click', () => {
-      const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Dashboard - ${state.numero || 'dossier'}${d.champs.bt ? ' (' + d.champs.bt + ')' : ''}.html`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      toast('Dashboard téléchargé.');
-    });
-  }
+  if (exportBtn) exportBtn.addEventListener('click', exportDashboardFile);
 
   const shareBtn = $('#btnShareApercu', container);
-  if (shareBtn) {
-    shareBtn.addEventListener('click', async () => {
-      const url = buildDossierUrl();
-      const shareData = { title: `Dossier ${state.numero}`, text: `Suivi TEI — ${titre}`, url };
-      if (navigator.share) {
-        try { await navigator.share(shareData); } catch (err) { /* annulé par l'utilisateur */ }
-      } else if (navigator.clipboard) {
-        try { await navigator.clipboard.writeText(url); toast('Lien copié dans le presse-papiers.'); }
-        catch (err) { toast('Impossible de copier le lien automatiquement.', 4000); }
-      } else {
-        toast(url, 6000);
-      }
-    });
+  if (shareBtn) shareBtn.addEventListener('click', shareDossierLink);
+}
+
+function exportDashboardFile() {
+  if (!state.draft) return;
+  const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Dashboard - ${state.numero || 'dossier'}${state.draft.champs.bt ? ' (' + state.draft.champs.bt + ')' : ''}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast('Dashboard téléchargé.');
+}
+
+async function shareDossierLink() {
+  if (!state.draft) return;
+  const url = buildDossierUrl();
+  const titre = [state.draft.champs.type, state.draft.champs.tag].filter(Boolean).join(' — ') || 'dossier';
+  const shareData = { title: `Dossier ${state.numero}`, text: `Suivi TEI — ${titre}`, url };
+  if (navigator.share) {
+    try { await navigator.share(shareData); } catch (err) { /* annulé par l'utilisateur */ }
+  } else if (navigator.clipboard) {
+    try { await navigator.clipboard.writeText(url); toast('Lien copié dans le presse-papiers.'); }
+    catch (err) { toast('Impossible de copier le lien automatiquement.', 4000); }
+  } else {
+    toast(url, 6000);
   }
 }
 
@@ -1046,12 +1060,11 @@ $('#btnSaveFolder').addEventListener('click', async () => {
 
 // ---------- Navigation mobile par catégories (Aperçu / Exécution / Terrain / Qualité / Dossier) ----------
 const TAB_CATEGORIES = {
-  apercu: 'apercu',
-  identification: 'execution', plans: 'execution', programmation: 'execution',
-  systeme: 'execution', information: 'execution', securite: 'execution',
-  'mise-a-jour': 'terrain', documents: 'terrain',
-  vpo: 'qualite', 'non-conformite': 'qualite',
-  commentaire: 'dossier', approbation: 'dossier',
+  apercu: 'resume',
+  identification: 'checklist', plans: 'checklist', programmation: 'checklist',
+  systeme: 'checklist', information: 'checklist', securite: 'checklist',
+  vpo: 'ecarts', 'non-conformite': 'ecarts',
+  'mise-a-jour': 'plus', documents: 'plus', commentaire: 'plus', approbation: 'plus',
 };
 
 function mobileFilterTabsByCategory(catId) {
@@ -1064,6 +1077,26 @@ function mobileFilterTabsByCategory(catId) {
   });
   const subNav = $('.tabs-nav');
   if (subNav) subNav.classList.toggle('single-tab-category', visibleCount <= 1);
+}
+
+// Affine la hauteur réelle de la seule barre fixe qui reste (category-nav) via une
+// variable CSS. Ceci est une AMÉLIORATION seulement : le CSS de base (--mobile-nav-height
+// avec une valeur de secours généreuse, voir style.css) protège déjà correctement
+// l'interface même si ce code ne s'exécute jamais ou s'exécute en retard.
+function refineMobileNavHeight() {
+  if (window.innerWidth > 680) return;
+  const categoryNav = document.querySelector('.category-nav');
+  if (!categoryNav || !categoryNav.offsetHeight) return;
+  document.documentElement.style.setProperty('--mobile-nav-height', categoryNav.offsetHeight + 'px');
+}
+window.addEventListener('resize', refineMobileNavHeight);
+window.addEventListener('load', refineMobileNavHeight);
+document.addEventListener('DOMContentLoaded', refineMobileNavHeight);
+window.addEventListener('orientationchange', refineMobileNavHeight);
+
+if (window.ResizeObserver) {
+  const navHeightObserver = new ResizeObserver(() => refineMobileNavHeight());
+  document.querySelectorAll('.category-nav').forEach((el) => navHeightObserver.observe(el));
 }
 
 $$('.category-btn').forEach((btn) => {
@@ -1353,7 +1386,7 @@ function buildDashboardHtml() {
     : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
 
   const closureVerdict = computeClosureVerdict();
-  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">${closureVerdict.ready ? '\u2705' : '\u26d4'} Assistant de clôture</div>${escapeHtml(closureVerdict.text)}</div>`;
+  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">${closureVerdict.ready ? '\u2705' : '\u26d4'} Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}</div>`;
 
   // ---- Documents / photos ----
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
@@ -1526,7 +1559,7 @@ function buildDashboardHtml() {
     <h2 class="section-title">Progression par section — cliquez pour voir le détail</h2>
     <div class="rings-grid">${ringsHtml}</div>
 
-    <h2 class="section-title">Assistant de clôture</h2>
+    <h2 class="section-title">Vérification avant fermeture</h2>
     ${closureHtml}
 
     <h2 class="section-title">Non-conformités</h2>
@@ -2493,12 +2526,13 @@ function generateQrSvg(text) {
 }
 
 function renderQrThumb() {
-  const btn = $('#btnShowQr');
-  if (!btn || !state.numero || !state.draft) return;
-  btn.innerHTML = generateQrSvg(buildDossierUrl());
+  [$('#btnShowQr'), $('#btnShowQrPlus')].forEach((btn) => {
+    if (!btn || !state.numero || !state.draft) return;
+    btn.innerHTML = generateQrSvg(buildDossierUrl());
+  });
 }
 
-$('#btnShowQr').addEventListener('click', () => {
+function showQrModal() {
   if (!state.numero || !state.draft) { toast('Ouvrez d\u2019abord un dossier.'); return; }
   const url = buildDossierUrl();
   const svg = generateQrSvg(url);
@@ -2516,7 +2550,11 @@ $('#btnShowQr').addEventListener('click', () => {
     `,
     confirmLabel: 'Fermer',
   });
-});
+}
+$('#btnShowQr').addEventListener('click', showQrModal);
+$('#btnShowQrPlus').addEventListener('click', showQrModal);
+$('#btnExportPlus').addEventListener('click', exportDashboardFile);
+$('#btnSharePlus').addEventListener('click', shareDossierLink);
 
 // ---------- Import depuis un dossier réseau existant (vraie synchronisation) ----------
 async function readBlobFromDir(dirHandle, filename) {

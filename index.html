@@ -73,6 +73,7 @@
           <span class="go-arrow">Commencer ce dossier →</span>
         </button>
       </div>
+      <div class="legal-footer"><b>© 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
     </section>
 
     <!-- ===================== ÉCRAN 2 : LOCALISATION / DOSSIER ===================== -->
@@ -115,6 +116,7 @@
         </div>
         <p class="panel-desc" style="font-size: var(--text-xs); margin-top: var(--space-2);">Reprend un dossier déjà sauvegardé (sur un autre appareil ou après un changement de poste) en relisant ses données directement dans le dossier réseau où il a été enregistré.</p>
       </div>
+      <div class="legal-footer"><b>© 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
     </section>
 
     <!-- ===================== ÉCRAN 3 : ESPACE DE TRAVAIL DU DOSSIER ===================== -->
@@ -151,11 +153,10 @@
       </nav>
 
       <nav class="category-nav" aria-label="Catégories du dossier">
-        <button type="button" class="category-btn active" data-category="apercu"><span class="tab-icon" data-icon="grid"></span><span class="tab-label">Aperçu</span></button>
-        <button type="button" class="category-btn" data-category="execution"><span class="tab-icon" data-icon="clipboard"></span><span class="tab-label">Exécution</span></button>
-        <button type="button" class="category-btn" data-category="terrain"><span class="tab-icon" data-icon="camera"></span><span class="tab-label">Terrain</span></button>
-        <button type="button" class="category-btn" data-category="qualite"><span class="tab-icon" data-icon="shieldCheck"></span><span class="tab-label">Qualité</span></button>
-        <button type="button" class="category-btn" data-category="dossier"><span class="tab-icon" data-icon="edit"></span><span class="tab-label">Dossier</span></button>
+        <button type="button" class="category-btn active" data-category="resume"><span class="tab-icon" data-icon="grid"></span><span class="tab-label">Résumé</span></button>
+        <button type="button" class="category-btn" data-category="checklist"><span class="tab-icon" data-icon="clipboard"></span><span class="tab-label">Checklist</span></button>
+        <button type="button" class="category-btn" data-category="ecarts"><span class="tab-icon" data-icon="alertTriangle"></span><span class="tab-label">Écarts</span></button>
+        <button type="button" class="category-btn" data-category="plus"><span class="tab-icon" data-icon="menu"></span><span class="tab-label">Plus</span></button>
       </nav>
 
       <!-- ---- Onglet : Aperçu ---- -->
@@ -285,6 +286,11 @@
       <div class="tab-panel hidden" data-panel="documents">
         <div class="panel-title">Documents et médias</div>
         <p class="panel-desc">Vue d'ensemble de tous les documents et photos déposés dans ce dossier, peu importe l'onglet d'origine.</p>
+        <div class="quick-actions-row">
+          <button type="button" class="qr-thumb-btn" id="btnShowQrPlus" title="Afficher le code QR de ce dossier" aria-label="Afficher le code QR de ce dossier"></button>
+          <button type="button" class="btn btn-outline" id="btnExportPlus">💾 Exporter le rapport</button>
+          <button type="button" class="btn btn-outline" id="btnSharePlus">🔗 Partager le dossier</button>
+        </div>
         <div id="documentsContent"></div>
       </div>
 
@@ -387,6 +393,7 @@
           <div class="empty-state">Aucune sauvegarde officielle enregistrée pour ce dossier.</div>
         </div>
       </div>
+      <div class="legal-footer"><b>© 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
     </section>
 
     <!-- ===================== FENÊTRE MODALE GÉNÉRIQUE ===================== -->
@@ -404,7 +411,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<div id="legalFooter"><b>© 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
 
 <script src="./vendor/qrcode.min.js"></script>
 <script src="./app.js"></script>
