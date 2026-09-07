@@ -258,6 +258,8 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 }
 .tab-btn:hover { color: var(--color-text); }
 .tab-btn[aria-selected="true"] { color: var(--mode-accent); border-bottom-color: var(--mode-accent); }
+.tab-icon { display: none; }
+.category-nav { display: none; }
 
 .tab-panel { padding: var(--space-6) var(--space-5); max-width: 980px; margin: 0 auto; animation: tabFadeIn 0.18s ease; }
 @keyframes tabFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -540,10 +542,45 @@ body { padding-bottom: 34px; }
   #btnSaveFolder { flex: 1 1 auto; justify-content: center; }
   .qr-thumb-btn svg { width: 30px; height: 30px; }
 
-  /* Onglets : plus compacts, indicateur de défilement visible */
-  .tabs-nav { padding: 0 var(--space-3); position: relative; }
-  .tab-btn { padding: var(--space-2) var(--space-3); font-size: 12px; }
-  .tab-panel { padding: var(--space-5) var(--space-4); }
+  /* Sous-onglets : bande fixe juste au-dessus de la barre de catégories,
+     ne montre que les onglets de la catégorie active (filtrés en JS) */
+  .tabs-nav {
+    position: fixed; left: 0; right: 0; bottom: 54px; z-index: 499;
+    padding: 4px var(--space-2); overflow-x: auto; overflow-y: hidden;
+    background: var(--color-surface); border-top: 1px solid var(--color-divider); border-bottom: 1px solid var(--color-divider);
+    box-shadow: none;
+    gap: 0;
+  }
+  .tabs-nav.single-tab-category { display: none; }
+  .tab-btn.mobile-hidden-tab { display: none; }
+  .tab-btn {
+    flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    padding: 4px 12px; font-size: 10px; text-transform: none; letter-spacing: 0;
+    border-bottom: none; min-width: 62px; flex-shrink: 0;
+  }
+  .tab-icon { display: block; line-height: 1; }
+  .tab-icon svg { width: 19px; height: 19px; display: block; margin: 0 auto; }
+  .tab-label { line-height: 1.1; }
+  .tab-btn[aria-selected="true"] { border-bottom: none; }
+  .tab-btn[data-tab="approbation"].needs-attention::after { top: 2px; right: 6px; }
+
+  /* Catégories : barre principale fixe tout en bas (5 destinations) */
+  .category-nav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 500;
+    background: var(--color-surface); border-top: 1px solid var(--color-divider);
+    box-shadow: 0 -2px 14px rgba(0,0,0,0.28);
+  }
+  .category-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    padding: 6px 2px 8px; background: none; border: none; color: var(--color-text-muted);
+    font-family: var(--font-body); font-size: 10px; cursor: pointer;
+  }
+  .category-btn .tab-icon svg { width: 21px; height: 21px; }
+  .category-btn.active { color: var(--mode-accent); }
+
+  #legalFooter { bottom: 118px; }
+  #screenWorkspace { padding-bottom: 130px; }
+  .tab-panel { padding: var(--space-5) var(--space-4) var(--space-8); }
 
   /* Cartes de tâches : le groupe de boutons passe à la ligne, checkbox+libellé restent ensemble */
   .checklist-item-row { flex-wrap: wrap; row-gap: var(--space-2); }
