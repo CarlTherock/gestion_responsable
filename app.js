@@ -273,7 +273,7 @@ function generateId() {
 }
 
 function newVpoItem() {
-  return { id: generateId(), texte: '', statut: null, raison: '', gravite: '', obligatoire: false, resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: '' };
+  return { id: generateId(), texte: '', statut: null, raison: '', gravite: '', obligatoire: false, resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: '', dateValidation: '', validePar: '', numero: '' };
 }
 
 function newDraft(numero, mode) {
@@ -332,6 +332,8 @@ function normalizeDraft(d) {
     if (it.responsable === undefined) it.responsable = '';
     if (it.dateCreation === undefined) it.dateCreation = '';
     if (it.numero === undefined) it.numero = '';
+    if (it.dateValidation === undefined) it.dateValidation = '';
+    if (it.validePar === undefined) it.validePar = '';
   });
   if (!d.ncExtra) d.ncExtra = [];
   d.ncExtra.forEach((it) => {
@@ -607,6 +609,59 @@ function computeClosureVerdict() {
 }
 
 const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
+
+function renderDocuments() {
+  const container = $('#documentsContent');
+  if (!container || !state.draft) return;
+  const d = state.draft;
+  const groups = CHECKLISTS[d.mode] || {};
+
+  const fileRow = (f, extra) => `
+    <div class="file-row">
+      ${isImageFile(f.name) ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb" alt="${escapeHtml(f.name)}">` : `<span class="ext-badge">${extBadge(f.name)}</span>`}
+      <span class="file-name">${escapeHtml(f.name)}</span>
+      <span class="file-meta">${fmtSize(f.size)}${extra ? ' · ' + extra : ''}</span>
+    </div>`;
+
+  const sections = [];
+
+  // Documents par tâche
+  const taskRows = [];
+  Object.entries(groups).forEach(([group, items]) => {
+    items.forEach(([name, label]) => {
+      const files = d.casesFichiers[name] || [];
+      files.forEach((f) => taskRows.push(fileRow(f, `${GROUP_LABELS[group] || group} — ${label}`)));
+    });
+  });
+  sections.push({ title: `Documents par tâche (${taskRows.length})`, tab: 'plans', rows: taskRows });
+
+  // Photos de mise à jour
+  const majRows = (d.files['mise-a-jour'] || []).map((f) => fileRow(f, 'Mise à jour'));
+  sections.push({ title: `Photos de mise à jour (${majRows.length})`, tab: 'mise-a-jour', rows: majRows });
+
+  // Photos de non-conformité
+  const ncRows = [];
+  Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
+    files.forEach((f) => ncRows.push(fileRow(f, numero)));
+  });
+  sections.push({ title: `Photos de non-conformité (${ncRows.length})`, tab: 'non-conformite', rows: ncRows });
+
+  const total = taskRows.length + majRows.length + ncRows.length;
+  if (!total) {
+    container.innerHTML = '<div class="empty-state">Aucun document ou photo déposé pour l\u2019instant.</div>';
+    return;
+  }
+
+  container.innerHTML = sections.map((s) => `
+    <details class="section-card" open>
+      <summary><span>${s.title}</span><button type="button" class="btn btn-outline" data-doc-jump="${s.tab}" style="margin-left:auto;" onclick="event.stopPropagation();">Voir dans l\u2019onglet →</button></summary>
+      <div class="file-list" style="padding: var(--space-3);">${s.rows.length ? s.rows.join('') : '<div class="empty-state">Aucun élément.</div>'}</div>
+    </details>`).join('');
+
+  $$('[data-doc-jump]', container).forEach((btn) => {
+    btn.addEventListener('click', () => selectTab(btn.dataset.docJump));
+  });
+}
 
 function renderApercu() {
   const container = $('#apercuContent');
@@ -1864,6 +1919,9 @@ function renderVpoList() {
     let impact = '';
     if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block">⛔ Ce VPO empêche la fermeture du dossier</div>';
     else if (pending) impact = '<div class="vpo-impact vpo-impact-soft">Validation recommandée avant l\u2019étape suivante</div>';
+    const validationInfo = item.statut && item.dateValidation
+      ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${item.numero}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
+      : '';
     return `
     <div class="vpo-row" data-vpo-id="${item.id}">
       <div class="vpo-status">
@@ -1875,6 +1933,7 @@ function renderVpoList() {
       <button type="button" class="btn-vpo-remove" data-vpo-remove="${item.id}" title="Retirer cette ligne">✕</button>
     </div>
     ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
+    ${validationInfo}
     ${impact}
   `; }).join('');
 
@@ -1903,8 +1962,17 @@ function renderVpoList() {
     btn.addEventListener('click', () => {
       const item = findVpoItem(btn.dataset.vpoConforme);
       if (!item) return;
-      item.statut = item.statut === 'conforme' ? null : 'conforme';
-      if (item.statut !== 'nc') item.raison = '';
+      if (item.statut === 'conforme') {
+        item.statut = null;
+        item.dateValidation = '';
+        item.validePar = '';
+      } else {
+        item.statut = 'conforme';
+        item.raison = '';
+        item.dateValidation = new Date().toISOString();
+        item.validePar = (state.draft.champs.employeeName || '').trim();
+        logActivity(`VPO validé conforme : ${item.texte || '(sans description)'}`);
+      }
       schedulePersist();
       renderVpoList();
       updateProgressPill();
@@ -1920,6 +1988,8 @@ function renderVpoList() {
         item.statut = null;
         item.raison = '';
         item.gravite = '';
+        item.dateValidation = '';
+        item.validePar = '';
       } else {
         const result = await askNcReason();
         if (result === null) return;
@@ -1932,6 +2002,8 @@ function renderVpoList() {
         item.dateCreation = result.dateCreation;
         item.numero = nextNcId();
         item.resolu = false;
+        item.dateValidation = new Date().toISOString();
+        item.validePar = (state.draft.champs.employeeName || '').trim();
         logActivity(`Non-conformité VPO (${result.gravite}) relevée : ${item.texte || '(sans description)'}`);
       }
       schedulePersist();
@@ -2114,6 +2186,7 @@ function updateFilesCount() {
   const ncTotal = Object.values(state.draft.ncFichiers || {}).reduce((sum, arr) => sum + arr.length, 0);
   $('#wsFilesCount').textContent = `${tabTotal + taskTotal + ncTotal} document(s)`;
   renderApercu();
+  renderDocuments();
 }
 
 $$('.dropzone').forEach((zone) => {

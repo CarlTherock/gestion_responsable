@@ -259,7 +259,8 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .tab-btn:hover { color: var(--color-text); }
 .tab-btn[aria-selected="true"] { color: var(--mode-accent); border-bottom-color: var(--mode-accent); }
 
-.tab-panel { padding: var(--space-6) var(--space-5); max-width: 980px; margin: 0 auto; }
+.tab-panel { padding: var(--space-6) var(--space-5); max-width: 980px; margin: 0 auto; animation: tabFadeIn 0.18s ease; }
+@keyframes tabFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .panel-title { font-family: var(--font-display); text-transform: uppercase; font-size: var(--text-lg); letter-spacing: 0.02em; margin-bottom: var(--space-2); }
 .panel-desc { color: var(--color-text-muted); font-size: var(--text-sm); margin-bottom: var(--space-6); max-width: 68ch; }
 
@@ -666,3 +667,16 @@ select.ncextra-gravite {
 .preuve-required-tag { font-size: 11px; color: var(--mode-accent); }
 .checklist-item-wrap.preuve-manquante { border-color: rgba(214,69,69,0.5); }
 .preuve-warning { color: #f87171 !important; font-weight: 600; }
+
+/* ---------- Chronologie d'activité (Aperçu) — manquait dans l'app elle-même ---------- */
+.timeline { display: flex; flex-direction: column; gap: 4px; }
+.timeline-item {
+  display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-1);
+  border-bottom: 1px solid var(--color-border); animation: timelineFadeIn 0.3s ease;
+}
+.timeline-item:last-child { border-bottom: none; }
+.timeline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mode-accent); margin-top: 6px; flex-shrink: 0; }
+.timeline-body { font-size: var(--text-sm); }
+.timeline-role { color: var(--color-text-muted); font-size: var(--text-xs); }
+.timeline-date { font-size: var(--text-xs); color: var(--color-text-muted); font-family: var(--font-mono); margin-top: 2px; }
+@keyframes timelineFadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }

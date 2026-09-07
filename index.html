@@ -140,6 +140,7 @@
         <button class="tab-btn" role="tab" data-tab="programmation" aria-selected="false">Programmation</button>
         <button class="tab-btn" role="tab" data-tab="systeme" aria-selected="false">Système</button>
         <button class="tab-btn" role="tab" data-tab="mise-a-jour" aria-selected="false">Mise à jour</button>
+        <button class="tab-btn" role="tab" data-tab="documents" aria-selected="false">Documents</button>
         <button class="tab-btn" role="tab" data-tab="information" aria-selected="false">Information</button>
         <button class="tab-btn" role="tab" data-tab="securite" aria-selected="false">Sécurité et général</button>
         <button class="tab-btn" role="tab" data-tab="vpo" aria-selected="false">VPO</button>
@@ -269,6 +270,13 @@
           <input type="file" data-file-input="mise-a-jour" multiple accept="image/*,.pdf">
         </div>
         <div class="file-list" data-file-list="mise-a-jour"></div>
+      </div>
+
+      <!-- ---- Onglet : Documents ---- -->
+      <div class="tab-panel hidden" data-panel="documents">
+        <div class="panel-title">Documents et médias</div>
+        <p class="panel-desc">Vue d'ensemble de tous les documents et photos déposés dans ce dossier, peu importe l'onglet d'origine.</p>
+        <div id="documentsContent"></div>
       </div>
 
       <!-- ---- Onglet : Information ---- -->
