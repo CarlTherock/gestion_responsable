@@ -279,7 +279,7 @@ function newVpoItem() {
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     application: 'Gestion responsable',
     localisation: numero,
     mode,
@@ -292,6 +292,8 @@ function newDraft(numero, mode) {
     casesGravites: {},
     casesNcDetails: {},
     casesFichiers: {},
+    ncFichiers: {},
+    ncSeq: 0,
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     vpoItems: [newVpoItem()],
     ncExtra: [],
@@ -302,6 +304,11 @@ function newDraft(numero, mode) {
   };
 }
 
+function nextNcId() {
+  state.draft.ncSeq = (state.draft.ncSeq || 0) + 1;
+  return 'NC-' + String(state.draft.ncSeq).padStart(2, '0');
+}
+
 function normalizeDraft(d) {
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
@@ -310,6 +317,8 @@ function normalizeDraft(d) {
   if (!d.casesGravites) d.casesGravites = {};
   if (!d.casesNcDetails) d.casesNcDetails = {};
   if (!d.casesFichiers) d.casesFichiers = {};
+  if (!d.ncFichiers) d.ncFichiers = {};
+  if (d.ncSeq === undefined) d.ncSeq = 0;
   if (!d.files) d.files = {};
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
   if (!d.vpoItems || !d.vpoItems.length) d.vpoItems = [newVpoItem()];
@@ -320,6 +329,7 @@ function normalizeDraft(d) {
     if (it.actionCorrective === undefined) it.actionCorrective = '';
     if (it.responsable === undefined) it.responsable = '';
     if (it.dateCreation === undefined) it.dateCreation = '';
+    if (it.numero === undefined) it.numero = '';
   });
   if (!d.ncExtra) d.ncExtra = [];
   d.ncExtra.forEach((it) => {
@@ -329,10 +339,36 @@ function normalizeDraft(d) {
     if (it.actionCorrective === undefined) it.actionCorrective = '';
     if (it.responsable === undefined) it.responsable = '';
     if (it.dateCreation === undefined) it.dateCreation = new Date().toISOString();
+    if (it.numero === undefined) it.numero = '';
   });
   if (!d.approbations) d.approbations = [];
   if (!d.journal) d.journal = [];
   if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
+
+  // Attribution rétroactive des identifiants NC-xx manquants (compatibilité anciens dossiers)
+  const groupsForId = CHECKLISTS[d.mode] || {};
+  Object.entries(groupsForId).forEach(([group, items]) => items.forEach(([name]) => {
+    if (d.casesCochees[name] === 'nc') {
+      if (!d.casesNcDetails[name]) d.casesNcDetails[name] = {};
+      if (!d.casesNcDetails[name].numero) {
+        d.ncSeq = (d.ncSeq || 0) + 1;
+        d.casesNcDetails[name].numero = 'NC-' + String(d.ncSeq).padStart(2, '0');
+      }
+    }
+  }));
+  d.vpoItems.forEach((it) => {
+    if (it.statut === 'nc' && !it.numero) {
+      d.ncSeq = (d.ncSeq || 0) + 1;
+      it.numero = 'NC-' + String(d.ncSeq).padStart(2, '0');
+    }
+  });
+  d.ncExtra.forEach((it) => {
+    if (it.texte && it.texte.trim() && !it.numero) {
+      d.ncSeq = (d.ncSeq || 0) + 1;
+      it.numero = 'NC-' + String(d.ncSeq).padStart(2, '0');
+    }
+  });
+
   return d;
 }
 
@@ -575,7 +611,8 @@ function renderApercu() {
   }
 
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
-    + (d.files['mise-a-jour'] || []).length;
+    + (d.files['mise-a-jour'] || []).length
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
 
   const ringsHtml = groupStats.map((g) => `
     <div class="ring-card" data-apercu-jump="${g.group}">
@@ -677,7 +714,7 @@ function renderNonConformites() {
       if (state.draft.casesCochees[name] === 'nc') {
         const details = state.draft.casesNcDetails[name] || {};
         rows.push({
-          kind: 'checklist', key: name, section: GROUP_LABELS[group] || group, label,
+          kind: 'checklist', key: name, numero: details.numero || '', section: GROUP_LABELS[group] || group, label,
           reason: state.draft.casesRaisons[name] || '', gravite: state.draft.casesGravites[name] || '',
           zone: details.zone || '', actionCorrective: details.actionCorrective || '',
           responsable: details.responsable || '', dateCreation: details.dateCreation || '',
@@ -689,7 +726,7 @@ function renderNonConformites() {
   (state.draft.vpoItems || []).forEach((item) => {
     if (item.statut === 'nc') {
       rows.push({
-        kind: 'vpo', key: item.id, section: 'VPO', label: item.texte || '(sans description)',
+        kind: 'vpo', key: item.id, numero: item.numero || '', section: 'VPO', label: item.texte || '(sans description)',
         reason: item.raison || '', gravite: item.gravite || '', zone: item.zone || '',
         actionCorrective: item.actionCorrective || '', responsable: item.responsable || '',
         dateCreation: item.dateCreation || '', resolu: !!item.resolu,
@@ -699,7 +736,7 @@ function renderNonConformites() {
   (state.draft.ncExtra || []).forEach((item) => {
     if (item.texte && item.texte.trim()) {
       rows.push({
-        kind: 'ncextra', key: item.id, section: 'AJOUT MANUEL', label: item.texte,
+        kind: 'ncextra', key: item.id, numero: item.numero || '', section: 'AJOUT MANUEL', label: item.texte,
         reason: '', gravite: item.gravite || 'mineure', zone: item.zone || '',
         actionCorrective: item.actionCorrective || '', responsable: item.responsable || '',
         dateCreation: item.dateCreation || '', resolu: !!item.resolu,
@@ -716,10 +753,17 @@ function renderNonConformites() {
   const order = { critique: 0, majeure: 1, mineure: 2 };
   rows.sort((a, b) => (a.resolu === b.resolu ? (order[a.gravite] ?? 3) - (order[b.gravite] ?? 3) : (a.resolu ? 1 : -1)));
 
-  el.innerHTML = rows.map((r) => `
+  el.innerHTML = rows.map((r) => {
+    const files = state.draft.ncFichiers[r.numero] || [];
+    const filesHtml = files.length ? `<div class="attachments">${files.map((f) => {
+      return isImageFile(f.name)
+        ? `<span class="thumb-link" title="${escapeHtml(f.name)}"><img src="${URL.createObjectURL(f.blob)}" class="thumb" alt="${escapeHtml(f.name)}"></span>`
+        : `<span class="doc-link">📄 ${escapeHtml(f.name)}</span>`;
+    }).join('')}</div>` : '';
+    return `
     <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}${r.resolu ? ' nc-resolue' : ''}" data-nc-kind="${r.kind}" data-nc-key="${r.key}">
       <div class="nc-summary-header">
-        <div class="nc-section">${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
+        <div class="nc-section">${r.numero ? `<strong>${r.numero}</strong> · ` : ''}${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
         <span class="nc-statut-badge ${r.resolu ? 'nc-statut-resolue' : 'nc-statut-ouverte'}">${r.resolu ? 'Résolue' : 'Ouverte'}</span>
       </div>
       <div class="nc-label">${escapeHtml(r.label)}</div>
@@ -728,8 +772,24 @@ function renderNonConformites() {
       ${r.actionCorrective ? `<div class="nc-meta">Action corrective : ${escapeHtml(r.actionCorrective)}</div>` : ''}
       ${r.responsable ? `<div class="nc-meta">Responsable : ${escapeHtml(r.responsable)}</div>` : ''}
       ${r.dateCreation ? `<div class="nc-meta">Créée le ${new Date(r.dateCreation).toLocaleString('fr-CA')}</div>` : ''}
-      <button type="button" class="btn btn-outline btn-nc-toggle-resolu" style="margin-top:var(--space-2);">${r.resolu ? 'Rouvrir' : 'Marquer résolue'}</button>
-    </div>`).join('');
+      ${filesHtml}
+      <div class="nc-card-actions">
+        ${r.numero ? `<button type="button" class="btn btn-outline btn-nc-add-photo" data-nc-numero-btn="${r.numero}">📷 Ajouter une photo</button>
+        <input type="file" class="hidden" data-nc-photo-input="${r.numero}" accept="image/*" multiple>` : ''}
+        <button type="button" class="btn btn-outline btn-nc-toggle-resolu">${r.resolu ? 'Rouvrir' : 'Marquer résolue'}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  $$('.btn-nc-add-photo', el).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = el.querySelector(`[data-nc-photo-input="${btn.dataset.ncNumeroBtn}"]`);
+      if (input) input.click();
+    });
+  });
+  $$('[data-nc-photo-input]', el).forEach((input) => {
+    input.addEventListener('change', () => attachFilesToNc(input.dataset.ncPhotoInput, input.files));
+  });
 
   $$('.btn-nc-toggle-resolu', el).forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -751,6 +811,19 @@ function renderNonConformites() {
       updateProgressPill();
     });
   });
+}
+
+async function attachFilesToNc(numero, fileList) {
+  if (!fileList || !fileList.length || !numero || !state.draft) return;
+  if (!state.draft.ncFichiers[numero]) state.draft.ncFichiers[numero] = [];
+  Array.from(fileList).forEach((f) => {
+    state.draft.ncFichiers[numero].push({ name: f.name, size: f.size, type: f.type, uploadedAt: new Date().toISOString(), blob: f });
+  });
+  logActivity(`Photo ajoutée à la non-conformité ${numero}`);
+  await dbPut(state.draft);
+  renderNonConformites();
+  updateFilesCount();
+  toast(`${fileList.length} photo(s) ajoutée(s) à ${numero}.`);
 }
 
 $('#btnSaveFolder').addEventListener('click', async () => {
@@ -917,6 +990,21 @@ async function writeEverythingToDisk(date) {
   }
 
   try {
+    const ncDir = await state.dossierDirHandle.getDirectoryHandle('NonConformites', { create: true });
+    for (const [numero, files] of Object.entries(state.draft.ncFichiers || {})) {
+      for (const f of files) {
+        try {
+          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const fh = await ncDir.getFileHandle(`${numero}__${safe}`, { create: true });
+          const w = await fh.createWritable();
+          await w.write(f.blob);
+          await w.close();
+        } catch (err) { /* best effort par fichier */ }
+      }
+    }
+  } catch (err) { /* best effort */ }
+
+  try {
     const dashName = `Dashboard - ${folderName(date)}.html`;
     const dashHandle = await state.dossierDirHandle.getFileHandle(dashName, { create: true });
     const w3 = await dashHandle.createWritable();
@@ -1046,25 +1134,25 @@ function buildDashboardHtml() {
     if (d.casesCochees[name] === 'nc') {
       const det = d.casesNcDetails[name] || {};
       if (det.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
+      ncItems.push({ numero: det.numero || '', section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
     }
   }));
   (d.vpoItems || []).forEach((it) => {
     if (it.statut === 'nc') {
       if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
+      ncItems.push({ numero: it.numero || '', section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
     }
   });
   (d.ncExtra || []).forEach((it) => {
     if (it.texte && it.texte.trim()) {
       if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '' });
+      ncItems.push({ numero: it.numero || '', section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '' });
     }
   });
   const ncBanner = ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
         <div class="nc-banner-title">\u26a0 ${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}${ncResoluesCount ? ` (+ ${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>
-        <ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong>${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
+        <ul class="nc-list">${ncItems.map((r) => `<li>${r.numero ? `<strong>${r.numero}</strong> — ` : ''}${escapeHtml(r.section)}${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
       </div>`
     : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
 
@@ -1072,7 +1160,8 @@ function buildDashboardHtml() {
   const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">${closureVerdict.ready ? '\u2705' : '\u26d4'} Assistant de clôture</div>${escapeHtml(closureVerdict.text)}</div>`;
 
   // ---- Documents / photos ----
-  const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+  const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = d.files['mise-a-jour'] || [];
   const photosHtml = photos.length ? attachmentsHtml(photos, 'Photos/') : '<p class="empty">Aucune image de mise à jour.</p>';
 
@@ -1320,7 +1409,8 @@ function buildResumeText() {
     items.forEach(([name, label]) => {
       const v = d.casesCochees[name];
       const mark = v === true ? 'X' : v === 'na' ? 'N/A' : v === 'nc' ? '!' : ' ';
-      lines.push(`[${mark}] ${label}`);
+      const numero = v === 'nc' && d.casesNcDetails[name] && d.casesNcDetails[name].numero ? ` (${d.casesNcDetails[name].numero})` : '';
+      lines.push(`[${mark}] ${label}${numero}`);
       if (v === 'nc' && d.casesGravites[name]) lines.push(`      \u2192 gravité : ${d.casesGravites[name]}`);
       if ((v === 'na' || v === 'nc') && d.casesRaisons[name]) lines.push(`      \u2192 raison : ${d.casesRaisons[name]}`);
     });
@@ -1596,6 +1686,7 @@ function renderChecklist(group) {
         state.draft.casesNcDetails[name] = {
           zone: result.zone, actionCorrective: result.actionCorrective,
           responsable: result.responsable, dateCreation: result.dateCreation, resolu: false,
+          numero: nextNcId(),
         };
         logActivity(`Non-conformité (${result.gravite}) relevée : ${btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
       }
@@ -1763,6 +1854,7 @@ function renderVpoList() {
         item.actionCorrective = result.actionCorrective;
         item.responsable = result.responsable;
         item.dateCreation = result.dateCreation;
+        item.numero = nextNcId();
         item.resolu = false;
         logActivity(`Non-conformité VPO (${result.gravite}) relevée : ${item.texte || '(sans description)'}`);
       }
@@ -1803,10 +1895,24 @@ function renderNcExtraList() {
   const items = state.draft.ncExtra || [];
   container.innerHTML = items.map((item) => `
     <div class="vpo-row" data-ncextra-id="${item.id}">
+      <select class="ncextra-gravite" data-ncextra-gravite="${item.id}">
+        <option value="mineure"${item.gravite === 'mineure' ? ' selected' : ''}>Mineure</option>
+        <option value="majeure"${item.gravite === 'majeure' ? ' selected' : ''}>Majeure</option>
+        <option value="critique"${item.gravite === 'critique' ? ' selected' : ''}>Critique</option>
+      </select>
       <input type="text" class="vpo-input" data-ncextra-text="${item.id}" placeholder="Décrire la non-conformité…" value="${escapeHtml(item.texte || '')}">
       <button type="button" class="btn-vpo-remove" data-ncextra-remove="${item.id}" title="Retirer cette ligne">✕</button>
     </div>`).join('');
 
+  $$('[data-ncextra-gravite]', container).forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const item = findNcExtraItem(sel.dataset.ncextraGravite);
+      if (!item) return;
+      item.gravite = sel.value;
+      schedulePersist();
+      renderNonConformites();
+    });
+  });
   $$('[data-ncextra-text]', container).forEach((input) => {
     input.addEventListener('input', () => {
       const item = findNcExtraItem(input.dataset.ncextraText);
@@ -1828,7 +1934,7 @@ function renderNcExtraList() {
 
 $('#btnAddNcExtra').addEventListener('click', () => {
   if (!state.draft) return;
-  state.draft.ncExtra.push({ id: generateId(), texte: '', gravite: 'mineure', resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: new Date().toISOString() });
+  state.draft.ncExtra.push({ id: generateId(), texte: '', gravite: 'mineure', resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: new Date().toISOString(), numero: nextNcId() });
   schedulePersist();
   renderNcExtraList();
 });
@@ -1929,7 +2035,9 @@ function updateFilesCount() {
   if (!state.draft) return;
   const tabTotal = Object.values(state.draft.files || {}).reduce((sum, arr) => sum + arr.length, 0);
   const taskTotal = Object.values(state.draft.casesFichiers || {}).reduce((sum, arr) => sum + arr.length, 0);
-  $('#wsFilesCount').textContent = `${tabTotal + taskTotal} document(s)`;
+  const ncTotal = Object.values(state.draft.ncFichiers || {}).reduce((sum, arr) => sum + arr.length, 0);
+  $('#wsFilesCount').textContent = `${tabTotal + taskTotal + ncTotal} document(s)`;
+  renderApercu();
 }
 
 $$('.dropzone').forEach((zone) => {
