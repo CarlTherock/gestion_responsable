@@ -680,3 +680,19 @@ select.ncextra-gravite {
 .timeline-role { color: var(--color-text-muted); font-size: var(--text-xs); }
 .timeline-date { font-size: var(--text-xs); color: var(--color-text-muted); font-family: var(--font-mono); margin-top: 2px; }
 @keyframes timelineFadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+
+/* ---------- Commentaire rapide et référence croisée NC sur les tâches ---------- */
+.btn-note {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 4px 8px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); cursor: pointer; flex-shrink: 0;
+}
+.btn-note:hover { border-color: var(--mode-accent); color: var(--mode-accent); }
+.btn-note.active { background: var(--mode-accent); color: #10151b; border-color: var(--mode-accent); }
+.ci-note-text { font-style: normal !important; }
+.nc-xref { font-family: var(--font-mono); font-size: 11px; color: var(--color-danger, #d64545); font-weight: 700; }
+
+/* ---------- Indicateur hors ligne ---------- */
+.offline-pill { background: rgba(234,179,8,0.18) !important; color: #eab308 !important; font-weight: 600; }
+
+/* ---------- Boutons d'action sur l'Assistant de clôture ---------- */
+.closure-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
