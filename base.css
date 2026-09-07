@@ -13,6 +13,7 @@ html {
 }
 
 body {
+  min-height: 100vh;
   min-height: 100dvh;
   line-height: 1.55;
   font-family: var(--font-body, sans-serif);
