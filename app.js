@@ -136,8 +136,11 @@ const ICONS = {
   alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   messageCircle: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
+  x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  moreHorizontal: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
 };
-$$('.tab-icon[data-icon]').forEach((span) => {
+$$('.tab-icon[data-icon], .icon-inline[data-icon]').forEach((span) => {
   const inner = ICONS[span.dataset.icon];
   if (inner) span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 });
@@ -437,7 +440,7 @@ function updateMobileSaveStatus() {
   const el = document.getElementById('mobileSaveStatus');
   if (!el) return;
   if (!navigator.onLine) {
-    el.textContent = '📡 Hors ligne — conservé sur cet appareil';
+    el.textContent = 'Hors ligne — conservé sur cet appareil';
     el.classList.add('offline');
     return;
   }
@@ -476,6 +479,18 @@ $$('.choice-card').forEach((card) => {
 });
 
 $('#homeBtn').addEventListener('click', () => location.reload());
+
+$('#topbarMenuBtn').addEventListener('click', async () => {
+  const dossierOuvert = !$('#homeBtn').classList.contains('hidden');
+  const choice = await showChoiceModal('Menu', `
+    <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+      <button type="button" class="btn btn-outline" id="menuChoixTheme" style="width:100%;justify-content:flex-start;">Changer de thème (clair/sombre)</button>
+      ${dossierOuvert ? '<button type="button" class="btn btn-outline" id="menuChoixNouveau" style="width:100%;justify-content:flex-start;">Nouveau dossier</button>' : ''}
+    </div>
+  `, dossierOuvert ? ['menuChoixTheme', 'menuChoixNouveau'] : ['menuChoixTheme']);
+  if (choice === 'menuChoixTheme') $('#themeToggle').click();
+  else if (choice === 'menuChoixNouveau') location.reload();
+});
 
 // ---------- Emplacement local du dossier (File System Access API) ----------
 const FS_ACCESS_SUPPORTED = 'showDirectoryPicker' in window;
@@ -530,6 +545,7 @@ function updateProgressPill() {
     pill.style.background = `hsl(${hue}, 70%, 45%)`;
   }
   renderApercu();
+  updateMobileSummary();
 }
 
 function computeNcStats() {
@@ -782,9 +798,9 @@ function renderApercu() {
         <span class="priorite-badge priorite-${priorite}">Priorité ${PRIORITE_LABEL[priorite] || priorite}</span>
         ${responsable ? `<span class="tag-pill">Responsable : ${escapeHtml(responsable)}</span>` : ''}
         ${echeance ? `<span class="tag-pill">Échéance : ${escapeHtml(echeance)}</span>` : ''}
-        <button type="button" class="btn btn-outline" id="btnExportApercu">💾 Exporter</button>
-        <button type="button" class="btn btn-outline" id="btnShareApercu">🔗 Partager</button>
-        <button type="button" class="btn btn-outline" id="btnPrintApercu">🖨 Imprimer</button>
+        <button type="button" class="btn btn-outline" id="btnExportApercu">Exporter</button>
+        <button type="button" class="btn btn-outline" id="btnShareApercu">Partager</button>
+        <button type="button" class="btn btn-outline" id="btnPrintApercu">Imprimer</button>
       </div>
     </div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
@@ -825,7 +841,7 @@ function renderApercu() {
       </div>` : ''}
     </div>
 
-    <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile">${closure.ready ? '\u2705' : '\u26d4'} Vérification avant fermeture</button>
+    <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">${closure.ready ? ICONS.checkCircle : ICONS.alertTriangle}</svg> Vérification avant fermeture</button>
 
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Progression par section</div>
     <div class="rings-grid">${ringsHtml}</div>
@@ -1091,6 +1107,29 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     toast('Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.', 4500);
   }
 });
+
+// Bouton Enregistrer version mobile : déclenche exactement la même action
+// (même confirmation, même écriture sur disque) que le bouton du haut.
+$('#btnSaveFolderMobile').addEventListener('click', () => $('#btnSaveFolder').click());
+$('#btnResumeChecklistMobile').addEventListener('click', startInterventionMode);
+
+function updateMobileSummary() {
+  const el = $('#wsSummaryMobile');
+  if (!el || !state.draft) return;
+  const d = state.draft;
+  const { done, total, pct } = computeProgress();
+  const titre = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement';
+  const localisation = d.champs.tag || state.numero;
+  const statutDossier = d.derniereSauvegardeOfficielle ? 'Sauvegardé' : 'Brouillon local';
+  const docTotal = Object.values(d.files || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+  el.innerHTML = `
+    <div class="ws-summary-line1">${escapeHtml(state.numero)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}</div>
+    <div class="ws-summary-line2">${escapeHtml(titre)} · ${escapeHtml(localisation)}</div>
+    <div class="ws-summary-line3">${statutDossier} · ${Math.round(pct)}% complété (${done}/${total}) · ${docTotal} document${docTotal > 1 ? 's' : ''}</div>
+  `;
+}
 
 // ---------- Navigation mobile par catégories (Aperçu / Exécution / Terrain / Qualité / Dossier) ----------
 const TAB_CATEGORIES = {
@@ -2799,11 +2838,12 @@ function renderInterventionStep() {
 
   const val = d.casesCochees[task.name];
   const doneBtn = $('#btnIvDone');
+  const checkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="20 6 9 17 4 12"/></svg>';
   if (val === true) {
-    doneBtn.textContent = '✓ Fait — toucher pour annuler';
+    doneBtn.innerHTML = `${checkSvg} Fait — toucher pour annuler`;
     doneBtn.classList.add('iv-done-active');
   } else {
-    doneBtn.textContent = '✓ Marquer fait';
+    doneBtn.innerHTML = `${checkSvg} Marquer fait`;
     doneBtn.classList.remove('iv-done-active');
   }
 
