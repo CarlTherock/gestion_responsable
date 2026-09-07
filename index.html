@@ -121,6 +121,7 @@
 
     <!-- ===================== ÉCRAN 3 : ESPACE DE TRAVAIL DU DOSSIER ===================== -->
     <section id="screenWorkspace" class="hidden">
+      <div class="mobile-save-status" id="mobileSaveStatus">Nouveau dossier</div>
       <div class="workspace-header">
         <div>
           <div class="dossier-num" id="wsNum">—</div>
@@ -395,6 +396,45 @@
       </div>
       <div class="legal-footer"><b>© 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
     </section>
+
+    <!-- ===================== MODE INTERVENTION (mobile — une tâche à la fois) ===================== -->
+    <div class="intervention-overlay hidden" id="interventionMode">
+      <div class="intervention-header">
+        <div class="intervention-meta">
+          <div class="intervention-bt" id="ivBt">—</div>
+          <div class="intervention-progress" id="ivProgress">—</div>
+        </div>
+        <button type="button" class="intervention-close" id="btnCloseIntervention" aria-label="Quitter le mode intervention">✕ Quitter</button>
+      </div>
+
+      <div class="intervention-body">
+        <div class="intervention-step" id="ivStep">Tâche 1 sur 1</div>
+        <div class="intervention-section" id="ivSection">Section</div>
+        <div class="intervention-task" id="ivTaskLabel">—</div>
+        <div class="intervention-note hidden" id="ivTaskNote"></div>
+
+        <div class="intervention-photo-confirm hidden" id="ivPhotoConfirm">
+          <span>📷 Photo ajoutée</span>
+          <button type="button" class="btn btn-outline" id="btnIvViewPhoto">Voir la photo</button>
+          <button type="button" class="btn btn-outline" id="btnIvAddNoteAfterPhoto">Ajouter une note</button>
+        </div>
+
+        <div class="intervention-actions-secondary">
+          <button type="button" class="btn btn-outline" id="btnIvNote">🗨 Note</button>
+          <button type="button" class="btn btn-outline" id="btnIvPhoto">📷 Prendre une photo</button>
+          <button type="button" class="btn btn-outline" id="btnIvEcart">⚠ Signaler un écart</button>
+        </div>
+        <input type="file" id="ivPhotoInput" accept="image/*" capture="environment" multiple class="hidden">
+      </div>
+
+      <div class="intervention-footer">
+        <button type="button" class="intervention-done-btn" id="btnIvDone">✓ Marquer fait</button>
+        <div class="intervention-nav">
+          <button type="button" class="btn btn-outline" id="btnIvPrev">← Précédente</button>
+          <button type="button" class="btn btn-outline" id="btnIvNext">Suivante →</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ===================== FENÊTRE MODALE GÉNÉRIQUE ===================== -->
     <div class="modal-overlay hidden" id="modalOverlay">

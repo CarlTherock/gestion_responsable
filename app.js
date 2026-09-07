@@ -162,8 +162,8 @@ const splashDonePromise = new Promise((resolve) => {
 // ---------- Détection hors ligne / en ligne ----------
 function updateOfflineIndicator() {
   const pill = document.getElementById('wsOfflinePill');
-  if (!pill) return;
-  pill.classList.toggle('hidden', navigator.onLine);
+  if (pill) pill.classList.toggle('hidden', navigator.onLine);
+  updateMobileSaveStatus();
 }
 window.addEventListener('online', () => { updateOfflineIndicator(); toast('Connexion rétablie.'); });
 window.addEventListener('offline', () => { updateOfflineIndicator(); toast('Hors ligne — vos modifications restent conservées sur cet appareil.', 4500); });
@@ -434,7 +434,26 @@ function schedulePersist() {
     if (!state.draft) return;
     state.draft.modifieLe = new Date().toISOString();
     await dbPut(state.draft);
+    updateMobileSaveStatus();
   }, 400);
+}
+
+// Petit état compact en haut sur mobile : "Enregistré à HH:MM" ou "Hors ligne".
+// Le hors ligne prend priorité visuellement (info la plus utile sur le terrain).
+function updateMobileSaveStatus() {
+  const el = document.getElementById('mobileSaveStatus');
+  if (!el) return;
+  if (!navigator.onLine) {
+    el.textContent = '📡 Hors ligne — conservé sur cet appareil';
+    el.classList.add('offline');
+    return;
+  }
+  el.classList.remove('offline');
+  if (state.draft && state.draft.modifieLe) {
+    el.textContent = `Enregistré à ${new Date(state.draft.modifieLe).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}`;
+  } else {
+    el.textContent = 'Nouveau dossier';
+  }
 }
 
 // ---------- Étape 1 : choix du type ----------
@@ -649,7 +668,7 @@ function computeClosureVerdict() {
     if (vpo.pendingOptionnel > 0) text += ` (Note : ${vpo.pendingOptionnel} VPO non obligatoire${vpo.pendingOptionnel > 1 ? 's' : ''} encore non évalué${vpo.pendingOptionnel > 1 ? 's' : ''}.)`;
     return { ready: true, text };
   }
-  return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.` };
+  return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.`, problems };
 }
 
 const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
@@ -777,6 +796,8 @@ function renderApercu() {
     </div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
 
+    <button type="button" class="btn-start-intervention" id="btnStartIntervention">▶ Démarrer l'intervention</button>
+
     <div class="next-action-card">
       <div class="next-action-body">
         <div class="next-action-kicker">Prochaine action</div>
@@ -811,6 +832,8 @@ function renderApercu() {
       </div>` : ''}
     </div>
 
+    <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile">${closure.ready ? '\u2705' : '\u26d4'} Vérification avant fermeture</button>
+
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Progression par section</div>
     <div class="rings-grid">${ringsHtml}</div>
 
@@ -841,6 +864,24 @@ function renderApercu() {
 
   const printBtn = $('#btnPrintApercu', container);
   if (printBtn) printBtn.addEventListener('click', () => window.print());
+
+  const startIvBtn = $('#btnStartIntervention', container);
+  if (startIvBtn) startIvBtn.addEventListener('click', startInterventionMode);
+
+  const closureCheckBtn = $('#btnClosureCheckMobile', container);
+  if (closureCheckBtn) {
+    closureCheckBtn.addEventListener('click', async () => {
+      const listHtml = closure.ready
+        ? `<p style="color:var(--color-success);">Toutes les conditions sont remplies.</p>`
+        : `<ul style="padding-left: 20px; display:flex; flex-direction:column; gap: 6px;">${(closure.problems || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`;
+      const confirmed = await showModal({
+        title: closure.ready ? '\u2705 Dossier prêt' : '\u26d4 Éléments à corriger',
+        bodyHtml: listHtml,
+        confirmLabel: closure.ready ? 'Fermer' : 'Ouvrir le premier élément à corriger',
+      });
+      if (confirmed && !closure.ready) selectTab(nextAction.tab);
+    });
+  }
 
   const exportBtn = $('#btnExportApercu', container);
   if (exportBtn) exportBtn.addEventListener('click', exportDashboardFile);
@@ -1803,6 +1844,71 @@ $$('.tab-btn').forEach((btn) => {
 });
 
 // ---------- Cases à cocher ----------
+// ---------- Actions de tâche partagées (utilisées par la checklist ET le mode intervention) ----------
+// Une seule logique par action — jamais dupliquée entre les deux interfaces.
+async function taskToggleNA(name) {
+  const isCurrentlyNa = state.draft.casesCochees[name] === 'na';
+  if (isCurrentlyNa) {
+    state.draft.casesCochees[name] = false;
+    delete state.draft.casesRaisons[name];
+  } else {
+    const reason = await askNaReason();
+    if (reason === null) return false;
+    state.draft.casesCochees[name] = 'na';
+    state.draft.casesRaisons[name] = reason;
+  }
+  schedulePersist();
+  return true;
+}
+
+async function taskToggleNC(name, label) {
+  const isCurrentlyNc = state.draft.casesCochees[name] === 'nc';
+  if (isCurrentlyNc) {
+    state.draft.casesCochees[name] = false;
+    delete state.draft.casesRaisons[name];
+    delete state.draft.casesGravites[name];
+    delete state.draft.casesNcDetails[name];
+  } else {
+    const result = await askNcReason();
+    if (result === null) return false;
+    state.draft.casesCochees[name] = 'nc';
+    state.draft.casesRaisons[name] = result.reason;
+    state.draft.casesGravites[name] = result.gravite;
+    state.draft.casesNcDetails[name] = {
+      zone: result.zone, actionCorrective: result.actionCorrective,
+      responsable: result.responsable, dateCreation: result.dateCreation, resolu: false,
+      numero: nextNcId(),
+    };
+    logActivity(`Non-conformité (${result.gravite}) relevée : ${label || name}`);
+  }
+  schedulePersist();
+  return true;
+}
+
+async function taskQuickNote(name) {
+  const current = state.draft.casesNotes[name] || '';
+  const confirmed = await showModal({
+    title: 'Commentaire rapide',
+    bodyHtml: `<textarea id="modalTaskNote" rows="3" placeholder="Note sur cette tâche…">${escapeHtml(current)}</textarea>`,
+    confirmLabel: 'Enregistrer',
+  });
+  if (!confirmed) return false;
+  const val = $('#modalTaskNote').value.trim();
+  if (val) state.draft.casesNotes[name] = val; else delete state.draft.casesNotes[name];
+  schedulePersist();
+  return true;
+}
+
+function taskSetDone(name, label, done) {
+  state.draft.casesCochees[name] = done;
+  if (done) {
+    delete state.draft.casesRaisons[name];
+    delete state.draft.casesGravites[name];
+    logActivity(`Tâche complétée : ${label || name}`);
+  }
+  schedulePersist();
+}
+
 function renderChecklist(group) {
   const container = $(`[data-checklist="${group}"]`);
   if (!container) return;
@@ -1850,9 +1956,10 @@ function renderChecklist(group) {
         ${canAttach ? `
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
           <div class="dropzone-mini" data-item-dropzone="${name}">
-            📎 Glissez-déposez un document, cliquez pour parcourir, ou
-            <button type="button" class="btn btn-outline" data-item-snagit="${name}">utiliser Snagit</button>
-            <input type="file" data-item-file-input="${name}" multiple class="hidden">
+            <span class="dz-text-desktop">📎 Glissez-déposez un document, cliquez pour parcourir, ou</span>
+            <span class="dz-text-mobile">📷 Prendre une photo</span>
+            <button type="button" class="btn btn-outline dz-snagit-btn" data-item-snagit="${name}">utiliser Snagit</button>
+            <input type="file" data-item-file-input="${name}" capture="environment" multiple class="hidden">
           </div>
           <div class="file-list-mini" data-item-file-list="${name}"></div>
         </div>` : ''}
@@ -1862,17 +1969,12 @@ function renderChecklist(group) {
   $$('.ci-checkbox', container).forEach((cb) => {
     cb.addEventListener('change', () => {
       const name = cb.dataset.name;
-      state.draft.casesCochees[name] = cb.checked;
-      if (cb.checked) {
-        delete state.draft.casesRaisons[name];
-        delete state.draft.casesGravites[name];
-        logActivity(`Tâche complétée : ${cb.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
-      }
+      const label = cb.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name;
+      taskSetDone(name, label, cb.checked);
       const wrap = container.querySelector(`[data-item-wrap="${name}"]`);
       if (wrap) { wrap.classList.toggle('checked', cb.checked); wrap.classList.remove('na', 'nc'); }
       const drawer = container.querySelector(`[data-drawer="${name}"]`);
       if (drawer) drawer.classList.toggle('hidden', !cb.checked);
-      schedulePersist();
       refreshChecklistProgressFor(group);
       updateProgressPill();
       renderNonConformites();
@@ -1889,17 +1991,8 @@ function renderChecklist(group) {
   $$('.btn-na', container).forEach((btn) => {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.na;
-      const isCurrentlyNa = state.draft.casesCochees[name] === 'na';
-      if (isCurrentlyNa) {
-        state.draft.casesCochees[name] = false;
-        delete state.draft.casesRaisons[name];
-      } else {
-        const reason = await askNaReason();
-        if (reason === null) return;
-        state.draft.casesCochees[name] = 'na';
-        state.draft.casesRaisons[name] = reason;
-      }
-      schedulePersist();
+      const changed = await taskToggleNA(name);
+      if (!changed) return;
       renderChecklist(group);
       refreshChecklistProgressFor(group);
       updateProgressPill();
@@ -1910,26 +2003,9 @@ function renderChecklist(group) {
   $$('.btn-nc', container).forEach((btn) => {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.nc;
-      const isCurrentlyNc = state.draft.casesCochees[name] === 'nc';
-      if (isCurrentlyNc) {
-        state.draft.casesCochees[name] = false;
-        delete state.draft.casesRaisons[name];
-        delete state.draft.casesGravites[name];
-        delete state.draft.casesNcDetails[name];
-      } else {
-        const result = await askNcReason();
-        if (result === null) return;
-        state.draft.casesCochees[name] = 'nc';
-        state.draft.casesRaisons[name] = result.reason;
-        state.draft.casesGravites[name] = result.gravite;
-        state.draft.casesNcDetails[name] = {
-          zone: result.zone, actionCorrective: result.actionCorrective,
-          responsable: result.responsable, dateCreation: result.dateCreation, resolu: false,
-          numero: nextNcId(),
-        };
-        logActivity(`Non-conformité (${result.gravite}) relevée : ${btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
-      }
-      schedulePersist();
+      const label = btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name;
+      const changed = await taskToggleNC(name, label);
+      if (!changed) return;
       renderChecklist(group);
       refreshChecklistProgressFor(group);
       updateProgressPill();
@@ -1950,16 +2026,8 @@ function renderChecklist(group) {
   $$('.btn-note', container).forEach((btn) => {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.note;
-      const current = state.draft.casesNotes[name] || '';
-      const confirmed = await showModal({
-        title: 'Commentaire rapide',
-        bodyHtml: `<textarea id="modalTaskNote" rows="3" placeholder="Note sur cette tâche…">${escapeHtml(current)}</textarea>`,
-        confirmLabel: 'Enregistrer',
-      });
-      if (!confirmed) return;
-      const val = $('#modalTaskNote').value.trim();
-      if (val) state.draft.casesNotes[name] = val; else delete state.draft.casesNotes[name];
-      schedulePersist();
+      const changed = await taskQuickNote(name);
+      if (!changed) return;
       renderChecklist(group);
     });
   });
@@ -2340,6 +2408,7 @@ const ctx = canvas.getContext('2d');
 let drawing = false, currentTool = 'pen', lastX = 0, lastY = 0, startX = 0, startY = 0;
 
 function resetCanvas() {
+  if (!ctx) return;
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-surface-2') || '#1e2630';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.strokeStyle = '#555f6b';
@@ -2676,3 +2745,206 @@ $('#btnImportNetwork').addEventListener('click', () => importDossierFromPickedFo
     toast('Cliquez sur Continuer pour démarrer un nouveau brouillon local.', 4500);
   }
 })();
+
+// ==================== MODE INTERVENTION (mobile — une tâche à la fois) ====================
+// Réutilise entièrement les fonctions déjà existantes (taskSetDone, taskToggleNA,
+// taskToggleNC, taskQuickNote, attachFilesToTask, askNcReason, newVpoItem, nextNcId) —
+// aucune logique parallèle : le mode intervention est une simple autre FAÇON de
+// naviguer et déclencher exactement les mêmes actions que la checklist normale.
+let ivTaskList = [];
+let ivIndex = 0;
+
+function buildInterventionTaskList() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  const list = [];
+  Object.entries(groups).forEach(([group, items]) => {
+    items.forEach(([name, label]) => list.push({ group, name, label }));
+  });
+  return list;
+}
+
+function startInterventionMode() {
+  if (!state.draft) return;
+  ivTaskList = buildInterventionTaskList();
+  if (!ivTaskList.length) { toast('Aucune tâche dans ce dossier.'); return; }
+  const firstIncomplete = ivTaskList.findIndex((t) => state.draft.casesCochees[t.name] !== true);
+  ivIndex = firstIncomplete === -1 ? 0 : firstIncomplete;
+  $('#interventionMode').classList.remove('hidden');
+  renderInterventionStep();
+}
+
+function exitInterventionMode() {
+  $('#interventionMode').classList.add('hidden');
+  $('#ivPhotoConfirm').classList.add('hidden');
+  // Rafraîchit toutes les vues qui pourraient avoir changé pendant l'intervention.
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  Object.keys(groups).forEach((g) => renderChecklist(g));
+  renderApercu();
+  renderNonConformites();
+  renderVpoList();
+  updateProgressPill();
+  updateFilesCount();
+}
+
+function renderInterventionStep() {
+  const task = ivTaskList[ivIndex];
+  if (!task || !state.draft) return;
+  const d = state.draft;
+  $('#ivBt').textContent = `BT ${d.champs.bt || '—'} · ${[d.champs.type, d.champs.tag].filter(Boolean).join(' — ') || d.localisation}`;
+  const doneCount = ivTaskList.filter((t) => d.casesCochees[t.name] === true).length;
+  $('#ivProgress').textContent = `${doneCount} / ${ivTaskList.length} tâches complétées`;
+  $('#ivStep').textContent = `Tâche ${ivIndex + 1} sur ${ivTaskList.length}`;
+  $('#ivSection').textContent = GROUP_LABELS[task.group] || task.group;
+  $('#ivTaskLabel').textContent = task.label;
+
+  const note = d.casesNotes[task.name];
+  const noteEl = $('#ivTaskNote');
+  if (note) { noteEl.textContent = `🗨 ${note}`; noteEl.classList.remove('hidden'); }
+  else { noteEl.classList.add('hidden'); }
+
+  $('#ivPhotoConfirm').classList.add('hidden');
+
+  const val = d.casesCochees[task.name];
+  const doneBtn = $('#btnIvDone');
+  if (val === true) {
+    doneBtn.textContent = '✓ Fait — toucher pour annuler';
+    doneBtn.classList.add('iv-done-active');
+  } else {
+    doneBtn.textContent = '✓ Marquer fait';
+    doneBtn.classList.remove('iv-done-active');
+  }
+
+  $('#btnIvPrev').disabled = ivIndex === 0;
+  $('#btnIvNext').disabled = ivIndex === ivTaskList.length - 1;
+}
+
+// Choix à deux options réutilisant la même fenêtre modale que le reste de l'app
+// (même overlay, mêmes styles) — seule la façon de résoudre le choix diffère
+// du confirmer/annuler binaire habituel.
+function showChoiceModal(title, bodyHtml, choiceIds) {
+  return new Promise((resolve) => {
+    const overlay = $('#modalOverlay');
+    $('#modalTitle').textContent = title;
+    $('#modalBody').innerHTML = bodyHtml;
+    $('#modalConfirm').classList.add('hidden');
+    overlay.classList.remove('hidden');
+
+    const handlers = [];
+    function cleanup(value) {
+      overlay.classList.add('hidden');
+      $('#modalConfirm').classList.remove('hidden');
+      handlers.forEach(({ el, fn }) => el.removeEventListener('click', fn));
+      $('#modalCancel').removeEventListener('click', onCancel);
+      resolve(value);
+    }
+    function onCancel() { cleanup(null); }
+    $('#modalCancel').addEventListener('click', onCancel);
+    choiceIds.forEach((id) => {
+      const el = $('#' + id);
+      if (!el) return;
+      const fn = () => cleanup(id);
+      handlers.push({ el, fn });
+      el.addEventListener('click', fn);
+    });
+  });
+}
+
+async function reportEcartForTask(name, label) {
+  const choice = await showChoiceModal('Signaler un écart', `
+    <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Lié à : <strong>${escapeHtml(label)}</strong></p>
+    <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+      <button type="button" class="btn btn-outline" id="ecartChoixNc" style="width:100%;">Non-conformité sur cette tâche</button>
+      <button type="button" class="btn btn-outline" id="ecartChoixVpo" style="width:100%;">Nouveau point VPO lié</button>
+    </div>
+  `, ['ecartChoixNc', 'ecartChoixVpo']);
+
+  if (choice === 'ecartChoixNc') {
+    await taskToggleNC(name, label);
+    renderNonConformites();
+  } else if (choice === 'ecartChoixVpo') {
+    const result = await askNcReason();
+    if (result === null) return;
+    const item = newVpoItem();
+    item.texte = `Écart lié à : ${label}`;
+    item.statut = 'nc';
+    item.raison = result.reason;
+    item.gravite = result.gravite;
+    item.zone = result.zone;
+    item.actionCorrective = result.actionCorrective;
+    item.responsable = result.responsable;
+    item.dateCreation = result.dateCreation;
+    item.numero = nextNcId();
+    item.resolu = false;
+    item.dateValidation = new Date().toISOString();
+    item.validePar = (state.draft.champs.employeeName || '').trim();
+    state.draft.vpoItems.push(item);
+    logActivity(`Non-conformité VPO (${result.gravite}) relevée depuis le mode intervention : ${item.texte}`);
+    schedulePersist();
+    renderVpoList();
+    renderNonConformites();
+  }
+  updateProgressPill();
+}
+
+// ---- Câblage (une seule fois — les éléments du mode intervention ne sont jamais recréés) ----
+$('#btnCloseIntervention').addEventListener('click', exitInterventionMode);
+
+$('#btnIvPrev').addEventListener('click', () => {
+  if (ivIndex > 0) { ivIndex--; renderInterventionStep(); }
+});
+$('#btnIvNext').addEventListener('click', () => {
+  if (ivIndex < ivTaskList.length - 1) { ivIndex++; renderInterventionStep(); }
+});
+
+$('#btnIvDone').addEventListener('click', () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const currentlyDone = state.draft.casesCochees[task.name] === true;
+  taskSetDone(task.name, task.label, !currentlyDone);
+  renderInterventionStep();
+  if (!currentlyDone && ivIndex < ivTaskList.length - 1) {
+    setTimeout(() => { ivIndex++; renderInterventionStep(); }, 350);
+  }
+});
+
+$('#btnIvNote').addEventListener('click', async () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const changed = await taskQuickNote(task.name);
+  if (changed) renderInterventionStep();
+});
+
+$('#btnIvEcart').addEventListener('click', async () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  await reportEcartForTask(task.name, task.label);
+  renderInterventionStep();
+});
+
+$('#btnIvPhoto').addEventListener('click', () => { $('#ivPhotoInput').click(); });
+$('#ivPhotoInput').addEventListener('change', async () => {
+  const task = ivTaskList[ivIndex];
+  const input = $('#ivPhotoInput');
+  if (!task || !input.files || !input.files.length) return;
+  await attachFilesToTask(task.group, task.name, input.files);
+  input.value = '';
+  $('#ivPhotoConfirm').classList.remove('hidden');
+});
+$('#btnIvViewPhoto').addEventListener('click', () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const files = state.draft.casesFichiers[task.name] || [];
+  const last = files[files.length - 1];
+  if (!last) return;
+  if (isImageFile(last.name)) {
+    showModal({ title: last.name, bodyHtml: `<img src="${URL.createObjectURL(last.blob)}" style="max-width:100%;border-radius:8px;">`, confirmLabel: 'Fermer' });
+  } else {
+    toast('Document non visualisable directement (pas une image).');
+  }
+});
+$('#btnIvAddNoteAfterPhoto').addEventListener('click', async () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const changed = await taskQuickNote(task.name);
+  if (changed) renderInterventionStep();
+});
