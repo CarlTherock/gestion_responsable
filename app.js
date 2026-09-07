@@ -178,11 +178,18 @@ if ('serviceWorker' in navigator) {
 // ---------- Theme toggle ----------
 (function () {
   const root = document.documentElement;
-  // Mobile : fond clair par défaut (mode terrain sobre). PC : sombre inchangé.
-  let theme = window.innerWidth <= 680 ? 'light' : 'dark';
-  root.setAttribute('data-theme', theme);
+  // Le thème par défaut (clair sur mobile, sombre sur PC) est géré entièrement
+  // en CSS via une media query — jamais de dépendance au JS pour l'affichage
+  // initial, donc aucun risque de désynchronisation selon le moment d'exécution.
+  // Ce bouton sert seulement à forcer manuellement l'autre thème si désiré.
+  let theme = null;
   $('#themeToggle').addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
+    if (theme === null) {
+      const currentlyLight = window.matchMedia('(max-width: 680px)').matches;
+      theme = currentlyLight ? 'dark' : 'light';
+    } else {
+      theme = theme === 'dark' ? 'light' : 'dark';
+    }
     root.setAttribute('data-theme', theme);
   });
 })();
@@ -1098,6 +1105,21 @@ function layoutMobileBottomBars() {
   document.querySelectorAll('.tab-panel').forEach((p) => { p.style.paddingBottom = totalStack + 'px'; });
 }
 window.addEventListener('resize', layoutMobileBottomBars);
+window.addEventListener('load', layoutMobileBottomBars);
+document.addEventListener('DOMContentLoaded', layoutMobileBottomBars);
+
+// Filet de robustesse : recalcule automatiquement dès que la barre de catégories,
+// la bande de sous-onglets ou le copyright changent de taille pour QUELQUE raison
+// que ce soit (police qui finit de charger, contenu qui change, rotation d'écran…).
+// Élimine toute dépendance au bon minutage d'exécution du JavaScript.
+if (window.ResizeObserver) {
+  const mobileBarsObserver = new ResizeObserver(() => layoutMobileBottomBars());
+  ['legalFooter'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) mobileBarsObserver.observe(el);
+  });
+  document.querySelectorAll('.category-nav, .tabs-nav').forEach((el) => mobileBarsObserver.observe(el));
+}
 
 $$('.category-btn').forEach((btn) => {
   btn.addEventListener('click', () => {

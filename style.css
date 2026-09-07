@@ -95,6 +95,33 @@
   --shadow-lg: 0 16px 40px rgba(20,20,10,0.14);
 }
 
+/* Mobile : le thème clair s'applique par défaut, en CSS pur — aucune dépendance
+   au JavaScript ni à son ordre d'exécution. Le bouton de thème peut forcer le
+   sombre explicitement (data-theme="dark" a alors priorité, voir :not() ci-dessous). */
+@media (max-width: 680px) {
+  :root:not([data-theme='dark']) {
+    --color-bg: #eef0ec;
+    --color-surface: #f8f8f5;
+    --color-surface-2: #ffffff;
+    --color-surface-offset: #e9e9e2;
+    --color-divider: #d7d7cd;
+    --color-border: #c7c8bd;
+    --color-text: #1a2027;
+    --color-text-muted: #5b6470;
+    --color-text-faint: #909aa4;
+    --color-text-inverse: #f8f8f5;
+    --color-primary-highlight: #d5eef1;
+    --color-install-highlight: #ffe6d1;
+    --color-decom-highlight: #fbdadb;
+    --color-warning-highlight: #fbecc0;
+    --color-success-highlight: #d9f0e1;
+    --color-error-highlight: #fbdadb;
+    --shadow-sm: 0 1px 2px rgba(20,20,10,0.08);
+    --shadow-md: 0 6px 18px rgba(20,20,10,0.10);
+    --shadow-lg: 0 16px 40px rgba(20,20,10,0.14);
+  }
+}
+
 [data-mode='installation'] {
   --mode-accent: var(--color-install);
   --mode-accent-hover: var(--color-install-hover);
@@ -582,7 +609,7 @@ body { padding-bottom: 34px; }
   .category-btn.active { color: var(--color-primary); }
 
   /* La position "bottom" du copyright est calculée dynamiquement en JS */
-  .tab-panel { padding: var(--space-5) var(--space-4) var(--space-8); }
+  .tab-panel { padding: var(--space-5) var(--space-4) 170px; }
 
   /* Cartes de tâches : le groupe de boutons passe à la ligne, checkbox+libellé restent ensemble */
   .checklist-item-row { flex-wrap: wrap; row-gap: var(--space-2); }
