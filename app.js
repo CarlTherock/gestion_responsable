@@ -118,6 +118,7 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 // ---------- Icônes SVG des onglets (traits fins, style professionnel) ----------
 const ICONS = {
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
   clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/>',
@@ -178,18 +179,10 @@ if ('serviceWorker' in navigator) {
 // ---------- Theme toggle ----------
 (function () {
   const root = document.documentElement;
-  // Le thème par défaut (clair sur mobile, sombre sur PC) est géré entièrement
-  // en CSS via une media query — jamais de dépendance au JS pour l'affichage
-  // initial, donc aucun risque de désynchronisation selon le moment d'exécution.
-  // Ce bouton sert seulement à forcer manuellement l'autre thème si désiré.
-  let theme = null;
+  let theme = 'dark'; // industriel : sombre par défaut, PC et mobile
+  root.setAttribute('data-theme', theme);
   $('#themeToggle').addEventListener('click', () => {
-    if (theme === null) {
-      const currentlyLight = window.matchMedia('(max-width: 680px)').matches;
-      theme = currentlyLight ? 'dark' : 'light';
-    } else {
-      theme = theme === 'dark' ? 'light' : 'dark';
-    }
+    theme = theme === 'dark' ? 'light' : 'dark';
     root.setAttribute('data-theme', theme);
   });
 })();
@@ -796,7 +789,7 @@ function renderApercu() {
     </div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
 
-    <button type="button" class="btn-start-intervention" id="btnStartIntervention">▶ Démarrer l'intervention</button>
+    <button type="button" class="btn btn-primary btn-start-intervention" id="btnStartIntervention"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">${ICONS.play}</svg> Démarrer l'intervention</button>
 
     <div class="next-action-card">
       <div class="next-action-body">
