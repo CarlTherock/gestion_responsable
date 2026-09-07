@@ -134,6 +134,15 @@ const splashDonePromise = new Promise((resolve) => {
   if (splashEl) splashEl.addEventListener('click', finish);
 });
 
+// ---------- Détection hors ligne / en ligne ----------
+function updateOfflineIndicator() {
+  const pill = document.getElementById('wsOfflinePill');
+  if (!pill) return;
+  pill.classList.toggle('hidden', navigator.onLine);
+}
+window.addEventListener('online', () => { updateOfflineIndicator(); toast('Connexion rétablie.'); });
+window.addEventListener('offline', () => { updateOfflineIndicator(); toast('Hors ligne — vos modifications restent conservées sur cet appareil.', 4500); });
+
 // ---------- Service worker ----------
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -293,6 +302,7 @@ function newDraft(numero, mode) {
     casesNcDetails: {},
     casesFichiers: {},
     casesPreuveRequise: {},
+    casesNotes: {},
     ncFichiers: {},
     ncSeq: 0,
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
@@ -319,6 +329,7 @@ function normalizeDraft(d) {
   if (!d.casesNcDetails) d.casesNcDetails = {};
   if (!d.casesFichiers) d.casesFichiers = {};
   if (!d.casesPreuveRequise) d.casesPreuveRequise = {};
+  if (!d.casesNotes) d.casesNotes = {};
   if (!d.ncFichiers) d.ncFichiers = {};
   if (d.ncSeq === undefined) d.ncSeq = 0;
   if (!d.files) d.files = {};
@@ -673,6 +684,8 @@ function renderApercu() {
   const nextAction = computeNextAction();
   const closure = computeClosureVerdict();
   const nc = computeNcStats();
+  const vpo = computeVpoStats();
+  const preuve = computeProofStats();
 
   const titre = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
     || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
@@ -757,6 +770,12 @@ function renderApercu() {
     <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}">
       <div class="closure-title">${closure.ready ? '\u2705 Assistant de clôture' : '\u26d4 Assistant de clôture'}</div>
       <div class="closure-text">${escapeHtml(closure.text)}</div>
+      ${!closure.ready ? `<div class="closure-actions">
+        ${(total - done) > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="${groupStats.find((g) => g.pct < 100)?.group || 'identification'}">Voir les tâches incomplètes</button>` : ''}
+        ${vpo.pendingObligatoire > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="vpo">Voir les VPO</button>` : ''}
+        ${nc.total > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="non-conformite">Voir les non-conformités</button>` : ''}
+        ${preuve.manquantes > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="documents">Voir les preuves manquantes</button>` : ''}
+      </div>` : ''}
     </div>
 
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Progression par section</div>
@@ -1150,7 +1169,7 @@ function ringSvg(pct, size, stroke) {
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#232b36" stroke-width="${stroke}"/>
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
       stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" stroke-linecap="round"
-      transform="rotate(-90 ${size / 2} ${size / 2})"/>
+      transform="rotate(-90 ${size / 2} ${size / 2})" style="transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;"/>
     <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="${fontSize}" font-weight="700" fill="#eef1f4">${Math.round(clamped)}%</text>
   </svg>`;
 }
@@ -1681,6 +1700,7 @@ function openWorkspace() {
   renderNonConformites();
   updateApprobationBadge();
   renderQrThumb();
+  updateOfflineIndicator();
 }
 
 // ---------- Onglets ----------
@@ -1713,21 +1733,25 @@ function renderChecklist(group) {
     const isNc = val === 'nc';
     const files = (state.draft.casesFichiers[name] || []);
     const reason = state.draft.casesRaisons[name] || '';
+    const note = state.draft.casesNotes[name] || '';
+    const ncNumero = isNc && state.draft.casesNcDetails[name] ? state.draft.casesNcDetails[name].numero : '';
     const preuveRequise = canAttach && !!state.draft.casesPreuveRequise[name];
     const preuveManquante = preuveRequise && checked && !files.length;
     return `
       <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}${preuveManquante ? ' preuve-manquante' : ''}" data-item-wrap="${name}">
         <div class="checklist-item-row">
           <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
-          <span class="ci-label" data-name="${name}">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">📎!</span>' : ''}</span>
+          <span class="ci-label" data-name="${name}">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">📎!</span>' : ''}${ncNumero ? ` <span class="nc-xref">${ncNumero}</span>` : ''}</span>
           <div class="ci-actions">
             ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
+            <button type="button" class="btn-note${note ? ' active' : ''}" data-note="${name}" title="Ajouter un commentaire rapide">🗨${note ? '' : ''}</button>
             ${canAttach ? `<button type="button" class="btn-preuve${preuveRequise ? ' active' : ''}" data-preuve="${name}" title="Exiger une preuve pour cette tâche">Preuve requise</button>` : ''}
             <button type="button" class="btn-na" data-na="${name}">N/A</button>
             <button type="button" class="btn-nc" data-nc="${name}">Non conforme</button>
           </div>
         </div>
         ${(isNa || isNc) && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
+        ${note ? `<div class="na-reason ci-note-text">🗨 ${escapeHtml(note)}</div>` : ''}
         ${preuveManquante ? `<div class="na-reason preuve-warning">⚠ Preuve requise mais aucun document joint</div>` : ''}
         ${canAttach ? `
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
@@ -1826,6 +1850,23 @@ function renderChecklist(group) {
       schedulePersist();
       renderChecklist(group);
       updateProgressPill();
+    });
+  });
+
+  $$('.btn-note', container).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.note;
+      const current = state.draft.casesNotes[name] || '';
+      const confirmed = await showModal({
+        title: 'Commentaire rapide',
+        bodyHtml: `<textarea id="modalTaskNote" rows="3" placeholder="Note sur cette tâche…">${escapeHtml(current)}</textarea>`,
+        confirmLabel: 'Enregistrer',
+      });
+      if (!confirmed) return;
+      const val = $('#modalTaskNote').value.trim();
+      if (val) state.draft.casesNotes[name] = val; else delete state.draft.casesNotes[name];
+      schedulePersist();
+      renderChecklist(group);
     });
   });
 
