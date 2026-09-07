@@ -617,3 +617,34 @@ body { padding-bottom: 34px; }
 
 .checklist-item-wrap.checked { animation: taskCompletePulse 0.4s ease; }
 @keyframes taskCompletePulse { 0% { transform: scale(1); } 40% { transform: scale(1.015); } 100% { transform: scale(1); } }
+
+/* ---------- VPO : obligatoire + message d'impact ---------- */
+.btn-obligatoire {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 6px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); cursor: pointer; white-space: nowrap;
+}
+.btn-obligatoire:hover { border-color: var(--mode-accent); color: var(--mode-accent); }
+.btn-obligatoire.active { background: var(--mode-accent); color: #10151b; border-color: var(--mode-accent); }
+.vpo-impact { font-size: var(--text-xs); margin: 4px 0 var(--space-2) 8px; padding: 4px 10px; border-radius: var(--radius-sm); display: inline-block; }
+.vpo-impact-block { background: rgba(214,69,69,0.15); color: #f87171; font-weight: 600; }
+.vpo-impact-soft { background: rgba(234,179,8,0.12); color: #eab308; }
+
+/* ---------- Cartes de non-conformité enrichies ---------- */
+.nc-summary-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.nc-statut-badge { font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+.nc-statut-ouverte { background: rgba(248,113,113,0.15); color: #f87171; }
+.nc-statut-resolue { background: rgba(74,222,128,0.15); color: #4ade80; }
+.nc-summary-item.nc-resolue { opacity: 0.65; }
+.nc-meta { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
+
+/* ---------- Impression ---------- */
+@media print {
+  .topbar, .hazard-strip, .tabs-nav, .workspace-header, .toast, #legalFooter,
+  .btn, button, .dropzone-mini, .incomplete-filter-row, .modal-overlay { display: none !important; }
+  .tab-panel.hidden { display: block !important; }
+  body { background: #fff !important; color: #000 !important; padding: 0 !important; }
+  .cockpit-header, .status-banner, .next-action-card, .closure-card, .stat-card, .ring-card,
+  .checklist-item-wrap, .nc-summary-item, .timeline-item, .hero-ring {
+    background: #fff !important; border: 1px solid #ccc !important; color: #000 !important; box-shadow: none !important;
+  }
+}

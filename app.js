@@ -204,11 +204,24 @@ async function askNcReason() {
         <option value="critique">Critique</option>
       </select>
       <label style="font-size:var(--text-sm);color:var(--color-text-muted);">Raison (optionnel)</label>
-      <textarea id="modalNaReason" rows="3" placeholder="ex. Câblage ne respecte pas le plan"></textarea>`,
+      <textarea id="modalNaReason" rows="2" placeholder="ex. Câblage ne respecte pas le plan"></textarea>
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Zone / équipement (optionnel)</label>
+      <input type="text" id="modalNcZone" placeholder="ex. Secteur pâte, FT-4407">
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Action corrective (optionnel)</label>
+      <textarea id="modalNcAction" rows="2" placeholder="ex. Remplacer le câble"></textarea>
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Responsable (optionnel)</label>
+      <input type="text" id="modalNcResponsable" placeholder="ex. Carl Tremblay">`,
     confirmLabel: 'Marquer non conforme',
   });
   if (!confirmed) return null;
-  return { reason: $('#modalNaReason').value.trim(), gravite: $('#modalNcGravite').value };
+  return {
+    reason: $('#modalNaReason').value.trim(),
+    gravite: $('#modalNcGravite').value,
+    zone: $('#modalNcZone').value.trim(),
+    actionCorrective: $('#modalNcAction').value.trim(),
+    responsable: $('#modalNcResponsable').value.trim(),
+    dateCreation: new Date().toISOString(),
+  };
 }
 
 // ============================================================
@@ -260,13 +273,13 @@ function generateId() {
 }
 
 function newVpoItem() {
-  return { id: generateId(), texte: '', statut: null, raison: '' };
+  return { id: generateId(), texte: '', statut: null, raison: '', gravite: '', obligatoire: false, resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: '' };
 }
 
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     application: 'Gestion responsable',
     localisation: numero,
     mode,
@@ -277,6 +290,7 @@ function newDraft(numero, mode) {
     casesCochees: {},
     casesRaisons: {},
     casesGravites: {},
+    casesNcDetails: {},
     casesFichiers: {},
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     vpoItems: [newVpoItem()],
@@ -294,11 +308,28 @@ function normalizeDraft(d) {
   if (!d.casesCochees) d.casesCochees = {};
   if (!d.casesRaisons) d.casesRaisons = {};
   if (!d.casesGravites) d.casesGravites = {};
+  if (!d.casesNcDetails) d.casesNcDetails = {};
   if (!d.casesFichiers) d.casesFichiers = {};
   if (!d.files) d.files = {};
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
   if (!d.vpoItems || !d.vpoItems.length) d.vpoItems = [newVpoItem()];
+  d.vpoItems.forEach((it) => {
+    if (it.obligatoire === undefined) it.obligatoire = false;
+    if (it.resolu === undefined) it.resolu = false;
+    if (it.zone === undefined) it.zone = '';
+    if (it.actionCorrective === undefined) it.actionCorrective = '';
+    if (it.responsable === undefined) it.responsable = '';
+    if (it.dateCreation === undefined) it.dateCreation = '';
+  });
   if (!d.ncExtra) d.ncExtra = [];
+  d.ncExtra.forEach((it) => {
+    if (it.gravite === undefined) it.gravite = 'mineure';
+    if (it.resolu === undefined) it.resolu = false;
+    if (it.zone === undefined) it.zone = '';
+    if (it.actionCorrective === undefined) it.actionCorrective = '';
+    if (it.responsable === undefined) it.responsable = '';
+    if (it.dateCreation === undefined) it.dateCreation = new Date().toISOString();
+  });
   if (!d.approbations) d.approbations = [];
   if (!d.journal) d.journal = [];
   if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
@@ -407,9 +438,11 @@ function updateProgressPill() {
 
 function computeNcStats() {
   const groups = CHECKLISTS[state.draft.mode] || {};
-  let total = 0, critique = 0, majeure = 0, mineure = 0;
+  let total = 0, critique = 0, majeure = 0, mineure = 0, resolues = 0;
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name]) => {
     if (state.draft.casesCochees[name] === 'nc') {
+      const details = state.draft.casesNcDetails[name];
+      if (details && details.resolu) { resolues++; return; }
       total++;
       const g = state.draft.casesGravites[name];
       if (g === 'critique') critique++; else if (g === 'majeure') majeure++; else mineure++;
@@ -417,19 +450,28 @@ function computeNcStats() {
   }));
   (state.draft.vpoItems || []).forEach((it) => {
     if (it.statut === 'nc') {
+      if (it.resolu) { resolues++; return; }
       total++;
       if (it.gravite === 'critique') critique++; else if (it.gravite === 'majeure') majeure++; else mineure++;
     }
   });
-  (state.draft.ncExtra || []).forEach((it) => { if (it.texte && it.texte.trim()) total++; });
-  return { total, critique, majeure, mineure };
+  (state.draft.ncExtra || []).forEach((it) => {
+    if (it.texte && it.texte.trim()) {
+      if (it.resolu) { resolues++; return; }
+      total++;
+      if (it.gravite === 'critique') critique++; else if (it.gravite === 'majeure') majeure++; else mineure++;
+    }
+  });
+  return { total, critique, majeure, mineure, resolues };
 }
 
 function computeVpoStats() {
   const filled = (state.draft.vpoItems || []).filter((it) => it.texte && it.texte.trim());
   const evalues = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
-  const pending = filled.length - evalues;
-  return { total: filled.length, evalues, pending };
+  const pendingAll = filled.filter((it) => !it.statut);
+  const pendingObligatoire = pendingAll.filter((it) => it.obligatoire).length;
+  const pendingOptionnel = pendingAll.length - pendingObligatoire;
+  return { total: filled.length, evalues, pending: pendingAll.length, pendingObligatoire, pendingOptionnel };
 }
 
 function computeDossierStatus() {
@@ -457,18 +499,21 @@ function computeNextAction() {
   const groups = CHECKLISTS[state.draft.mode] || {};
   for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
-      if (state.draft.casesCochees[name] === 'nc' && state.draft.casesGravites[name] === 'critique') {
+      if (state.draft.casesCochees[name] === 'nc' && state.draft.casesGravites[name] === 'critique'
+        && !(state.draft.casesNcDetails[name] && state.draft.casesNcDetails[name].resolu)) {
         return { text: `Traiter la non-conformité critique : ${label}`, tab: 'non-conformite' };
       }
     }
   }
-  const vpoPending = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut);
-  if (vpoPending) return { text: `Évaluer le VPO : ${vpoPending.texte}`, tab: 'vpo' };
+  const vpoPendingObligatoire = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut && it.obligatoire);
+  if (vpoPendingObligatoire) return { text: `Évaluer le VPO obligatoire : ${vpoPendingObligatoire.texte}`, tab: 'vpo' };
   for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
       if (!isTaskDone(name)) return { text: `Compléter : ${label}`, tab: group };
     }
   }
+  const vpoPending = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut);
+  if (vpoPending) return { text: `Évaluer le VPO : ${vpoPending.texte}`, tab: 'vpo' };
   for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
       if (state.draft.casesCochees[name] === 'nc') return { text: `Traiter la non-conformité : ${label}`, tab: 'non-conformite' };
@@ -487,10 +532,12 @@ function computeClosureVerdict() {
   const vpo = computeVpoStats();
   const problems = [];
   if (incomplete > 0) problems.push(`${incomplete} tâche${incomplete > 1 ? 's' : ''} incomplète${incomplete > 1 ? 's' : ''}`);
-  if (vpo.pending > 0) problems.push(`${vpo.pending} VPO non évalué${vpo.pending > 1 ? 's' : ''}`);
+  if (vpo.pendingObligatoire > 0) problems.push(`${vpo.pendingObligatoire} VPO obligatoire${vpo.pendingObligatoire > 1 ? 's' : ''} non évalué${vpo.pendingObligatoire > 1 ? 's' : ''}`);
   if (nc.total > 0) problems.push(`${nc.total} non-conformité${nc.total > 1 ? 's' : ''} ouverte${nc.total > 1 ? 's' : ''}`);
   if (!problems.length) {
-    return { ready: true, text: 'Dossier prêt pour révision : toutes les tâches sont complétées, les VPO sont évalués et aucune non-conformité n\u2019est ouverte.' };
+    let text = 'Dossier prêt pour révision : toutes les tâches sont complétées, les VPO obligatoires sont évalués et aucune non-conformité n\u2019est ouverte.';
+    if (vpo.pendingOptionnel > 0) text += ` (Note : ${vpo.pendingOptionnel} VPO non obligatoire${vpo.pendingOptionnel > 1 ? 's' : ''} encore non évalué${vpo.pendingOptionnel > 1 ? 's' : ''}.)`;
+    return { ready: true, text };
   }
   return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.` };
 }
@@ -557,6 +604,7 @@ function renderApercu() {
         <span class="priorite-badge priorite-${priorite}">Priorité ${PRIORITE_LABEL[priorite] || priorite}</span>
         ${responsable ? `<span class="tag-pill">Responsable : ${escapeHtml(responsable)}</span>` : ''}
         ${echeance ? `<span class="tag-pill">Échéance : ${escapeHtml(echeance)}</span>` : ''}
+        <button type="button" class="btn btn-outline" id="btnPrintApercu">🖨 Imprimer</button>
       </div>
     </div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
@@ -614,6 +662,9 @@ function renderApercu() {
       renderAllChecklists();
     });
   }
+
+  const printBtn = $('#btnPrintApercu', container);
+  if (printBtn) printBtn.addEventListener('click', () => window.print());
 }
 
 function renderNonConformites() {
@@ -624,31 +675,82 @@ function renderNonConformites() {
   Object.entries(groups).forEach(([group, items]) => {
     items.forEach(([name, label]) => {
       if (state.draft.casesCochees[name] === 'nc') {
-        rows.push({ section: GROUP_LABELS[group] || group, label, reason: state.draft.casesRaisons[name] || '', gravite: state.draft.casesGravites[name] || '' });
+        const details = state.draft.casesNcDetails[name] || {};
+        rows.push({
+          kind: 'checklist', key: name, section: GROUP_LABELS[group] || group, label,
+          reason: state.draft.casesRaisons[name] || '', gravite: state.draft.casesGravites[name] || '',
+          zone: details.zone || '', actionCorrective: details.actionCorrective || '',
+          responsable: details.responsable || '', dateCreation: details.dateCreation || '',
+          resolu: !!details.resolu,
+        });
       }
     });
   });
   (state.draft.vpoItems || []).forEach((item) => {
     if (item.statut === 'nc') {
-      rows.push({ section: 'VPO', label: item.texte || '(sans description)', reason: item.raison || '', gravite: item.gravite || '' });
+      rows.push({
+        kind: 'vpo', key: item.id, section: 'VPO', label: item.texte || '(sans description)',
+        reason: item.raison || '', gravite: item.gravite || '', zone: item.zone || '',
+        actionCorrective: item.actionCorrective || '', responsable: item.responsable || '',
+        dateCreation: item.dateCreation || '', resolu: !!item.resolu,
+      });
     }
   });
   (state.draft.ncExtra || []).forEach((item) => {
     if (item.texte && item.texte.trim()) {
-      rows.push({ section: 'AJOUT MANUEL', label: item.texte, reason: '', gravite: '' });
+      rows.push({
+        kind: 'ncextra', key: item.id, section: 'AJOUT MANUEL', label: item.texte,
+        reason: '', gravite: item.gravite || 'mineure', zone: item.zone || '',
+        actionCorrective: item.actionCorrective || '', responsable: item.responsable || '',
+        dateCreation: item.dateCreation || '', resolu: !!item.resolu,
+      });
     }
   });
+
   if (!rows.length) {
     el.innerHTML = '<div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>';
     return;
   }
+
   const GRAVITE_LABEL = { critique: '🔴 Critique', majeure: '🟠 Majeure', mineure: '🟡 Mineure' };
+  const order = { critique: 0, majeure: 1, mineure: 2 };
+  rows.sort((a, b) => (a.resolu === b.resolu ? (order[a.gravite] ?? 3) - (order[b.gravite] ?? 3) : (a.resolu ? 1 : -1)));
+
   el.innerHTML = rows.map((r) => `
-    <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}">
-      <div class="nc-section">${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
+    <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}${r.resolu ? ' nc-resolue' : ''}" data-nc-kind="${r.kind}" data-nc-key="${r.key}">
+      <div class="nc-summary-header">
+        <div class="nc-section">${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
+        <span class="nc-statut-badge ${r.resolu ? 'nc-statut-resolue' : 'nc-statut-ouverte'}">${r.resolu ? 'Résolue' : 'Ouverte'}</span>
+      </div>
       <div class="nc-label">${escapeHtml(r.label)}</div>
+      ${r.zone ? `<div class="nc-meta">Zone / équipement : ${escapeHtml(r.zone)}</div>` : ''}
       ${r.reason ? `<div class="nc-reason">Raison : ${escapeHtml(r.reason)}</div>` : ''}
+      ${r.actionCorrective ? `<div class="nc-meta">Action corrective : ${escapeHtml(r.actionCorrective)}</div>` : ''}
+      ${r.responsable ? `<div class="nc-meta">Responsable : ${escapeHtml(r.responsable)}</div>` : ''}
+      ${r.dateCreation ? `<div class="nc-meta">Créée le ${new Date(r.dateCreation).toLocaleString('fr-CA')}</div>` : ''}
+      <button type="button" class="btn btn-outline btn-nc-toggle-resolu" style="margin-top:var(--space-2);">${r.resolu ? 'Rouvrir' : 'Marquer résolue'}</button>
     </div>`).join('');
+
+  $$('.btn-nc-toggle-resolu', el).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('[data-nc-kind]');
+      const kind = card.dataset.ncKind;
+      const key = card.dataset.ncKey;
+      if (kind === 'checklist') {
+        if (!state.draft.casesNcDetails[key]) state.draft.casesNcDetails[key] = {};
+        state.draft.casesNcDetails[key].resolu = !state.draft.casesNcDetails[key].resolu;
+      } else if (kind === 'vpo') {
+        const item = findVpoItem(key);
+        if (item) item.resolu = !item.resolu;
+      } else if (kind === 'ncextra') {
+        const item = (state.draft.ncExtra || []).find((it) => it.id === key);
+        if (item) item.resolu = !item.resolu;
+      }
+      schedulePersist();
+      renderNonConformites();
+      updateProgressPill();
+    });
+  });
 }
 
 $('#btnSaveFolder').addEventListener('click', async () => {
@@ -939,21 +1041,32 @@ function buildDashboardHtml() {
   // ---- Non-conformités ----
   const GRAVITE_TAG = { critique: '🔴 Critique', majeure: '🟠 Majeure', mineure: '🟡 Mineure' };
   const ncItems = [];
+  let ncResoluesCount = 0;
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
-    if (d.casesCochees[name] === 'nc') ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
+    if (d.casesCochees[name] === 'nc') {
+      const det = d.casesNcDetails[name] || {};
+      if (det.resolu) { ncResoluesCount++; return; }
+      ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
+    }
   }));
   (d.vpoItems || []).forEach((it) => {
-    if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
+    if (it.statut === 'nc') {
+      if (it.resolu) { ncResoluesCount++; return; }
+      ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
+    }
   });
   (d.ncExtra || []).forEach((it) => {
-    if (it.texte && it.texte.trim()) ncItems.push({ section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: '' });
+    if (it.texte && it.texte.trim()) {
+      if (it.resolu) { ncResoluesCount++; return; }
+      ncItems.push({ section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '' });
+    }
   });
   const ncBanner = ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
-        <div class="nc-banner-title">\u26a0 ${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} relevée${ncItems.length > 1 ? 's' : ''}</div>
+        <div class="nc-banner-title">\u26a0 ${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}${ncResoluesCount ? ` (+ ${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>
         <ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong>${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
       </div>`
-    : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité relevée pour ce dossier.</div>`;
+    : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
 
   const closureVerdict = computeClosureVerdict();
   const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">${closureVerdict.ready ? '\u2705' : '\u26d4'} Assistant de clôture</div>${escapeHtml(closureVerdict.text)}</div>`;
@@ -1473,12 +1586,17 @@ function renderChecklist(group) {
         state.draft.casesCochees[name] = false;
         delete state.draft.casesRaisons[name];
         delete state.draft.casesGravites[name];
+        delete state.draft.casesNcDetails[name];
       } else {
         const result = await askNcReason();
         if (result === null) return;
         state.draft.casesCochees[name] = 'nc';
         state.draft.casesRaisons[name] = result.reason;
         state.draft.casesGravites[name] = result.gravite;
+        state.draft.casesNcDetails[name] = {
+          zone: result.zone, actionCorrective: result.actionCorrective,
+          responsable: result.responsable, dateCreation: result.dateCreation, resolu: false,
+        };
         logActivity(`Non-conformité (${result.gravite}) relevée : ${btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
       }
       schedulePersist();
@@ -1574,9 +1692,15 @@ function renderVpoList() {
   if (!container || !state.draft) return;
   const items = state.draft.vpoItems || [];
 
-  container.innerHTML = items.map((item) => `
+  container.innerHTML = items.map((item) => {
+    const pending = item.texte && item.texte.trim() && !item.statut;
+    let impact = '';
+    if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block">⛔ Ce VPO empêche la fermeture du dossier</div>';
+    else if (pending) impact = '<div class="vpo-impact vpo-impact-soft">Validation recommandée avant l\u2019étape suivante</div>';
+    return `
     <div class="vpo-row" data-vpo-id="${item.id}">
       <div class="vpo-status">
+        <button type="button" class="btn-obligatoire${item.obligatoire ? ' active' : ''}" data-vpo-obligatoire="${item.id}" title="Marquer ce VPO comme obligatoire">Obligatoire</button>
         <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpo-conforme="${item.id}">Conforme</button>
         <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpo-nc="${item.id}">Non conforme</button>
       </div>
@@ -1584,7 +1708,19 @@ function renderVpoList() {
       <button type="button" class="btn-vpo-remove" data-vpo-remove="${item.id}" title="Retirer cette ligne">✕</button>
     </div>
     ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
-  `).join('');
+    ${impact}
+  `; }).join('');
+
+  $$('[data-vpo-obligatoire]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const item = findVpoItem(btn.dataset.vpoObligatoire);
+      if (!item) return;
+      item.obligatoire = !item.obligatoire;
+      schedulePersist();
+      renderVpoList();
+      updateProgressPill();
+    });
+  });
 
   $$('[data-vpo-text]', container).forEach((input) => {
     input.addEventListener('input', () => {
@@ -1623,6 +1759,11 @@ function renderVpoList() {
         item.statut = 'nc';
         item.raison = result.reason;
         item.gravite = result.gravite;
+        item.zone = result.zone;
+        item.actionCorrective = result.actionCorrective;
+        item.responsable = result.responsable;
+        item.dateCreation = result.dateCreation;
+        item.resolu = false;
         logActivity(`Non-conformité VPO (${result.gravite}) relevée : ${item.texte || '(sans description)'}`);
       }
       schedulePersist();
@@ -1687,7 +1828,7 @@ function renderNcExtraList() {
 
 $('#btnAddNcExtra').addEventListener('click', () => {
   if (!state.draft) return;
-  state.draft.ncExtra.push({ id: generateId(), texte: '' });
+  state.draft.ncExtra.push({ id: generateId(), texte: '', gravite: 'mineure', resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: new Date().toISOString() });
   schedulePersist();
   renderNcExtraList();
 });
