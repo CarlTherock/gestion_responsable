@@ -292,6 +292,7 @@ function newDraft(numero, mode) {
     casesGravites: {},
     casesNcDetails: {},
     casesFichiers: {},
+    casesPreuveRequise: {},
     ncFichiers: {},
     ncSeq: 0,
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
@@ -317,6 +318,7 @@ function normalizeDraft(d) {
   if (!d.casesGravites) d.casesGravites = {};
   if (!d.casesNcDetails) d.casesNcDetails = {};
   if (!d.casesFichiers) d.casesFichiers = {};
+  if (!d.casesPreuveRequise) d.casesPreuveRequise = {};
   if (!d.ncFichiers) d.ncFichiers = {};
   if (d.ncSeq === undefined) d.ncSeq = 0;
   if (!d.files) d.files = {};
@@ -551,6 +553,15 @@ function computeNextAction() {
   const vpoPending = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut);
   if (vpoPending) return { text: `Évaluer le VPO : ${vpoPending.texte}`, tab: 'vpo' };
   for (const [group, items] of Object.entries(groups)) {
+    if (!ATTACH_GROUPS.includes(group)) continue;
+    for (const [name, label] of items) {
+      const requise = !!state.draft.casesPreuveRequise[name];
+      const checked = state.draft.casesCochees[name] === true;
+      const files = state.draft.casesFichiers[name] || [];
+      if (requise && checked && !files.length) return { text: `Joindre la preuve manquante : ${label}`, tab: group };
+    }
+  }
+  for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
       if (state.draft.casesCochees[name] === 'nc') return { text: `Traiter la non-conformité : ${label}`, tab: 'non-conformite' };
     }
@@ -561,15 +572,32 @@ function computeNextAction() {
   return { text: 'Dossier prêt — sauvegardez-le officiellement', tab: 'approbation' };
 }
 
+function computeProofStats() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  let manquantes = 0;
+  Object.entries(groups).forEach(([group, items]) => {
+    if (!ATTACH_GROUPS.includes(group)) return;
+    items.forEach(([name]) => {
+      const requise = !!state.draft.casesPreuveRequise[name];
+      const checked = state.draft.casesCochees[name] === true;
+      const files = state.draft.casesFichiers[name] || [];
+      if (requise && checked && !files.length) manquantes++;
+    });
+  });
+  return { manquantes };
+}
+
 function computeClosureVerdict() {
   const { done, total } = computeProgress();
   const incomplete = total - done;
   const nc = computeNcStats();
   const vpo = computeVpoStats();
+  const preuve = computeProofStats();
   const problems = [];
   if (incomplete > 0) problems.push(`${incomplete} tâche${incomplete > 1 ? 's' : ''} incomplète${incomplete > 1 ? 's' : ''}`);
   if (vpo.pendingObligatoire > 0) problems.push(`${vpo.pendingObligatoire} VPO obligatoire${vpo.pendingObligatoire > 1 ? 's' : ''} non évalué${vpo.pendingObligatoire > 1 ? 's' : ''}`);
   if (nc.total > 0) problems.push(`${nc.total} non-conformité${nc.total > 1 ? 's' : ''} ouverte${nc.total > 1 ? 's' : ''}`);
+  if (preuve.manquantes > 0) problems.push(`${preuve.manquantes} preuve${preuve.manquantes > 1 ? 's' : ''} manquante${preuve.manquantes > 1 ? 's' : ''}`);
   if (!problems.length) {
     let text = 'Dossier prêt pour révision : toutes les tâches sont complétées, les VPO obligatoires sont évalués et aucune non-conformité n\u2019est ouverte.';
     if (vpo.pendingOptionnel > 0) text += ` (Note : ${vpo.pendingOptionnel} VPO non obligatoire${vpo.pendingOptionnel > 1 ? 's' : ''} encore non évalué${vpo.pendingOptionnel > 1 ? 's' : ''}.)`;
@@ -641,6 +669,8 @@ function renderApercu() {
         <span class="priorite-badge priorite-${priorite}">Priorité ${PRIORITE_LABEL[priorite] || priorite}</span>
         ${responsable ? `<span class="tag-pill">Responsable : ${escapeHtml(responsable)}</span>` : ''}
         ${echeance ? `<span class="tag-pill">Échéance : ${escapeHtml(echeance)}</span>` : ''}
+        <button type="button" class="btn btn-outline" id="btnExportApercu">💾 Exporter</button>
+        <button type="button" class="btn btn-outline" id="btnShareApercu">🔗 Partager</button>
         <button type="button" class="btn btn-outline" id="btnPrintApercu">🖨 Imprimer</button>
       </div>
     </div>
@@ -702,6 +732,38 @@ function renderApercu() {
 
   const printBtn = $('#btnPrintApercu', container);
   if (printBtn) printBtn.addEventListener('click', () => window.print());
+
+  const exportBtn = $('#btnExportApercu', container);
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+      const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Dashboard - ${state.numero || 'dossier'}${d.champs.bt ? ' (' + d.champs.bt + ')' : ''}.html`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      toast('Dashboard téléchargé.');
+    });
+  }
+
+  const shareBtn = $('#btnShareApercu', container);
+  if (shareBtn) {
+    shareBtn.addEventListener('click', async () => {
+      const url = buildDossierUrl();
+      const shareData = { title: `Dossier ${state.numero}`, text: `Suivi TEI — ${titre}`, url };
+      if (navigator.share) {
+        try { await navigator.share(shareData); } catch (err) { /* annulé par l'utilisateur */ }
+      } else if (navigator.clipboard) {
+        try { await navigator.clipboard.writeText(url); toast('Lien copié dans le presse-papiers.'); }
+        catch (err) { toast('Impossible de copier le lien automatiquement.', 4000); }
+      } else {
+        toast(url, 6000);
+      }
+    });
+  }
 }
 
 function renderNonConformites() {
@@ -1596,18 +1658,22 @@ function renderChecklist(group) {
     const isNc = val === 'nc';
     const files = (state.draft.casesFichiers[name] || []);
     const reason = state.draft.casesRaisons[name] || '';
+    const preuveRequise = canAttach && !!state.draft.casesPreuveRequise[name];
+    const preuveManquante = preuveRequise && checked && !files.length;
     return `
-      <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}" data-item-wrap="${name}">
+      <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}${preuveManquante ? ' preuve-manquante' : ''}" data-item-wrap="${name}">
         <div class="checklist-item-row">
           <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
-          <span class="ci-label" data-name="${name}">${label}</span>
+          <span class="ci-label" data-name="${name}">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">📎!</span>' : ''}</span>
           <div class="ci-actions">
             ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
+            ${canAttach ? `<button type="button" class="btn-preuve${preuveRequise ? ' active' : ''}" data-preuve="${name}" title="Exiger une preuve pour cette tâche">Preuve requise</button>` : ''}
             <button type="button" class="btn-na" data-na="${name}">N/A</button>
             <button type="button" class="btn-nc" data-nc="${name}">Non conforme</button>
           </div>
         </div>
         ${(isNa || isNc) && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
+        ${preuveManquante ? `<div class="na-reason preuve-warning">⚠ Preuve requise mais aucun document joint</div>` : ''}
         ${canAttach ? `
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
           <div class="dropzone-mini" data-item-dropzone="${name}">
@@ -1695,6 +1761,16 @@ function renderChecklist(group) {
       refreshChecklistProgressFor(group);
       updateProgressPill();
       renderNonConformites();
+    });
+  });
+
+  $$('.btn-preuve', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.preuve;
+      state.draft.casesPreuveRequise[name] = !state.draft.casesPreuveRequise[name];
+      schedulePersist();
+      renderChecklist(group);
+      updateProgressPill();
     });
   });
 

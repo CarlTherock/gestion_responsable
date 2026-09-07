@@ -655,3 +655,14 @@ select.ncextra-gravite {
   flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-xs); padding: 6px 8px;
   border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
 }
+
+/* ---------- Preuve requise par tâche ---------- */
+.btn-preuve {
+  font-family: var(--font-mono); font-size: var(--text-xs); padding: 4px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); cursor: pointer; flex-shrink: 0;
+}
+.btn-preuve:hover { border-color: var(--mode-accent); color: var(--mode-accent); }
+.btn-preuve.active { background: var(--mode-accent); color: #10151b; border-color: var(--mode-accent); }
+.preuve-required-tag { font-size: 11px; color: var(--mode-accent); }
+.checklist-item-wrap.preuve-manquante { border-color: rgba(214,69,69,0.5); }
+.preuve-warning { color: #f87171 !important; font-weight: 600; }
