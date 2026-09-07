@@ -110,6 +110,7 @@ const state = {
   rootDirHandle: null,      // dossier racine choisi par l'utilisateur sur cet appareil
   dossierDirHandle: null,   // sous-dossier <numero> à l'intérieur du dossier racine
   draft: null,              // objet de suivi complet, persistant en IndexedDB
+  showOnlyIncomplete: false, // préférence d'affichage, non sauvegardée dans le dossier
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -195,11 +196,19 @@ async function askNaReason() {
 async function askNcReason() {
   const confirmed = await showModal({
     title: 'Marquer comme non conforme',
-    bodyHtml: '<label style="font-size:var(--text-sm);color:var(--color-text-muted);">Raison (optionnel)</label><textarea id="modalNaReason" rows="3" placeholder="ex. Câblage ne respecte pas le plan"></textarea>',
+    bodyHtml: `
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);">Gravité</label>
+      <select id="modalNcGravite" style="width:100%;margin-top:4px;margin-bottom:var(--space-3);">
+        <option value="mineure">Mineure</option>
+        <option value="majeure">Majeure</option>
+        <option value="critique">Critique</option>
+      </select>
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);">Raison (optionnel)</label>
+      <textarea id="modalNaReason" rows="3" placeholder="ex. Câblage ne respecte pas le plan"></textarea>`,
     confirmLabel: 'Marquer non conforme',
   });
   if (!confirmed) return null;
-  return $('#modalNaReason').value.trim();
+  return { reason: $('#modalNaReason').value.trim(), gravite: $('#modalNcGravite').value };
 }
 
 // ============================================================
@@ -257,7 +266,7 @@ function newVpoItem() {
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     application: 'Gestion responsable',
     localisation: numero,
     mode,
@@ -267,11 +276,13 @@ function newDraft(numero, mode) {
     liens: {},
     casesCochees: {},
     casesRaisons: {},
+    casesGravites: {},
     casesFichiers: {},
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     vpoItems: [newVpoItem()],
     ncExtra: [],
     approbations: [],
+    journal: [],
     derniereSauvegardeOfficielle: null,
     meta: { source: 'pwa', modeSauvegarde: 'brouillon-local' },
   };
@@ -282,14 +293,23 @@ function normalizeDraft(d) {
   if (!d.liens) d.liens = {};
   if (!d.casesCochees) d.casesCochees = {};
   if (!d.casesRaisons) d.casesRaisons = {};
+  if (!d.casesGravites) d.casesGravites = {};
   if (!d.casesFichiers) d.casesFichiers = {};
   if (!d.files) d.files = {};
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
   if (!d.vpoItems || !d.vpoItems.length) d.vpoItems = [newVpoItem()];
   if (!d.ncExtra) d.ncExtra = [];
   if (!d.approbations) d.approbations = [];
+  if (!d.journal) d.journal = [];
   if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
   return d;
+}
+
+function logActivity(text) {
+  if (!state.draft) return;
+  if (!state.draft.journal) state.draft.journal = [];
+  state.draft.journal.push({ at: new Date().toISOString(), text });
+  if (state.draft.journal.length > 200) state.draft.journal = state.draft.journal.slice(-200);
 }
 
 let persistTimer;
@@ -385,11 +405,115 @@ function updateProgressPill() {
   renderApercu();
 }
 
+function computeNcStats() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  let total = 0, critique = 0, majeure = 0, mineure = 0;
+  Object.entries(groups).forEach(([group, items]) => items.forEach(([name]) => {
+    if (state.draft.casesCochees[name] === 'nc') {
+      total++;
+      const g = state.draft.casesGravites[name];
+      if (g === 'critique') critique++; else if (g === 'majeure') majeure++; else mineure++;
+    }
+  }));
+  (state.draft.vpoItems || []).forEach((it) => {
+    if (it.statut === 'nc') {
+      total++;
+      if (it.gravite === 'critique') critique++; else if (it.gravite === 'majeure') majeure++; else mineure++;
+    }
+  });
+  (state.draft.ncExtra || []).forEach((it) => { if (it.texte && it.texte.trim()) total++; });
+  return { total, critique, majeure, mineure };
+}
+
+function computeVpoStats() {
+  const filled = (state.draft.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  const evalues = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+  const pending = filled.length - evalues;
+  return { total: filled.length, evalues, pending };
+}
+
+function computeDossierStatus() {
+  const { done, total, pct } = computeProgress();
+  const nc = computeNcStats();
+  if (nc.critique > 0) {
+    return { level: 'rouge', text: `Blocage actif — ${nc.critique} non-conformité${nc.critique > 1 ? 's' : ''} critique${nc.critique > 1 ? 's' : ''} à traiter` };
+  }
+  if (nc.total > 0) {
+    return { level: 'ambre', text: `Attention requise — ${nc.total} non-conformité${nc.total > 1 ? 's' : ''} ouverte${nc.total > 1 ? 's' : ''}` };
+  }
+  if (pct >= 100) {
+    return { level: 'bleu', text: 'Prêt pour révision — toutes les tâches sont complétées' };
+  }
+  if (pct >= 60) {
+    return { level: 'vert', text: `Intervention en bonne voie — ${done} tâche${done > 1 ? 's' : ''} sur ${total} complétées` };
+  }
+  if (pct > 0) {
+    return { level: 'ambre', text: `Attention requise — ${total - done} tâche(s) restante(s)` };
+  }
+  return { level: 'ambre', text: 'Dossier démarré — aucune tâche complétée pour l\u2019instant' };
+}
+
+function computeNextAction() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  for (const [group, items] of Object.entries(groups)) {
+    for (const [name, label] of items) {
+      if (state.draft.casesCochees[name] === 'nc' && state.draft.casesGravites[name] === 'critique') {
+        return { text: `Traiter la non-conformité critique : ${label}`, tab: 'non-conformite' };
+      }
+    }
+  }
+  const vpoPending = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut);
+  if (vpoPending) return { text: `Évaluer le VPO : ${vpoPending.texte}`, tab: 'vpo' };
+  for (const [group, items] of Object.entries(groups)) {
+    for (const [name, label] of items) {
+      if (!isTaskDone(name)) return { text: `Compléter : ${label}`, tab: group };
+    }
+  }
+  for (const [group, items] of Object.entries(groups)) {
+    for (const [name, label] of items) {
+      if (state.draft.casesCochees[name] === 'nc') return { text: `Traiter la non-conformité : ${label}`, tab: 'non-conformite' };
+    }
+  }
+  if (!(state.draft.champs.employeeName || '').trim()) {
+    return { text: 'Entrer le nom de l\u2019employé et sauvegarder le dossier', tab: 'approbation' };
+  }
+  return { text: 'Dossier prêt — sauvegardez-le officiellement', tab: 'approbation' };
+}
+
+function computeClosureVerdict() {
+  const { done, total } = computeProgress();
+  const incomplete = total - done;
+  const nc = computeNcStats();
+  const vpo = computeVpoStats();
+  const problems = [];
+  if (incomplete > 0) problems.push(`${incomplete} tâche${incomplete > 1 ? 's' : ''} incomplète${incomplete > 1 ? 's' : ''}`);
+  if (vpo.pending > 0) problems.push(`${vpo.pending} VPO non évalué${vpo.pending > 1 ? 's' : ''}`);
+  if (nc.total > 0) problems.push(`${nc.total} non-conformité${nc.total > 1 ? 's' : ''} ouverte${nc.total > 1 ? 's' : ''}`);
+  if (!problems.length) {
+    return { ready: true, text: 'Dossier prêt pour révision : toutes les tâches sont complétées, les VPO sont évalués et aucune non-conformité n\u2019est ouverte.' };
+  }
+  return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.` };
+}
+
+const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
+
 function renderApercu() {
   const container = $('#apercuContent');
   if (!container || !state.draft) return;
+  const d = state.draft;
   const { done, total, pct } = computeProgress();
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = CHECKLISTS[d.mode] || {};
+  const status = computeDossierStatus();
+  const nextAction = computeNextAction();
+  const closure = computeClosureVerdict();
+  const nc = computeNcStats();
+
+  const titre = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
+    || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
+  const secteur = d.champs.desc || '';
+  const responsable = d.champs.employe || '';
+  const echeance = d.champs.dateFin || d.champs.dateDebut || '';
+  const priorite = d.champs.priorite || 'normale';
 
   const groupStats = Object.entries(groups).map(([group, items]) => {
     if (!items.length) return null;
@@ -397,21 +521,14 @@ function renderApercu() {
     return { group, label: GROUP_LABELS[group] || group, pct: (doneCount / items.length) * 100, count: `${doneCount}/${items.length}` };
   }).filter(Boolean);
 
-  const vpoFilled = (state.draft.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
   if (vpoFilled.length) {
     const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
     groupStats.push({ group: 'vpo', label: 'VPO', pct: (vpoDone / vpoFilled.length) * 100, count: `${vpoDone}/${vpoFilled.length}` });
   }
 
-  const docCount = Object.values(state.draft.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
-    + (state.draft.files['mise-a-jour'] || []).length;
-
-  let ncCount = 0;
-  Object.entries(groups).forEach(([group, items]) => items.forEach(([name]) => {
-    if (state.draft.casesCochees[name] === 'nc') ncCount++;
-  }));
-  (state.draft.vpoItems || []).forEach((it) => { if (it.statut === 'nc') ncCount++; });
-  (state.draft.ncExtra || []).forEach((it) => { if (it.texte && it.texte.trim()) ncCount++; });
+  const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + (d.files['mise-a-jour'] || []).length;
 
   const ringsHtml = groupStats.map((g) => `
     <div class="ring-card" data-apercu-jump="${g.group}">
@@ -420,27 +537,83 @@ function renderApercu() {
       <div class="ring-card-count">${g.count} tâches</div>
     </div>`).join('');
 
+  const journalHtml = (d.journal || []).slice().reverse().slice(0, 15).map((j) => `
+    <div class="timeline-item">
+      <div class="timeline-dot"></div>
+      <div class="timeline-body">
+        <div>${escapeHtml(j.text)}</div>
+        <div class="timeline-date">${new Date(j.at).toLocaleString('fr-CA')}</div>
+      </div>
+    </div>`).join('') || '<p class="empty">Aucune activité enregistrée pour l\u2019instant.</p>';
+
   container.innerHTML = `
-    <div class="hero-ring" style="margin-bottom: var(--space-6);">
+    <div class="cockpit-header">
+      <div class="cockpit-header-main">
+        <div class="cockpit-bt">${escapeHtml(state.numero || '')}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}</div>
+        <div class="cockpit-titre">${escapeHtml(titre)}</div>
+        ${secteur ? `<div class="cockpit-secteur">${escapeHtml(secteur)}</div>` : ''}
+      </div>
+      <div class="cockpit-header-meta">
+        <span class="priorite-badge priorite-${priorite}">Priorité ${PRIORITE_LABEL[priorite] || priorite}</span>
+        ${responsable ? `<span class="tag-pill">Responsable : ${escapeHtml(responsable)}</span>` : ''}
+        ${echeance ? `<span class="tag-pill">Échéance : ${escapeHtml(echeance)}</span>` : ''}
+      </div>
+    </div>
+    <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
+
+    <div class="next-action-card">
+      <div class="next-action-body">
+        <div class="next-action-kicker">Prochaine meilleure action</div>
+        <div class="next-action-text">${escapeHtml(nextAction.text)}</div>
+      </div>
+      <button type="button" class="btn btn-primary" data-apercu-jump="${nextAction.tab}">Y aller →</button>
+    </div>
+
+    <div class="hero-ring" style="margin: var(--space-5) 0;">
       ${ringSvg(pct, 130, 12)}
       <div>
         <div class="hero-ring-label">Progression globale</div>
         <div class="hero-ring-count">${done} / ${total} tâches</div>
       </div>
     </div>
+
     <div class="stat-row" style="margin-bottom: var(--space-6);">
       <div class="stat-card"><div class="num">${done}/${total}</div><div class="lbl">Tâches complétées</div></div>
       <div class="stat-card"><div class="num">${docCount}</div><div class="lbl">Documents / photos</div></div>
-      <div class="stat-card"><div class="num" style="color:${ncCount ? 'var(--color-danger, #d64545)' : 'var(--color-success)'};">${ncCount}</div><div class="lbl">Non-conformités</div></div>
-      <div class="stat-card"><div class="num">${(state.draft.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+      <div class="stat-card"><div class="num" style="color:${nc.total ? 'var(--color-danger, #d64545)' : 'var(--color-success)'};">${nc.total}</div><div class="lbl">Non-conformités</div></div>
+      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
     </div>
-    <div class="panel-title" style="font-size: var(--text-base); margin-bottom: var(--space-3);">Progression par section</div>
+
+    <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}">
+      <div class="closure-title">${closure.ready ? '\u2705 Assistant de clôture' : '\u26d4 Assistant de clôture'}</div>
+      <div class="closure-text">${escapeHtml(closure.text)}</div>
+    </div>
+
+    <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Progression par section</div>
     <div class="rings-grid">${ringsHtml}</div>
+
+    <div class="incomplete-filter-row">
+      <label class="incomplete-filter-toggle">
+        <input type="checkbox" id="toggleIncompleteOnly" ${state.showOnlyIncomplete ? 'checked' : ''}>
+        N'afficher que les tâches incomplètes dans les listes
+      </label>
+    </div>
+
+    <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Activité récente</div>
+    <div class="timeline">${journalHtml}</div>
   `;
 
   $$('[data-apercu-jump]', container).forEach((card) => {
     card.addEventListener('click', () => selectTab(card.dataset.apercuJump));
   });
+
+  const toggle = $('#toggleIncompleteOnly', container);
+  if (toggle) {
+    toggle.addEventListener('change', () => {
+      state.showOnlyIncomplete = toggle.checked;
+      renderAllChecklists();
+    });
+  }
 }
 
 function renderNonConformites() {
@@ -451,27 +624,28 @@ function renderNonConformites() {
   Object.entries(groups).forEach(([group, items]) => {
     items.forEach(([name, label]) => {
       if (state.draft.casesCochees[name] === 'nc') {
-        rows.push({ section: GROUP_LABELS[group] || group, label, reason: state.draft.casesRaisons[name] || '' });
+        rows.push({ section: GROUP_LABELS[group] || group, label, reason: state.draft.casesRaisons[name] || '', gravite: state.draft.casesGravites[name] || '' });
       }
     });
   });
   (state.draft.vpoItems || []).forEach((item) => {
     if (item.statut === 'nc') {
-      rows.push({ section: 'VPO', label: item.texte || '(sans description)', reason: item.raison || '' });
+      rows.push({ section: 'VPO', label: item.texte || '(sans description)', reason: item.raison || '', gravite: item.gravite || '' });
     }
   });
   (state.draft.ncExtra || []).forEach((item) => {
     if (item.texte && item.texte.trim()) {
-      rows.push({ section: 'AJOUT MANUEL', label: item.texte, reason: '' });
+      rows.push({ section: 'AJOUT MANUEL', label: item.texte, reason: '', gravite: '' });
     }
   });
   if (!rows.length) {
     el.innerHTML = '<div class="empty-state">Aucune non-conformité relevée pour ce dossier.</div>';
     return;
   }
+  const GRAVITE_LABEL = { critique: '🔴 Critique', majeure: '🟠 Majeure', mineure: '🟡 Mineure' };
   el.innerHTML = rows.map((r) => `
-    <div class="nc-summary-item">
-      <div class="nc-section">${r.section}</div>
+    <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}">
+      <div class="nc-section">${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
       <div class="nc-label">${escapeHtml(r.label)}</div>
       ${r.reason ? `<div class="nc-reason">Raison : ${escapeHtml(r.reason)}</div>` : ''}
     </div>`).join('');
@@ -510,6 +684,7 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   state.draft.derniereSauvegardeOfficielle = record;
   state.draft.champs.employeeName = nom;
   state.draft.champs.employeeRole = role;
+  logActivity(`Dossier sauvegardé officiellement par ${nom} (${role})`);
 
   try {
     if (state.rootDirHandle) {
@@ -762,22 +937,26 @@ function buildDashboardHtml() {
   })() : '';
 
   // ---- Non-conformités ----
+  const GRAVITE_TAG = { critique: '🔴 Critique', majeure: '🟠 Majeure', mineure: '🟡 Mineure' };
   const ncItems = [];
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
-    if (d.casesCochees[name] === 'nc') ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '' });
+    if (d.casesCochees[name] === 'nc') ncItems.push({ section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
   }));
   (d.vpoItems || []).forEach((it) => {
-    if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '' });
+    if (it.statut === 'nc') ncItems.push({ section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
   });
   (d.ncExtra || []).forEach((it) => {
-    if (it.texte && it.texte.trim()) ncItems.push({ section: 'AJOUT MANUEL', label: it.texte, reason: '' });
+    if (it.texte && it.texte.trim()) ncItems.push({ section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: '' });
   });
   const ncBanner = ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
         <div class="nc-banner-title">\u26a0 ${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} relevée${ncItems.length > 1 ? 's' : ''}</div>
-        <ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong> — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
+        <ul class="nc-list">${ncItems.map((r) => `<li><strong>${escapeHtml(r.section)}</strong>${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
       </div>`
     : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité relevée pour ce dossier.</div>`;
+
+  const closureVerdict = computeClosureVerdict();
+  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">${closureVerdict.ready ? '\u2705' : '\u26d4'} Assistant de clôture</div>${escapeHtml(closureVerdict.text)}</div>`;
 
   // ---- Documents / photos ----
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0);
@@ -949,6 +1128,9 @@ function buildDashboardHtml() {
     <h2 class="section-title">Progression par section — cliquez pour voir le détail</h2>
     <div class="rings-grid">${ringsHtml}</div>
 
+    <h2 class="section-title">Assistant de clôture</h2>
+    ${closureHtml}
+
     <h2 class="section-title">Non-conformités</h2>
     ${ncBanner}
 
@@ -1007,8 +1189,14 @@ function buildResumeText() {
   lines.push(`Date de début : ${d.champs.dateDebut || ''}`);
   lines.push(`Date de fin : ${d.champs.dateFin || ''}`);
   lines.push(`État général : ${d.champs.etatGeneral || ''}`);
+  lines.push(`Priorité : ${PRIORITE_LABEL[d.champs.priorite] || 'Normale'}`);
   lines.push('');
   lines.push(`Tâches terminées : ${done} / ${total}`);
+  lines.push('');
+
+  const verdict = computeClosureVerdict();
+  lines.push(verdict.ready ? 'ASSISTANT DE CLÔTURE : PRÊT' : 'ASSISTANT DE CLÔTURE : NON PRÊT');
+  lines.push(verdict.text);
   lines.push('');
 
   Object.entries(groups).forEach(([group, items]) => {
@@ -1020,6 +1208,7 @@ function buildResumeText() {
       const v = d.casesCochees[name];
       const mark = v === true ? 'X' : v === 'na' ? 'N/A' : v === 'nc' ? '!' : ' ';
       lines.push(`[${mark}] ${label}`);
+      if (v === 'nc' && d.casesGravites[name]) lines.push(`      \u2192 gravité : ${d.casesGravites[name]}`);
       if ((v === 'na' || v === 'nc') && d.casesRaisons[name]) lines.push(`      \u2192 raison : ${d.casesRaisons[name]}`);
     });
     lines.push('');
@@ -1032,6 +1221,7 @@ function buildResumeText() {
     vpoFilled.forEach((it) => {
       const mark = it.statut === 'conforme' ? 'C' : it.statut === 'nc' ? '!' : ' ';
       lines.push(`[${mark}] ${it.texte}`);
+      if (it.statut === 'nc' && it.gravite) lines.push(`      \u2192 gravité : ${it.gravite}`);
       if (it.statut === 'nc' && it.raison) lines.push(`      \u2192 raison : ${it.raison}`);
     });
     lines.push('');
@@ -1156,6 +1346,7 @@ function openWorkspace() {
   $('#fldDateDebut').value = d.champs.dateDebut || '';
   $('#fldDateFin').value = d.champs.dateFin || '';
   $('#fldEtatGeneral').value = d.champs.etatGeneral || '';
+  $('#fldPriorite').value = d.champs.priorite || 'normale';
   $('#fldCommentaires').value = d.champs.commentaires || '';
   $('#fldEmployeeName').value = d.champs.employeeName || '';
   $('#fldRole').value = d.champs.employeeRole || 'technicien';
@@ -1181,10 +1372,16 @@ $$('.tab-btn').forEach((btn) => {
 function renderChecklist(group) {
   const container = $(`[data-checklist="${group}"]`);
   if (!container) return;
-  const items = (CHECKLISTS[state.draft.mode] && CHECKLISTS[state.draft.mode][group]) || [];
-  if (!items.length) {
+  const allItems = (CHECKLISTS[state.draft.mode] && CHECKLISTS[state.draft.mode][group]) || [];
+  if (!allItems.length) {
     container.innerHTML = '<div class="empty-state">Aucune tâche prévue pour ce type d\u2019intervention dans cette section.</div>';
     updateChecklistProgress(group, 0, 0);
+    return;
+  }
+  const items = state.showOnlyIncomplete ? allItems.filter(([name]) => state.draft.casesCochees[name] !== true) : allItems;
+  if (!items.length) {
+    container.innerHTML = '<div class="empty-state">✅ Toutes les tâches de cette section sont complétées.</div>';
+    updateChecklistProgress(group, allItems.length, allItems.length);
     return;
   }
   const canAttach = ATTACH_GROUPS.includes(group);
@@ -1224,7 +1421,11 @@ function renderChecklist(group) {
     cb.addEventListener('change', () => {
       const name = cb.dataset.name;
       state.draft.casesCochees[name] = cb.checked;
-      if (cb.checked) delete state.draft.casesRaisons[name];
+      if (cb.checked) {
+        delete state.draft.casesRaisons[name];
+        delete state.draft.casesGravites[name];
+        logActivity(`Tâche complétée : ${cb.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
+      }
       const wrap = container.querySelector(`[data-item-wrap="${name}"]`);
       if (wrap) { wrap.classList.toggle('checked', cb.checked); wrap.classList.remove('na', 'nc'); }
       const drawer = container.querySelector(`[data-drawer="${name}"]`);
@@ -1271,11 +1472,14 @@ function renderChecklist(group) {
       if (isCurrentlyNc) {
         state.draft.casesCochees[name] = false;
         delete state.draft.casesRaisons[name];
+        delete state.draft.casesGravites[name];
       } else {
-        const reason = await askNcReason();
-        if (reason === null) return;
+        const result = await askNcReason();
+        if (result === null) return;
         state.draft.casesCochees[name] = 'nc';
-        state.draft.casesRaisons[name] = reason;
+        state.draft.casesRaisons[name] = result.reason;
+        state.draft.casesGravites[name] = result.gravite;
+        logActivity(`Non-conformité (${result.gravite}) relevée : ${btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
       }
       schedulePersist();
       renderChecklist(group);
@@ -1321,9 +1525,11 @@ async function attachFilesToTask(group, name, fileList) {
       name: f.name, size: f.size, type: f.type, uploadedAt: new Date().toISOString(), blob: f,
     });
   });
+  logActivity(`${fileList.length} document(s) ajouté(s) (${GROUP_LABELS[group] || group})`);
   await dbPut(state.draft);
   renderItemFileList(group, name);
   updateFilesCount();
+  updateProgressPill();
   toast(`${fileList.length} document(s) joint(s) à la tâche.`);
 }
 
@@ -1410,11 +1616,14 @@ function renderVpoList() {
       if (item.statut === 'nc') {
         item.statut = null;
         item.raison = '';
+        item.gravite = '';
       } else {
-        const reason = await askNcReason();
-        if (reason === null) return;
+        const result = await askNcReason();
+        if (result === null) return;
         item.statut = 'nc';
-        item.raison = reason;
+        item.raison = result.reason;
+        item.gravite = result.gravite;
+        logActivity(`Non-conformité VPO (${result.gravite}) relevée : ${item.texte || '(sans description)'}`);
       }
       schedulePersist();
       renderVpoList();
@@ -1515,7 +1724,7 @@ $$('[data-link]').forEach((input) => {
 const GENERAL_FIELD_MAP = {
   fldEmploye: 'employe', fldChargeProjet: 'chargeProjet', fldContracteur: 'contracteur',
   fldDateDebut: 'dateDebut', fldDateFin: 'dateFin', fldEtatGeneral: 'etatGeneral', fldCommentaires: 'commentaires',
-  fldEmployeeName: 'employeeName', fldRole: 'employeeRole',
+  fldEmployeeName: 'employeeName', fldRole: 'employeeRole', fldPriorite: 'priorite',
 };
 Object.keys(GENERAL_FIELD_MAP).forEach((id) => {
   const el = document.getElementById(id);
