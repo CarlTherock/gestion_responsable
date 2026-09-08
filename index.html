@@ -47,7 +47,6 @@
       <span class="icon-inline" data-icon="moreHorizontal"></span>
     </button>
   </header>
-  <div class="hazard-strip"></div>
 
   <main>
     <!-- ===================== ÉCRAN 1 : CHOIX DU TYPE ===================== -->
@@ -126,18 +125,21 @@
     <section id="screenWorkspace" class="hidden">
       <div class="mobile-save-status" id="mobileSaveStatus">Nouveau dossier</div>
       <div class="workspace-header">
-        <div>
-          <div class="dossier-num" id="wsNum">—</div>
-          <div class="dossier-meta" id="wsMeta">—</div>
+        <div class="wh-main">
+          <div class="wh-line1">
+            <span class="wh-id" id="wsNum">—</span>
+            <span class="wh-status-badge" id="wsStatusBadge">Brouillon</span>
+          </div>
+          <div class="wh-title" id="wsTitle">—</div>
+          <div class="wh-meta" id="wsMeta">—</div>
         </div>
-        <span class="tag-pill" id="wsCreated">nouveau dossier</span>
+        <div class="wh-actions">
+          <button class="btn btn-primary" id="btnSaveFolder">Enregistrer</button>
+          <button class="btn btn-outline" id="btnAddNote">Ajouter une note</button>
+          <button class="btn btn-outline" id="btnClosureCheckPc"><span class="icon-inline" data-icon="checkCircle"></span> Vérification avant fermeture</button>
+          <button class="icon-btn" id="btnMoreMenuPc" aria-label="Plus d'options" title="Plus d'options"><span class="icon-inline" data-icon="moreHorizontal"></span></button>
+        </div>
         <span class="tag-pill offline-pill hidden" id="wsOfflinePill" title="Aucune connexion réseau">Hors ligne — modifications conservées localement</span>
-        <span class="tag-pill" id="wsProgressPill" title="Progression automatique du dossier">0 %</span>
-        <span class="tag-pill" id="wsFolderPill" title="Emplacement local du dossier">Brouillon local seulement</span>
-        <div class="topbar-spacer"></div>
-        <span class="tag-pill" id="wsFilesCount">0 document(s)</span>
-        <button class="qr-thumb-btn" id="btnShowQr" title="Cliquez pour voir le code QR de ce dossier" aria-label="Afficher le code QR de ce dossier"></button>
-        <button class="btn btn-primary" id="btnSaveFolder">Enregistrer</button>
       </div>
 
       <div class="ws-summary-mobile" id="wsSummaryMobile">—</div>

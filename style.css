@@ -60,7 +60,7 @@
   --color-warning-highlight: #3a3018;
   --color-success: #43b06b;
   --color-success-highlight: #16321f;
-  --color-error: #e5484d;
+  --color-error: #9c3b47;
   --color-error-highlight: #3a1f21;
 
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
@@ -115,11 +115,6 @@
     repeating-linear-gradient(0deg, color-mix(in oklab, var(--color-border) 40%, transparent) 0 1px, transparent 1px 32px),
     repeating-linear-gradient(90deg, color-mix(in oklab, var(--color-border) 40%, transparent) 0 1px, transparent 1px 32px);
   background-color: var(--color-bg);
-}
-.hazard-strip {
-  height: 6px;
-  background: repeating-linear-gradient(135deg, var(--mode-accent) 0 14px, var(--color-text-inverse) 14px 28px);
-  opacity: 0.9;
 }
 
 /* ---------- Layout shell ---------- */
@@ -231,6 +226,10 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .btn-outline:hover { border-color: var(--mode-accent); color: var(--mode-accent); }
 .btn-ghost { background: var(--color-surface-2); color: var(--color-text-muted); }
 .btn-ghost:hover { color: var(--color-text); }
+.btn-tertiary { background: transparent; border-color: transparent; color: var(--color-text-muted); padding-left: var(--space-2); padding-right: var(--space-2); }
+.btn-tertiary:hover { color: var(--color-text); text-decoration: underline; }
+.btn-danger { background: var(--color-error); color: var(--color-text-inverse); }
+.btn-danger:hover { filter: brightness(1.1); }
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 .status-line { margin-top: var(--space-3); font-size: var(--text-sm); font-family: var(--font-mono); display: flex; align-items: center; gap: var(--space-2); }
 .status-line.ok { color: var(--color-success); }
@@ -239,12 +238,21 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 
 /* ---------- Dossier workspace ---------- */
 .workspace-header {
-  display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center;
-  padding: var(--space-5) var(--space-5); background: var(--color-surface);
+  display: flex; flex-wrap: wrap; gap: var(--space-5); align-items: flex-start; justify-content: space-between;
+  padding: var(--space-5); background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
-.workspace-header .dossier-num { font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 600; }
-.workspace-header .dossier-meta { font-size: var(--text-xs); color: var(--color-text-muted); font-family: var(--font-mono); }
+.wh-main { min-width: 0; flex: 1 1 320px; }
+.wh-line1 { display: flex; align-items: center; gap: var(--space-3); }
+.wh-id { font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 700; }
+.wh-status-badge {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--color-text-muted); background: var(--color-surface-offset);
+  padding: 3px 9px; border-radius: var(--radius-sm); border: 1px solid var(--color-border);
+}
+.wh-title { font-size: var(--text-base); font-weight: 600; margin-top: 4px; }
+.wh-meta { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: 3px; }
+.wh-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .tag-pill {
   font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em; font-family: var(--font-mono);
   padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--color-border); color: var(--color-text-muted);
@@ -532,9 +540,6 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
    AMÉLIORATIONS MOBILE UNIQUEMENT — n'affecte jamais la version PC
    ============================================================ */
 @media (max-width: 680px) {
-  /* Retire la barre rayée orange/noir décorative — reste sur PC seulement */
-  .hazard-strip { display: none; }
-
   /* Menu discret unique (⋯) au lieu de deux boutons carrés séparés */
   #themeToggle, #homeBtn { display: none; }
   .topbar-menu-btn { display: grid; }
@@ -544,11 +549,9 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
     padding: var(--space-4) var(--space-4);
     gap: var(--space-2);
   }
-  .workspace-header .topbar-spacer { flex-basis: 100%; height: 0; }
+  .wh-actions { display: none; }
   .workspace-header > div:first-child { display: none; }
   .tag-pill { font-size: 10px; padding: 3px 8px; }
-  #btnSaveFolder { flex: 1 1 auto; justify-content: center; }
-  .qr-thumb-btn svg { width: 30px; height: 30px; }
 
   /* Sous-onglets : bande EN FLUX NORMAL juste sous l'en-tête, scrolle avec la
      page. Ne montre que les onglets de la catégorie active (filtrés en JS).
@@ -737,7 +740,7 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 
 /* ---------- Impression ---------- */
 @media print {
-  .topbar, .hazard-strip, .tabs-nav, .workspace-header, .toast, .legal-footer, .category-nav,
+  .topbar, .tabs-nav, .workspace-header, .toast, .legal-footer, .category-nav,
   .btn, button, .dropzone-mini, .incomplete-filter-row, .modal-overlay { display: none !important; }
   .tab-panel.hidden { display: block !important; }
   body { background: #fff !important; color: #000 !important; padding: 0 !important; }
@@ -884,14 +887,6 @@ select.ncextra-gravite {
 .mobile-resume-body { display: none; }
 @media (max-width: 680px) {
   /* Source #1 (en-tête PC) : masquée entièrement, pas seulement réduite */
-  .workspace-header #wsCreated,
-  .workspace-header #wsProgressPill,
-  .workspace-header #wsFolderPill,
-  .workspace-header #wsFilesCount,
-  .workspace-header .qr-thumb-btn,
-  .workspace-header #btnSaveFolder {
-    display: none;
-  }
   .workspace-header #wsOfflinePill { display: none; }
   .workspace-header {
     padding-bottom: 0;
@@ -955,3 +950,16 @@ select.ncextra-gravite {
 
   .mobile-control-lines { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
 }
+
+/* ---------- VPO/NC ouvertes — résumé compact, section 3 du Résumé ---------- */
+.vpo-nc-summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
+.vpo-nc-summary-item {
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4);
+  cursor: pointer; transition: border-color 120ms;
+}
+.vpo-nc-summary-item:hover { border-color: var(--mode-accent); }
+.vpo-nc-summary-item .num { font-size: var(--text-2xl, 28px); font-weight: 700; font-family: var(--font-mono); }
+.vpo-nc-summary-item .lbl { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: 2px; }
+
+/* ---------- Outils secondaires — section 6 du Résumé ---------- */
+.tools-row { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-6); }
