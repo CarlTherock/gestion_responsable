@@ -111,6 +111,7 @@ const state = {
   dossierDirHandle: null,   // sous-dossier <numero> à l'intérieur du dossier racine
   draft: null,              // objet de suivi complet, persistant en IndexedDB
   showOnlyIncomplete: false, // préférence d'affichage, non sauvegardée dans le dossier
+  checklistFilter: 'toutes', // préférence d'affichage, non sauvegardée dans le dossier
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -144,6 +145,7 @@ const ICONS = {
   arrowDown: '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>',
   share2: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
   qr: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="14" x2="14" y2="17"/><line x1="14" y1="20" x2="14" y2="20.01"/><line x1="17" y1="14" x2="20" y2="14"/><line x1="20" y1="17" x2="17" y2="17"/><line x1="17" y1="20" x2="20" y2="20"/>',
+  keyboard: '<rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8.01"/><line x1="10" y1="8" x2="10" y2="8.01"/><line x1="14" y1="8" x2="14" y2="8.01"/><line x1="18" y1="8" x2="18" y2="8.01"/><line x1="6" y1="12" x2="6" y2="12.01"/><line x1="10" y1="12" x2="10" y2="12.01"/><line x1="14" y1="12" x2="14" y2="12.01"/><line x1="18" y1="12" x2="18" y2="12.01"/><line x1="7" y1="16" x2="17" y2="16"/>',
   printer: '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
 };
 $$('.tab-icon[data-icon], .icon-inline[data-icon]').forEach((span) => {
@@ -233,6 +235,8 @@ document.addEventListener('keydown', (e) => {
   } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     openSearch();
+  } else if (e.key === '?') {
+    if (state.draft) showShortcutsHelp();
   }
 });
 
@@ -424,6 +428,7 @@ function normalizeDraft(d) {
   if (!d.approbations) d.approbations = [];
   if (!d.journal) d.journal = [];
   if (d.derniereSauvegardeOfficielle === undefined) d.derniereSauvegardeOfficielle = null;
+  if (d.derniereExportRapport === undefined) d.derniereExportRapport = null;
 
   // Attribution rétroactive des identifiants NC-xx manquants (compatibilité anciens dossiers)
   const groupsForId = CHECKLISTS[d.mode] || {};
@@ -530,18 +535,91 @@ $('#topbarMenuBtn').addEventListener('click', async () => {
 
 // Vérification avant fermeture : partagée entre le bouton PC et le bouton mobile.
 // Recalcule toujours à la demande — jamais de donnée figée d'un rendu précédent.
+function computeChecklistOnlyProgress() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  let total = 0, done = 0;
+  Object.values(groups).forEach((items) => items.forEach(([name]) => {
+    total += 1;
+    const v = state.draft.casesCochees[name];
+    if (v === true || v === 'na') done += 1;
+  }));
+  return { done, total };
+}
+
+function computeProofSummary() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  let total = 0, satisfied = 0;
+  Object.entries(groups).forEach(([, items]) => items.forEach(([name]) => {
+    if (state.draft.casesPreuveRequise[name]) {
+      total++;
+      if (state.draft.casesCochees[name] === true && (state.draft.casesFichiers[name] || []).length) satisfied++;
+    }
+  }));
+  return { satisfied, total };
+}
+
+// Journal de remise / fermeture — réutilise entièrement les données existantes.
+// Affiche « Non renseigné » plutôt que d'inventer une information absente.
+function computeHandoffSummary() {
+  const d = state.draft;
+  const checklistProg = computeChecklistOnlyProgress();
+  const proof = computeProofSummary();
+  const vpo = computeVpoStats();
+  const nc = computeNcStats();
+  const docCountTotal = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + (d.files['mise-a-jour'] || []).length
+    + Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+  const lastApprobation = (d.approbations || [])[d.approbations.length - 1];
+
+  return {
+    travailCompletePar: d.champs.employe || 'Non renseigné',
+    verifiePar: lastApprobation ? lastApprobation.nom : 'Non renseigné',
+    tachesTerminees: `${checklistProg.done} / ${checklistProg.total}`,
+    documentsRemis: docCountTotal,
+    preuvesSatisfaites: `${proof.satisfied} / ${proof.total}`,
+    vpoFermees: `${vpo.evalues} / ${vpo.total}`,
+    ncResolues: `${nc.resolues} / ${nc.resolues + nc.total}`,
+    rapportExporte: d.derniereExportRapport ? `Oui — ${new Date(d.derniereExportRapport).toLocaleString('fr-CA')}` : 'Non',
+    derniereSauvegarde: d.derniereSauvegardeOfficielle
+      ? new Date(d.derniereSauvegardeOfficielle.at).toLocaleString('fr-CA')
+      : (d.modifieLe ? new Date(d.modifieLe).toLocaleString('fr-CA') + ' (brouillon local)' : 'Non renseigné'),
+  };
+}
+
 async function showClosureCheckModal() {
   if (!state.draft) return;
   const items = computeClosureItems();
+  const globalStatus = computeGlobalStatus();
+  const checklistProg = computeChecklistOnlyProgress();
+  const proofSummary = computeProofSummary();
+  const vpo = computeVpoStats();
+  const nc = computeNcStats();
+  const docCountTotal = Object.values(state.draft.casesFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + (state.draft.files['mise-a-jour'] || []).length
+    + Object.values(state.draft.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+
+  const summaryHtml = `
+    <div class="tp-status-badge" style="margin-bottom:var(--space-4);">${escapeHtml(globalStatus.label)}</div>
+    <div class="closure-summary-grid">
+      <div>Checklist obligatoire<br><strong>${checklistProg.done} / ${checklistProg.total}</strong></div>
+      <div>Preuves requises<br><strong>${proofSummary.satisfied} / ${proofSummary.total}</strong></div>
+      <div>VPO<br><strong>${vpo.evalues} / ${vpo.total}</strong></div>
+      <div>Non-conformités ouvertes<br><strong>${nc.total}</strong></div>
+      <div>Documentation<br><strong>${docCountTotal} document${docCountTotal > 1 ? 's' : ''}</strong></div>
+      <div>Validation de fermeture<br><strong>${items.length === 0 ? 'Prête' : 'En attente'}</strong></div>
+    </div>
+  `;
+
   if (!items.length) {
     await showModal({
       title: 'Dossier prêt',
-      bodyHtml: `<p style="color:var(--color-success);">Toutes les conditions sont remplies pour la fermeture.</p>`,
+      bodyHtml: `${summaryHtml}<p style="color:var(--color-success);margin-top:var(--space-4);">Toutes les conditions sont remplies pour la fermeture.</p>`,
       confirmLabel: 'Fermer',
     });
     return;
   }
   const bodyHtml = `
+    ${summaryHtml}
     <div style="display:flex;flex-direction:column;gap:var(--space-3);">
       ${items.map((it, i) => `
         <div style="border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:var(--space-3);">
@@ -590,14 +668,31 @@ $('#btnMoreMenuPc').addEventListener('click', async () => {
       <button type="button" class="btn btn-outline" id="menuPartager" style="width:100%;justify-content:flex-start;">${iconSvg('share2')}Partager le dossier</button>
       <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">${iconSvg('printer')}Imprimer</button>
       <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Historique / activité récente</button>
+      <button type="button" class="btn btn-outline" id="menuRaccourcis" style="width:100%;justify-content:flex-start;">${iconSvg('keyboard')}Raccourcis clavier</button>
     </div>
-  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique']);
+  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuRaccourcis']);
   if (choice === 'menuQr') showQrModal();
   else if (choice === 'menuExporter') exportDashboardFile();
   else if (choice === 'menuPartager') shareDossierLink();
   else if (choice === 'menuImprimer') window.print();
   else if (choice === 'menuHistorique') selectTab('apercu');
+  else if (choice === 'menuRaccourcis') showShortcutsHelp();
 });
+
+function showShortcutsHelp() {
+  showModal({
+    title: 'Raccourcis clavier',
+    bodyHtml: `
+      <div style="display:flex;flex-direction:column;gap:var(--space-2);font-size:var(--text-sm);">
+        <div><span class="tp-status-badge" style="font-family:var(--font-mono);">Ctrl/Cmd + S</span> Enregistrer le dossier</div>
+        <div><span class="tp-status-badge" style="font-family:var(--font-mono);">Ctrl/Cmd + K</span> Recherche interne</div>
+        <div><span class="tp-status-badge" style="font-family:var(--font-mono);">Échap</span> Fermer la recherche, une fenêtre ou le panneau de tâche</div>
+        <div><span class="tp-status-badge" style="font-family:var(--font-mono);">?</span> Afficher ce rappel</div>
+      </div>
+    `,
+    confirmLabel: 'Fermer',
+  });
+}
 
 // ---------- Emplacement local du dossier (File System Access API) ----------
 const FS_ACCESS_SUPPORTED = 'showDirectoryPicker' in window;
@@ -650,6 +745,29 @@ function computeStatutLabel(done, total) {
   return statut;
 }
 
+// Statut global à 6 états, calculé entièrement à partir des données existantes
+// (aucune nouvelle structure). « Archivé » n'est pas atteignable : aucune action
+// d'archivage distincte n'existe dans l'architecture actuelle — plutôt que
+// d'inventer un déclencheur, ce niveau reste documenté comme limite connue.
+function computeGlobalStatus() {
+  if (!state.draft) return { key: 'brouillon', label: 'Brouillon' };
+  const { done, total } = computeProgress();
+  const nc = computeNcStats();
+  const vpo = computeVpoStats();
+  const preuve = computeProofStats();
+  const closure = computeClosureVerdict();
+
+  if (done === 0) return { key: 'brouillon', label: 'Brouillon' };
+  if (nc.total > 0 || preuve.manquantes > 0) return { key: 'attente-correction', label: 'En attente de correction' };
+  if (closure.ready) {
+    return state.draft.derniereSauvegardeOfficielle
+      ? { key: 'termine', label: 'Terminé' }
+      : { key: 'pret', label: 'Prêt à fermer' };
+  }
+  if (total > 0 && done === total && vpo.pendingObligatoire > 0) return { key: 'validation', label: 'En validation' };
+  return { key: 'en-cours', label: 'En cours' };
+}
+
 function updateProgressPill() {
   const pill = $('#wsProgressPill');
   if (pill && state.draft) {
@@ -661,6 +779,7 @@ function updateProgressPill() {
   renderApercu();
   updateMobileSummary();
   renderMobileResumeBody();
+  if (!$('#checklistContextBar')?.classList.contains('hidden')) updateChecklistContextBar(true);
 }
 
 function computeNcStats() {
@@ -832,56 +951,90 @@ function computeClosureItems() {
 
 const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
 
+const DOCUMENTS_FILTER_LABELS = {
+  toutes: 'Toutes', plans: 'Plans', photos: 'Photos', 'preuve-requise': 'Preuves requises',
+  vpo: 'VPO', nc: 'Non-conformités', 'non-classe': 'Non classés',
+};
 function renderDocuments() {
   const container = $('#documentsContent');
   if (!container || !state.draft) return;
   const d = state.draft;
   const groups = CHECKLISTS[d.mode] || {};
+  const allDocs = [];
 
-  const fileRow = (f, extra) => `
-    <div class="file-row">
-      ${isImageFile(f.name) ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb" alt="${escapeHtml(f.name)}">` : `<span class="ext-badge">${extBadge(f.name)}</span>`}
-      <span class="file-name">${escapeHtml(f.name)}</span>
-      <span class="file-meta">${fmtSize(f.size)}${extra ? ' · ' + extra : ''}</span>
-    </div>`;
-
-  const sections = [];
-
-  // Documents par tâche
-  const taskRows = [];
   Object.entries(groups).forEach(([group, items]) => {
     items.forEach(([name, label]) => {
       const files = d.casesFichiers[name] || [];
-      files.forEach((f) => taskRows.push(fileRow(f, `${GROUP_LABELS[group] || group} — ${label}`)));
+      const preuveReq = !!d.casesPreuveRequise[name];
+      files.forEach((f) => {
+        let category = 'non-classe';
+        if (preuveReq) category = 'preuve-requise';
+        else if (group === 'plans') category = 'plans';
+        allDocs.push({
+          file: f, category, tab: group, link: `${GROUP_LABELS[group] || group} — ${label}`,
+          date: f.uploadedAt,
+          preuveStatus: preuveReq ? (d.casesCochees[name] === true ? 'satisfaite' : 'manquante') : 'non-requise',
+        });
+      });
     });
   });
-  sections.push({ title: `Documents par tâche (${taskRows.length})`, tab: 'plans', rows: taskRows });
 
-  // Photos de mise à jour
-  const majRows = (d.files['mise-a-jour'] || []).map((f) => fileRow(f, 'Mise à jour'));
-  sections.push({ title: `Photos de mise à jour (${majRows.length})`, tab: 'mise-a-jour', rows: majRows });
-
-  // Photos de non-conformité
-  const ncRows = [];
-  Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
-    files.forEach((f) => ncRows.push(fileRow(f, numero)));
+  (d.files['mise-a-jour'] || []).forEach((f) => {
+    allDocs.push({ file: f, category: 'photos', tab: 'mise-a-jour', link: 'Mise à jour', date: f.uploadedAt, preuveStatus: 'non-requise' });
   });
-  sections.push({ title: `Photos de non-conformité (${ncRows.length})`, tab: 'non-conformite', rows: ncRows });
 
-  const total = taskRows.length + majRows.length + ncRows.length;
-  if (!total) {
+  const vpoNumeros = new Set((d.vpoItems || []).filter((it) => it.numero).map((it) => it.numero));
+  Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
+    const category = vpoNumeros.has(numero) ? 'vpo' : 'nc';
+    files.forEach((f) => allDocs.push({ file: f, category, tab: category === 'vpo' ? 'vpo' : 'non-conformite', link: numero, date: f.uploadedAt, preuveStatus: 'non-requise' }));
+  });
+
+  if (!allDocs.length) {
     container.innerHTML = '<div class="empty-state">Aucun document ou photo déposé pour l\u2019instant.</div>';
     return;
   }
 
-  container.innerHTML = sections.map((s) => `
-    <details class="section-card" open>
-      <summary><span>${s.title}</span><button type="button" class="btn btn-outline" data-doc-jump="${s.tab}" style="margin-left:auto;" onclick="event.stopPropagation();">Voir dans l\u2019onglet →</button></summary>
-      <div class="file-list" style="padding: var(--space-3);">${s.rows.length ? s.rows.join('') : '<div class="empty-state">Aucun élément.</div>'}</div>
-    </details>`).join('');
+  const currentFilter = state.documentsFilter || 'toutes';
+  const filtered = currentFilter === 'toutes' ? allDocs : allDocs.filter((doc) => doc.category === currentFilter);
+  const PROOF_LABEL = { satisfaite: 'Preuve satisfaite', manquante: 'Preuve manquante', 'non-requise': 'Preuve non requise' };
 
-  $$('[data-doc-jump]', container).forEach((btn) => {
-    btn.addEventListener('click', () => selectTab(btn.dataset.docJump));
+  const filterBarHtml = `
+    <div class="checklist-filter-bar" style="margin-bottom:var(--space-4);">
+      <label for="documentsFilterSelect">Filtrer :</label>
+      <select id="documentsFilterSelect">
+        ${Object.entries(DOCUMENTS_FILTER_LABELS).map(([k, l]) => {
+          const count = k === 'toutes' ? allDocs.length : allDocs.filter((x) => x.category === k).length;
+          return `<option value="${k}"${currentFilter === k ? ' selected' : ''}>${l} (${count})</option>`;
+        }).join('')}
+      </select>
+    </div>`;
+
+  container.innerHTML = filterBarHtml + (filtered.length ? `<div class="doc-list-rich">${filtered.map((doc) => `
+    <div class="doc-row-rich">
+      ${isImageFile(doc.file.name) ? `<img src="${URL.createObjectURL(doc.file.blob)}" class="thumb" alt="${escapeHtml(doc.file.name)}">` : `<span class="ext-badge">${extBadge(doc.file.name)}</span>`}
+      <div class="doc-row-info">
+        <div class="doc-row-name">${escapeHtml(doc.file.name)}</div>
+        <div class="doc-row-meta">${escapeHtml(doc.link)} · ${fmtSize(doc.file.size)}${doc.date ? ' · ' + new Date(doc.date).toLocaleDateString('fr-CA') : ''}</div>
+        <div class="doc-row-proof proof-${doc.preuveStatus}">${PROOF_LABEL[doc.preuveStatus]}</div>
+      </div>
+      <button type="button" class="btn btn-tertiary doc-dl-btn" data-doc-name="${escapeHtml(doc.file.name)}">Télécharger</button>
+      <button type="button" class="btn btn-tertiary" data-doc-jump="${doc.tab}">Ouvrir</button>
+    </div>`).join('')}</div>` : '<div class="empty-state">Aucun document pour ce filtre.</div>');
+
+  $('#documentsFilterSelect').addEventListener('change', (e) => {
+    state.documentsFilter = e.target.value;
+    renderDocuments();
+  });
+  $$('[data-doc-jump]', container).forEach((btn) => btn.addEventListener('click', () => selectTab(btn.dataset.docJump)));
+  $$('.doc-dl-btn', container).forEach((btn, i) => {
+    btn.addEventListener('click', () => {
+      const doc = filtered[i];
+      const url = URL.createObjectURL(doc.file.blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = doc.file.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    });
   });
 }
 
@@ -892,6 +1045,8 @@ function renderApercu() {
   const { done, total, pct } = computeProgress();
   const groups = CHECKLISTS[d.mode] || {};
   const status = computeDossierStatus();
+  const globalStatus = computeGlobalStatus();
+  const handoff = computeHandoffSummary();
   const nextAction = computeNextAction();
   const closure = computeClosureVerdict();
   const nc = computeNcStats();
@@ -938,6 +1093,7 @@ function renderApercu() {
     </div>`).join('') || '<p class="empty">Aucune activité enregistrée pour l\u2019instant.</p>';
 
   container.innerHTML = `
+    <div class="global-status-line"><span class="tp-status-badge">${escapeHtml(globalStatus.label)}</span></div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
     <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}">
       <div class="closure-title">Vérification avant fermeture</div>
@@ -981,7 +1137,7 @@ function renderApercu() {
 
     <div class="incomplete-filter-row">
       <label class="incomplete-filter-toggle">
-        <input type="checkbox" id="toggleIncompleteOnly" ${state.showOnlyIncomplete ? 'checked' : ''}>
+        <input type="checkbox" id="toggleIncompleteOnly" ${state.checklistFilter === 'reste-a-faire' ? 'checked' : ''}>
         N'afficher que les tâches incomplètes dans les listes
       </label>
     </div>
@@ -989,6 +1145,19 @@ function renderApercu() {
     <div id="timelineSection">
       <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Activité récente</div>
       <div class="timeline">${journalHtml}</div>
+    </div>
+
+    <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Remise du dossier</div>
+    <div class="handoff-grid">
+      <div>Travail complété par<br><strong>${escapeHtml(handoff.travailCompletePar)}</strong></div>
+      <div>Vérifié par<br><strong>${escapeHtml(handoff.verifiePar)}</strong></div>
+      <div>Tâches terminées<br><strong>${handoff.tachesTerminees}</strong></div>
+      <div>Documents remis<br><strong>${handoff.documentsRemis}</strong></div>
+      <div>Preuves satisfaites<br><strong>${handoff.preuvesSatisfaites}</strong></div>
+      <div>VPO fermées<br><strong>${handoff.vpoFermees}</strong></div>
+      <div>Non-conformités résolues<br><strong>${handoff.ncResolues}</strong></div>
+      <div>Rapport exporté<br><strong>${escapeHtml(handoff.rapportExporte)}</strong></div>
+      <div>Dernière sauvegarde<br><strong>${escapeHtml(handoff.derniereSauvegarde)}</strong></div>
     </div>
 
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Rapport de chantier et outils</div>
@@ -1012,7 +1181,7 @@ function renderApercu() {
   const toggle = $('#toggleIncompleteOnly', container);
   if (toggle) {
     toggle.addEventListener('change', () => {
-      state.showOnlyIncomplete = toggle.checked;
+      state.checklistFilter = toggle.checked ? 'reste-a-faire' : 'toutes';
       renderAllChecklists();
     });
   }
@@ -1035,16 +1204,20 @@ function renderApercu() {
 
 function exportDashboardFile() {
   if (!state.draft) return;
+  const filename = `Dashboard - ${state.numero || 'dossier'}${state.draft.champs.bt ? ' (' + state.draft.champs.bt + ')' : ''}.html`;
   const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `Dashboard - ${state.numero || 'dossier'}${state.draft.champs.bt ? ' (' + state.draft.champs.bt + ')' : ''}.html`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
-  toast('Rapport de chantier téléchargé.');
+  state.draft.derniereExportRapport = new Date().toISOString();
+  schedulePersist();
+  const heure = new Date().toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
+  toast(`${filename} — Rapport HTML — ${heure}`, 3800);
 }
 
 async function shareDossierLink() {
@@ -1107,7 +1280,11 @@ function renderNonConformites() {
     return;
   }
 
-  const GRAVITE_LABEL = { critique: '🔴 Critique', majeure: '🟠 Majeure', mineure: '🟡 Mineure' };
+  const GRAVITE_LABEL = {
+    critique: '<span class="gravite-dot gravite-critique"></span>Critique',
+    majeure: '<span class="gravite-dot gravite-majeure"></span>Majeure',
+    mineure: '<span class="gravite-dot gravite-mineure"></span>Mineure',
+  };
   const order = { critique: 0, majeure: 1, mineure: 2 };
   rows.sort((a, b) => (a.resolu === b.resolu ? (order[a.gravite] ?? 3) - (order[b.gravite] ?? 3) : (a.resolu ? 1 : -1)));
 
@@ -1116,7 +1293,7 @@ function renderNonConformites() {
     const filesHtml = files.length ? `<div class="attachments">${files.map((f) => {
       return isImageFile(f.name)
         ? `<span class="thumb-link" title="${escapeHtml(f.name)}"><img src="${URL.createObjectURL(f.blob)}" class="thumb" alt="${escapeHtml(f.name)}"></span>`
-        : `<span class="doc-link">📄 ${escapeHtml(f.name)}</span>`;
+        : `<span class="doc-link"><span class="icon-inline" data-icon="folder" style="margin-right:4px;"></span>${escapeHtml(f.name)}</span>`;
     }).join('')}</div>` : '';
     return `
     <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}${r.resolu ? ' nc-resolue' : ''}" data-nc-kind="${r.kind}" data-nc-key="${r.key}">
@@ -1132,7 +1309,7 @@ function renderNonConformites() {
       ${r.dateCreation ? `<div class="nc-meta">Créée le ${new Date(r.dateCreation).toLocaleString('fr-CA')}</div>` : ''}
       ${filesHtml}
       <div class="nc-card-actions">
-        ${r.numero ? `<button type="button" class="btn btn-outline btn-nc-add-photo" data-nc-numero-btn="${r.numero}">📷 Ajouter une photo</button>
+        ${r.numero ? `<button type="button" class="btn btn-outline btn-nc-add-photo" data-nc-numero-btn="${r.numero}"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Ajouter une photo</button>
         <input type="file" class="hidden" data-nc-photo-input="${r.numero}" accept="image/*" multiple>` : ''}
         <button type="button" class="btn btn-outline btn-nc-toggle-resolu">${r.resolu ? 'Rouvrir' : 'Marquer résolue'}</button>
       </div>
@@ -1255,7 +1432,7 @@ function updateMobileSummary() {
   const titre = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
     || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
 
-  const statutLabel = computeStatutLabel(done, total);
+  const statutLabel = computeGlobalStatus().label;
 
   const priorite = d.champs.priorite || 'normale';
   const prioBadge = (priorite === 'haute' || priorite === 'urgente')
@@ -1364,6 +1541,30 @@ function selectTab(tab) {
     $$('.category-btn').forEach((b) => b.classList.toggle('active', b.dataset.category === cat));
     mobileFilterTabsByCategory(cat);
   }
+  updateChecklistContextBar(cat === 'checklist');
+}
+
+function updateChecklistContextBar(visible) {
+  const bar = $('#checklistContextBar');
+  if (!bar) return;
+  bar.classList.toggle('hidden', !visible);
+  if (!visible || !state.draft) return;
+  const d = state.draft;
+  const { done, total } = computeProgress();
+  const nc = computeNcStats();
+  const vpo = computeVpoStats();
+  const parts = [
+    [d.champs.bt, state.numero].filter(Boolean).join(' · '),
+    d.champs.desc,
+    d.mode === 'installation' ? 'Installation' : 'Démantèlement',
+  ].filter(Boolean);
+  const statsParts = [
+    `${done}/${total} tâches`,
+    vpo.pending > 0 ? `${vpo.pending} VPO ouverte${vpo.pending > 1 ? 's' : ''}` : null,
+    nc.total > 0 ? `${nc.total} NC ouverte${nc.total > 1 ? 's' : ''}` : null,
+    computeGlobalStatus().label,
+  ].filter(Boolean);
+  bar.textContent = `${parts.join(' · ')} — ${statsParts.join(' · ')}`;
 }
 
 function flashField(selector) {
@@ -1396,7 +1597,7 @@ async function ensureLocalDossierFolder(date) {
     await state.dossierDirHandle.getDirectoryHandle(sub, { create: true });
   }
   const pill = $('#wsFolderPill');
-  if (pill) pill.textContent = `📁 lié : ${state.rootDirHandle.name}/${folderName(date)}`;
+  if (pill) pill.textContent = `Lié : ${state.rootDirHandle.name}/${folderName(date)}`;
 }
 
 // Pré-remplit le B.T. si un brouillon existe déjà pour ce numéro
@@ -1533,7 +1734,7 @@ function buildDashboardHtml() {
       const href = `${baseHref}${safeStored}`;
       return isImageFile(f.name)
         ? `<a href="${href}" target="_blank" class="thumb-link" title="${escapeHtml(f.name)}"><img src="${href}" class="thumb" alt="${escapeHtml(f.name)}"></a>`
-        : `<a href="${href}" target="_blank" class="doc-link">\ud83d\udcc4 ${escapeHtml(f.name)}</a>`;
+        : `<a href="${href}" target="_blank" class="doc-link">${escapeHtml(f.name)}</a>`;
     }).join('')}</div>`;
   };
 
@@ -1602,7 +1803,7 @@ function buildDashboardHtml() {
   })() : '';
 
   // ---- Non-conformités ----
-  const GRAVITE_TAG = { critique: '🔴 Critique', majeure: '🟠 Majeure', mineure: '🟡 Mineure' };
+  const GRAVITE_TAG = { critique: 'Critique', majeure: 'Majeure', mineure: 'Mineure' };
   const ncItems = [];
   let ncResoluesCount = 0;
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
@@ -1626,13 +1827,13 @@ function buildDashboardHtml() {
   });
   const ncBanner = ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
-        <div class="nc-banner-title">\u26a0 ${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}${ncResoluesCount ? ` (+ ${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>
+        <div class="nc-banner-title">${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}${ncResoluesCount ? ` (+ ${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>
         <ul class="nc-list">${ncItems.map((r) => `<li>${r.numero ? `<strong>${r.numero}</strong> — ` : ''}${escapeHtml(r.section)}${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
       </div>`
-    : `<div class="nc-banner nc-banner-ok">\u2705 Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
+    : `<div class="nc-banner nc-banner-ok">Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
 
   const closureVerdict = computeClosureVerdict();
-  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">${closureVerdict.ready ? '\u2705' : '\u26d4'} Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}</div>`;
+  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}</div>`;
 
   // ---- Documents / photos ----
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
@@ -1664,13 +1865,13 @@ function buildDashboardHtml() {
 <title>Rapport de chantier \u2014 ${titre}</title>
 <style>
   :root {
-    --bg: #0c1016; --surface: #141a22; --surface-2: #1a212b; --border: #262e3a;
-    --text: #eef1f4; --text-muted: #8a97a6; --accent: #ff7a1a; --accent-soft: rgba(255,122,26,0.12);
+    --bg: #ffffff; --surface: #f7f7f5; --surface-2: #eeeeeb; --border: #d8d8d2;
+    --text: #1c1c1a; --text-muted: #5c5c56; --accent: #b85a1f; --accent-soft: rgba(184,90,31,0.10);
   }
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    background: radial-gradient(1200px 600px at 10% -10%, #1a1410 0%, var(--bg) 45%), var(--bg);
+    background: var(--bg);
     color: var(--text); margin: 0; padding: 40px 32px 64px;
   }
   .wrap { max-width: 1080px; margin: 0 auto; }
@@ -2010,7 +2211,7 @@ function openWorkspace() {
     || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
   $('#wsTitle').textContent = titreHeader;
   const { done: doneHeader, total: totalHeader } = computeProgress();
-  $('#wsStatusBadge').textContent = computeStatutLabel(doneHeader, totalHeader);
+  $('#wsStatusBadge').textContent = computeGlobalStatus().label;
   const metaParts = [];
   if (d.champs.desc) metaParts.push(d.champs.desc);
   if (d.champs.employe) metaParts.push(`Responsable : ${d.champs.employe}`);
@@ -2119,6 +2320,26 @@ function taskSetDone(name, label, done) {
   schedulePersist();
 }
 
+// Filtre de checklist — « Reste à faire » est une définition composite qui
+// réutilise les données déjà existantes (aucune nouvelle structure).
+const CHECKLIST_FILTER_LABELS = {
+  toutes: 'Toutes', 'reste-a-faire': 'Reste à faire', 'a-faire': 'À faire',
+  bloquees: 'Bloquées', 'preuve-manquante': 'Preuve manquante', terminees: 'Terminées', na: 'Non applicables',
+};
+function taskMatchesFilter(name, filterKey) {
+  const val = state.draft.casesCochees[name];
+  const preuveManquante = val === true && state.draft.casesPreuveRequise[name] && !(state.draft.casesFichiers[name] || []).length;
+  switch (filterKey) {
+    case 'reste-a-faire': return (val !== true && val !== 'na') || preuveManquante;
+    case 'a-faire': return val !== true && val !== 'na' && val !== 'nc';
+    case 'bloquees': return val === 'nc';
+    case 'preuve-manquante': return preuveManquante;
+    case 'terminees': return val === true;
+    case 'na': return val === 'na';
+    default: return true;
+  }
+}
+
 function renderChecklist(group) {
   const container = $(`[data-checklist="${group}"]`);
   if (!container) return;
@@ -2128,15 +2349,22 @@ function renderChecklist(group) {
     updateChecklistProgress(group, 0, 0);
     return;
   }
-  const items = state.showOnlyIncomplete ? allItems.filter(([name]) => state.draft.casesCochees[name] !== true) : allItems;
+  const filterBarHtml = `
+    <div class="checklist-filter-bar">
+      <label for="checklistFilterSelect-${group}">Filtrer :</label>
+      <select id="checklistFilterSelect-${group}" data-checklist-filter="${group}">
+        ${Object.entries(CHECKLIST_FILTER_LABELS).map(([k, l]) => `<option value="${k}"${state.checklistFilter === k ? ' selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>`;
+  const items = allItems.filter(([name]) => taskMatchesFilter(name, state.checklistFilter));
   if (!items.length) {
-    container.innerHTML = '<div class="empty-state">✅ Toutes les tâches de cette section sont complétées.</div>';
-    updateChecklistProgress(group, allItems.length, allItems.length);
+    container.innerHTML = filterBarHtml + '<div class="empty-state">Aucune tâche ne correspond à ce filtre.</div>';
+    updateChecklistProgress(group, allItems.filter(([n]) => state.draft.casesCochees[n] === true).length, allItems.length);
     return;
   }
   const canAttach = ATTACH_GROUPS.includes(group);
 
-  container.innerHTML = items.map(([name, label]) => {
+  container.innerHTML = filterBarHtml + items.map(([name, label]) => {
     const val = state.draft.casesCochees[name];
     const checked = val === true;
     const isNa = val === 'na';
@@ -2151,23 +2379,23 @@ function renderChecklist(group) {
       <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}${preuveManquante ? ' preuve-manquante' : ''}" data-item-wrap="${name}">
         <div class="checklist-item-row">
           <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
-          <span class="ci-label" data-name="${name}" data-task-detail="${name}" title="Voir les détails de la tâche">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">📎!</span>' : ''}${ncNumero ? ` <span class="nc-xref">${ncNumero}</span>` : ''}</span>
+          <span class="ci-label" data-name="${name}" data-task-detail="${name}" title="Voir les détails de la tâche">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">!</span>' : ''}${ncNumero ? ` <span class="nc-xref">${ncNumero}</span>` : ''}</span>
           <div class="ci-actions">
-            ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
-            <button type="button" class="btn-note${note ? ' active' : ''}" data-note="${name}" title="Ajouter un commentaire rapide">🗨${note ? '' : ''}</button>
+            ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? files.length : ''}</span>` : ''}
+            <button type="button" class="btn-note${note ? ' active' : ''}" data-note="${name}" title="Ajouter un commentaire rapide">${note ? '' : ''}</button>
             ${canAttach ? `<button type="button" class="btn-preuve${preuveRequise ? ' active' : ''}" data-preuve="${name}" title="Exiger une preuve pour cette tâche">Preuve requise</button>` : ''}
             <button type="button" class="btn-na" data-na="${name}">N/A</button>
             <button type="button" class="btn-nc" data-nc="${name}">Non conforme</button>
           </div>
         </div>
         ${(isNa || isNc) && reason ? `<div class="na-reason">Raison : ${reason}</div>` : ''}
-        ${note ? `<div class="na-reason ci-note-text">🗨 ${escapeHtml(note)}</div>` : ''}
-        ${preuveManquante ? `<div class="na-reason preuve-warning">⚠ Preuve requise mais aucun document joint</div>` : ''}
+        ${note ? `<div class="na-reason ci-note-text"><span class="icon-inline" data-icon="messageCircle" style="margin-right:4px;"></span>${escapeHtml(note)}</div>` : ''}
+        ${preuveManquante ? `<div class="na-reason preuve-warning"><span class="icon-inline" data-icon="alertTriangle" style="margin-right:4px;"></span>Preuve requise mais aucun document joint</div>` : ''}
         ${canAttach ? `
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
           <div class="dropzone-mini" data-item-dropzone="${name}">
-            <span class="dz-text-desktop">📎 Glissez-déposez un document, cliquez pour parcourir, ou</span>
-            <span class="dz-text-mobile">📷 Prendre une photo</span>
+            <span class="dz-text-desktop">Glissez-déposez un document, cliquez pour parcourir, ou</span>
+            <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Prendre une photo</span>
             <button type="button" class="btn btn-outline dz-snagit-btn" data-item-snagit="${name}">utiliser Snagit</button>
             <input type="file" data-item-file-input="${name}" capture="environment" multiple class="hidden">
           </div>
@@ -2175,6 +2403,13 @@ function renderChecklist(group) {
         </div>` : ''}
       </div>`;
   }).join('');
+
+  $$('[data-checklist-filter]', container).forEach((sel) => {
+    sel.addEventListener('change', () => {
+      state.checklistFilter = sel.value;
+      Object.keys(CHECKLISTS[state.draft.mode] || {}).forEach((g) => renderChecklist(g));
+    });
+  });
 
   $$('.ci-checkbox', container).forEach((cb) => {
     cb.addEventListener('change', () => {
@@ -2299,7 +2534,7 @@ function renderItemFileList(group, name) {
   const listEl = container.querySelector(`[data-item-file-list="${name}"]`);
   const countEl = container.querySelector(`[data-attach-count="${name}"]`);
   const files = state.draft.casesFichiers[name] || [];
-  if (countEl) countEl.textContent = files.length ? `📎 ${files.length}` : '';
+  if (countEl) countEl.textContent = files.length ? `${files.length}` : '';
   if (!listEl) return;
   listEl.innerHTML = files.length ? files.map((f) => `
     <div class="file-row">
@@ -2337,7 +2572,7 @@ function renderVpoList() {
   container.innerHTML = items.map((item) => {
     const pending = item.texte && item.texte.trim() && !item.statut;
     let impact = '';
-    if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block">⛔ Ce VPO empêche la fermeture du dossier</div>';
+    if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block"><span class="icon-inline" data-icon="alertTriangle" style="margin-right:4px;"></span>Ce VPO empêche la fermeture du dossier</div>';
     else if (pending) impact = '<div class="vpo-impact vpo-impact-soft">Validation recommandée avant l\u2019étape suivante</div>';
     const validationInfo = item.statut && item.dateValidation
       ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${item.numero}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
@@ -2863,6 +3098,40 @@ async function importDossierFromPickedFolder(expectedNumero) {
     const jsonFile = await (await folder.getFileHandle('suivi.json')).getFile();
     const draft = normalizeDraft(JSON.parse(await jsonFile.text()));
 
+    // ---- Aperçu avant import : montrer l'essentiel avant de toucher aux données locales ----
+    const groupsPreview = CHECKLISTS[draft.mode] || {};
+    let taskTotal = 0, taskDone = 0;
+    Object.values(groupsPreview).forEach((items) => items.forEach(([name]) => {
+      taskTotal += 1;
+      if (draft.casesCochees[name] === true) taskDone += 1;
+    }));
+    const vpoCount = (draft.vpoItems || []).filter((it) => it.texte && it.texte.trim()).length;
+    const ncCount = Object.values(draft.casesNcDetails || {}).length
+      + (draft.vpoItems || []).filter((it) => it.statut === 'nc').length
+      + (draft.ncExtra || []).filter((it) => it.texte && it.texte.trim()).length;
+    const docCount = Object.values(draft.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (draft.files['mise-a-jour'] || []).length;
+    const remplaceExistant = !!(state.draft && (state.numero || state.draft.localisation) && state.draft.creeLe);
+
+    const confirmed = await showModal({
+      title: 'Aperçu du dossier à importer',
+      bodyHtml: `
+        <div class="closure-summary-grid" style="margin-bottom:var(--space-3);">
+          <div>Localisation<br><strong>${escapeHtml(draft.localisation || '—')}</strong></div>
+          <div>B.T.<br><strong>${escapeHtml(draft.champs.bt || '—')}</strong></div>
+          <div>Type<br><strong>${draft.mode === 'installation' ? 'Installation' : 'Démantèlement'}</strong></div>
+          <div>Créé le<br><strong>${draft.creeLe ? new Date(draft.creeLe).toLocaleDateString('fr-CA') : '—'}</strong></div>
+          <div>Dernière sauvegarde<br><strong>${draft.derniereSauvegardeOfficielle ? new Date(draft.derniereSauvegardeOfficielle.at).toLocaleDateString('fr-CA') : (draft.modifieLe ? new Date(draft.modifieLe).toLocaleDateString('fr-CA') : '—')}</strong></div>
+          <div>Tâches<br><strong>${taskDone} / ${taskTotal}</strong></div>
+          <div>VPO<br><strong>${vpoCount}</strong></div>
+          <div>Non-conformités<br><strong>${ncCount}</strong></div>
+          <div>Documents / photos<br><strong>${docCount}</strong></div>
+        </div>
+        ${remplaceExistant ? `<p style="color:var(--color-warning, #eab308);font-size:var(--text-sm);">Le dossier actuellement ouvert (${escapeHtml(state.numero || state.draft.localisation)}) sera remplacé par cet import dans l\u2019espace de travail.</p>` : ''}
+      `,
+      confirmLabel: remplaceExistant ? 'Remplacer et importer' : 'Importer',
+    });
+    if (!confirmed) return false;
+
     const docsDir = await folder.getDirectoryHandle('Documents', { create: false }).catch(() => null);
     if (docsDir) {
       for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
@@ -3015,7 +3284,7 @@ function renderInterventionStep() {
 
   const note = d.casesNotes[task.name];
   const noteEl = $('#ivTaskNote');
-  if (note) { noteEl.textContent = `🗨 ${note}`; noteEl.classList.remove('hidden'); }
+  if (note) { noteEl.textContent = note; noteEl.classList.remove('hidden'); }
   else { noteEl.classList.add('hidden'); }
 
   $('#ivPhotoConfirm').classList.add('hidden');

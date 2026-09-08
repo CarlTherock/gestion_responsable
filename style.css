@@ -1023,3 +1023,60 @@ select.ncextra-gravite {
 .tp-history-item { font-size: 12px; color: var(--color-text-muted); padding: 4px 0; border-bottom: 1px solid var(--color-divider); }
 .ci-label[data-task-detail] { cursor: pointer; }
 .ci-label[data-task-detail]:hover { text-decoration: underline; text-decoration-color: var(--color-border); }
+
+/* ---------- Statut global du dossier (6 états) ---------- */
+.global-status-line { margin-bottom: var(--space-3); }
+.closure-summary-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3);
+  margin-bottom: var(--space-4); font-size: 12px; color: var(--color-text-muted);
+}
+.closure-summary-grid strong { font-size: var(--text-sm); color: var(--color-text); display: block; margin-top: 2px; }
+
+/* ---------- Filtre de checklist (compact) ---------- */
+.checklist-filter-bar {
+  display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4);
+  font-size: var(--text-sm); color: var(--color-text-muted);
+}
+.checklist-filter-bar select {
+  background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  color: var(--color-text); padding: 4px 8px; font-size: var(--text-sm);
+}
+
+/* ---------- Barre de contexte sticky (PC seulement, pendant la checklist) ---------- */
+.checklist-context-bar {
+  position: sticky; top: 0; z-index: 40; background: var(--color-surface-offset);
+  border-bottom: 1px solid var(--color-divider); padding: var(--space-2) var(--space-5);
+  font-size: 12px; color: var(--color-text-muted); font-family: var(--font-mono);
+}
+.checklist-context-bar.hidden { display: none; }
+@media (max-width: 680px) {
+  .checklist-context-bar { display: none !important; }
+}
+
+/* ---------- Documents — liste enrichie avec filtres ---------- */
+.doc-list-rich { display: flex; flex-direction: column; gap: var(--space-2); }
+.doc-row-rich {
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+}
+.doc-row-rich .thumb { width: 40px; height: 40px; object-fit: cover; border-radius: var(--radius-sm); flex-shrink: 0; }
+.doc-row-info { flex: 1; min-width: 0; }
+.doc-row-name { font-size: var(--text-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-row-meta { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
+.doc-row-proof { font-size: 11px; margin-top: 3px; font-weight: 700; }
+.doc-row-proof.proof-satisfaite { color: var(--color-success); }
+.doc-row-proof.proof-manquante { color: var(--color-error); }
+.doc-row-proof.proof-non-requise { color: var(--color-text-faint); }
+
+/* ---------- Journal de remise / fermeture ---------- */
+.handoff-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3);
+  margin-bottom: var(--space-5); font-size: 12px; color: var(--color-text-muted);
+}
+.handoff-grid strong { font-size: var(--text-sm); color: var(--color-text); display: block; margin-top: 2px; }
+
+/* ---------- Points de gravité (remplacent les emoji de couleur) ---------- */
+.gravite-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+.gravite-dot.gravite-critique { background: var(--color-error); }
+.gravite-dot.gravite-majeure { background: #eab308; }
+.gravite-dot.gravite-mineure { background: var(--color-text-faint); }
