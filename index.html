@@ -171,6 +171,8 @@
         <button type="button" class="category-btn" data-category="plus"><span class="tab-icon" data-icon="menu"></span><span class="tab-label">Plus</span></button>
       </nav>
 
+      <div class="checklist-context-bar hidden" id="checklistContextBar"></div>
+
       <!-- ---- Onglet : Aperçu ---- -->
       <div class="tab-panel" data-panel="apercu">
         <div class="panel-title">Aperçu du dossier</div>
@@ -269,7 +271,7 @@
             <span class="dot"></span> Capturer avec Snagit
           </button>
           <button class="btn btn-outline" id="btnLoadImage">Charger une image existante</button>
-          <button class="btn btn-outline" id="btnPasteClipboard">📋 Coller depuis le presse-papiers</button>
+          <button class="btn btn-outline" id="btnPasteClipboard">Coller depuis le presse-papiers</button>
           <input type="file" id="loadImageInput" accept="image/*" class="hidden">
         </div>
         <p class="panel-desc" style="margin: var(--space-2) 0 var(--space-4); font-size: var(--text-sm);">Astuce : après une capture Snagit, appuyez sur Ctrl+V (ou Cmd+V) n'importe où dans cet onglet pour coller l'image directement.</p>
