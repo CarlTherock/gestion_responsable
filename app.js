@@ -714,7 +714,10 @@ async function pickSaveFolder() {
     toast(`Emplacement « ${handle.name} » retenu.`);
     return true;
   } catch (err) {
-    return false; // AbortError : l'utilisateur a fermé le sélecteur — rien à signaler
+    if (err && err.name === 'AbortError') return false; // l'utilisateur a fermé le sélecteur — rien à signaler
+    console.error('Erreur showDirectoryPicker:', err);
+    toast(`Impossible d\u2019ouvrir le sélecteur de dossier : ${(err && err.message) || (err && err.name) || 'erreur inconnue'}`, 6000);
+    return false;
   }
 }
 $('#btnChooseFolder').addEventListener('click', pickSaveFolder);
@@ -3218,7 +3221,12 @@ async function importDossierFromPickedFolder(expectedNumero) {
     return true;
   } catch (err) {
     if (err && err.name === 'AbortError') return false;
-    toast('Ce dossier ne contient pas de fichier suivi.json valide.', 4500);
+    console.error('Erreur importDossierFromPickedFolder:', err);
+    if (err && err.name === 'NotFoundError') {
+      toast('Ce dossier ne contient pas de fichier suivi.json valide.', 4500);
+    } else {
+      toast(`Impossible d\u2019importer ce dossier : ${(err && err.message) || (err && err.name) || 'erreur inconnue'}`, 6000);
+    }
     return false;
   }
 }
