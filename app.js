@@ -700,10 +700,10 @@ if (!FS_ACCESS_SUPPORTED) {
   $('#folderStatus').textContent = 'La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.';
 }
 
-$('#btnChooseFolder').addEventListener('click', async () => {
+async function pickSaveFolder() {
   if (!FS_ACCESS_SUPPORTED) {
     toast('Cette fonction est disponible dans Chrome ou Edge sur ordinateur.', 4000);
-    return;
+    return false;
   }
   try {
     const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -712,10 +712,12 @@ $('#btnChooseFolder').addEventListener('click', async () => {
     $('#folderStatus').classList.add('ok');
     $('#folderStatus').textContent = `Emplacement choisi : ${handle.name}.`;
     toast(`Emplacement « ${handle.name} » retenu.`);
+    return true;
   } catch (err) {
-    // AbortError : l'utilisateur a fermé le sélecteur — rien à signaler
+    return false; // AbortError : l'utilisateur a fermé le sélecteur — rien à signaler
   }
-});
+}
+$('#btnChooseFolder').addEventListener('click', pickSaveFolder);
 
 function isTaskDone(name) {
   const v = state.draft.casesCochees[name];
@@ -1367,8 +1369,8 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     return;
   }
   if (!state.rootDirHandle && !state.dossierDirHandle) {
-    toast('Choisissez d\u2019abord un emplacement de sauvegarde, ou importez un dossier existant.', 4500);
-    return;
+    const chosen = await pickSaveFolder();
+    if (!chosen) return; // l'utilisateur a fermé le sélecteur sans choisir
   }
   const { done, total, pct } = computeProgress();
   if (pct < 100) {
