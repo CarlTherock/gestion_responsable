@@ -200,6 +200,17 @@ function toast(msg, ms = 2600) {
 }
 
 // ---------- Fenêtre modale générique ----------
+// ---------- Raccourcis clavier simples (PC) ----------
+document.addEventListener('keydown', (e) => {
+  const modalOpen = !$('#modalOverlay').classList.contains('hidden');
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (state.draft) $('#btnSaveFolder')?.click();
+  } else if (e.key === 'Escape' && modalOpen) {
+    $('#modalCancel')?.click();
+  }
+});
+
 function showModal({ title, bodyHtml, confirmLabel = 'Confirmer' }) {
   return new Promise((resolve) => {
     const overlay = $('#modalOverlay');
@@ -492,6 +503,63 @@ $('#topbarMenuBtn').addEventListener('click', async () => {
   else if (choice === 'menuChoixNouveau') location.reload();
 });
 
+// Vérification avant fermeture : partagée entre le bouton PC et le bouton mobile.
+// Recalcule toujours à la demande — jamais de donnée figée d'un rendu précédent.
+async function showClosureCheckModal() {
+  if (!state.draft) return;
+  const closure = computeClosureVerdict();
+  const nextAction = computeNextAction();
+  const listHtml = closure.ready
+    ? `<p style="color:var(--color-success);">Toutes les conditions sont remplies.</p>`
+    : `<ul style="padding-left: 20px; display:flex; flex-direction:column; gap: 6px;">${(closure.problems || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`;
+  const confirmed = await showModal({
+    title: closure.ready ? 'Dossier prêt' : 'Éléments à corriger',
+    bodyHtml: listHtml,
+    confirmLabel: closure.ready ? 'Fermer' : 'Ouvrir le premier élément à corriger',
+  });
+  if (confirmed && !closure.ready) selectTab(nextAction.tab);
+}
+$('#btnClosureCheckPc').addEventListener('click', showClosureCheckModal);
+
+// Ajouter une note : réutilise le champ Commentaires existant (onglet Commentaire),
+// pas de nouvelle structure de données.
+$('#btnAddNote').addEventListener('click', async () => {
+  if (!state.draft) return;
+  const current = state.draft.champs.commentaires || '';
+  const confirmed = await showModal({
+    title: 'Ajouter une note',
+    bodyHtml: `<textarea id="modalDossierNote" rows="6" placeholder="Note sur ce dossier…">${escapeHtml(current)}</textarea>`,
+    confirmLabel: 'Enregistrer',
+  });
+  if (!confirmed) return;
+  const val = $('#modalDossierNote').value;
+  state.draft.champs.commentaires = val;
+  $('#fldCommentaires').value = val;
+  schedulePersist();
+  toast('Note enregistrée.');
+});
+
+// Menu ⋯ de l'en-tête du dossier : regroupe les fonctions secondaires
+// (QR, import, export, partage, impression, historique) réutilisant les
+// mécanismes déjà existants — aucune nouvelle logique.
+$('#btnMoreMenuPc').addEventListener('click', async () => {
+  if (!state.draft) return;
+  const choice = await showChoiceModal('Options du dossier', `
+    <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+      <button type="button" class="btn btn-outline" id="menuQr" style="width:100%;justify-content:flex-start;">QR du dossier</button>
+      <button type="button" class="btn btn-outline" id="menuExporter" style="width:100%;justify-content:flex-start;">Exporter le rapport de chantier</button>
+      <button type="button" class="btn btn-outline" id="menuPartager" style="width:100%;justify-content:flex-start;">Partager le dossier</button>
+      <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">Imprimer</button>
+      <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">Historique / activité récente</button>
+    </div>
+  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique']);
+  if (choice === 'menuQr') showQrModal();
+  else if (choice === 'menuExporter') exportDashboardFile();
+  else if (choice === 'menuPartager') shareDossierLink();
+  else if (choice === 'menuImprimer') window.print();
+  else if (choice === 'menuHistorique') selectTab('apercu');
+});
+
 // ---------- Emplacement local du dossier (File System Access API) ----------
 const FS_ACCESS_SUPPORTED = 'showDirectoryPicker' in window;
 if (!FS_ACCESS_SUPPORTED) {
@@ -534,6 +602,13 @@ function computeProgress() {
   });
   const pct = total ? (done / total) * 100 : 100;
   return { done, total, pct };
+}
+
+function computeStatutLabel(done, total) {
+  let statut = 'Brouillon';
+  if (done > 0) statut = 'En cours';
+  if (total > 0 && done === total) statut = 'Terminé';
+  return statut;
 }
 
 function updateProgressPill() {
@@ -789,50 +864,9 @@ function renderApercu() {
     </div>`).join('') || '<p class="empty">Aucune activité enregistrée pour l\u2019instant.</p>';
 
   container.innerHTML = `
-    <div class="cockpit-header">
-      <div class="cockpit-header-main">
-        <div class="cockpit-bt">${escapeHtml(state.numero || '')}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}</div>
-        <div class="cockpit-titre">${escapeHtml(titre)}</div>
-        ${secteur ? `<div class="cockpit-secteur">${escapeHtml(secteur)}</div>` : ''}
-      </div>
-      <div class="cockpit-header-meta">
-        <span class="priorite-badge priorite-${priorite}">Priorité ${PRIORITE_LABEL[priorite] || priorite}</span>
-        ${responsable ? `<span class="tag-pill">Responsable : ${escapeHtml(responsable)}</span>` : ''}
-        ${echeance ? `<span class="tag-pill">Échéance : ${escapeHtml(echeance)}</span>` : ''}
-        <button type="button" class="btn btn-outline" id="btnExportApercu">Exporter</button>
-        <button type="button" class="btn btn-outline" id="btnShareApercu">Partager</button>
-        <button type="button" class="btn btn-outline" id="btnPrintApercu">Imprimer</button>
-      </div>
-    </div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
-
-    <button type="button" class="btn btn-primary btn-start-intervention" id="btnStartIntervention"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">${ICONS.play}</svg> Démarrer l'intervention</button>
-
-    <div class="next-action-card">
-      <div class="next-action-body">
-        <div class="next-action-kicker">Prochaine action</div>
-        <div class="next-action-text">${escapeHtml(nextAction.text)}</div>
-      </div>
-      <button type="button" class="btn btn-primary" data-apercu-jump="${nextAction.tab}">Y aller →</button>
-    </div>
-
-    <div class="hero-ring" style="margin: var(--space-5) 0;">
-      ${ringSvg(pct, 130, 12)}
-      <div>
-        <div class="hero-ring-label">Progression globale</div>
-        <div class="hero-ring-count">${done} / ${total} tâches</div>
-      </div>
-    </div>
-
-    <div class="stat-row" style="margin-bottom: var(--space-6);">
-      <div class="stat-card"><div class="num">${done}/${total}</div><div class="lbl">Tâches complétées</div></div>
-      <div class="stat-card"><div class="num">${docCount}</div><div class="lbl">Documents / photos</div></div>
-      <div class="stat-card"><div class="num" style="color:${nc.total ? 'var(--color-danger, #d64545)' : 'var(--color-success)'};">${nc.total}</div><div class="lbl">Non-conformités</div></div>
-      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
-    </div>
-
     <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}">
-      <div class="closure-title">${closure.ready ? '\u2705 Vérification avant fermeture' : '\u26d4 Vérification avant fermeture'}</div>
+      <div class="closure-title">Vérification avant fermeture</div>
       <div class="closure-text">${escapeHtml(closure.text)}</div>
       ${!closure.ready ? `<div class="closure-actions">
         ${(total - done) > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="${groupStats.find((g) => g.pct < 100)?.group || 'identification'}">Voir les tâches incomplètes</button>` : ''}
@@ -842,9 +876,33 @@ function renderApercu() {
       </div>` : ''}
     </div>
 
-    <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">${closure.ready ? ICONS.checkCircle : ICONS.alertTriangle}</svg> Vérification avant fermeture</button>
+    <button type="button" class="btn btn-primary btn-start-intervention" id="btnStartIntervention"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">${ICONS.play}</svg> Démarrer l'intervention</button>
+
+    <div class="next-action-card">
+      <div class="next-action-body">
+        <div class="next-action-kicker">Prochaine action</div>
+        <div class="next-action-text">${escapeHtml(nextAction.text)}</div>
+      </div>
+      <button type="button" class="btn btn-primary" data-apercu-jump="${nextAction.tab}">Ouvrir la tâche</button>
+    </div>
+
+    <div class="vpo-nc-summary-row">
+      <div class="vpo-nc-summary-item" data-apercu-jump="vpo">
+        <div class="num">${vpo.pending}</div><div class="lbl">VPO ouvertes</div>
+      </div>
+      <div class="vpo-nc-summary-item" data-apercu-jump="non-conformite">
+        <div class="num" style="color:${nc.total ? 'var(--color-error)' : 'var(--color-success)'};">${nc.total}</div><div class="lbl">Non-conformités</div>
+      </div>
+    </div>
 
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Progression par section</div>
+    <div class="hero-ring" style="margin-bottom: var(--space-5);">
+      ${ringSvg(pct, 110, 10)}
+      <div>
+        <div class="hero-ring-label">Progression globale</div>
+        <div class="hero-ring-count">${done} / ${total} tâches</div>
+      </div>
+    </div>
     <div class="rings-grid">${ringsHtml}</div>
 
     <div class="incomplete-filter-row">
@@ -858,6 +916,19 @@ function renderApercu() {
       <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Activité récente</div>
       <div class="timeline">${journalHtml}</div>
     </div>
+
+    <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Rapport de chantier et outils</div>
+    <div class="stat-row" style="margin-bottom: var(--space-4);">
+      <div class="stat-card"><div class="num">${docCount}</div><div class="lbl">Documents / photos</div></div>
+      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+    </div>
+    <div class="tools-row">
+      <button type="button" class="btn btn-outline" id="btnExportApercu">Exporter le rapport de chantier</button>
+      <button type="button" class="btn btn-outline" id="btnShareApercu">Partager</button>
+      <button type="button" class="btn btn-outline" id="btnPrintApercu">Imprimer</button>
+    </div>
+
+    <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">${closure.ready ? ICONS.checkCircle : ICONS.alertTriangle}</svg> Vérification avant fermeture</button>
   `;
 
   $$('[data-apercu-jump]', container).forEach((card) => {
@@ -879,19 +950,7 @@ function renderApercu() {
   if (startIvBtn) startIvBtn.addEventListener('click', startInterventionMode);
 
   const closureCheckBtn = $('#btnClosureCheckMobile', container);
-  if (closureCheckBtn) {
-    closureCheckBtn.addEventListener('click', async () => {
-      const listHtml = closure.ready
-        ? `<p style="color:var(--color-success);">Toutes les conditions sont remplies.</p>`
-        : `<ul style="padding-left: 20px; display:flex; flex-direction:column; gap: 6px;">${(closure.problems || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`;
-      const confirmed = await showModal({
-        title: closure.ready ? '\u2705 Dossier prêt' : '\u26d4 Éléments à corriger',
-        bodyHtml: listHtml,
-        confirmLabel: closure.ready ? 'Fermer' : 'Ouvrir le premier élément à corriger',
-      });
-      if (confirmed && !closure.ready) selectTab(nextAction.tab);
-    });
-  }
+  if (closureCheckBtn) closureCheckBtn.addEventListener('click', showClosureCheckModal);
 
   const exportBtn = $('#btnExportApercu', container);
   if (exportBtn) exportBtn.addEventListener('click', exportDashboardFile);
@@ -911,7 +970,7 @@ function exportDashboardFile() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
-  toast('Dashboard téléchargé.');
+  toast('Rapport de chantier téléchargé.');
 }
 
 async function shareDossierLink() {
@@ -1122,9 +1181,7 @@ function updateMobileSummary() {
   const titre = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
     || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
 
-  let statutLabel = 'Brouillon';
-  if (done > 0) statutLabel = 'En cours';
-  if (total > 0 && done === total) statutLabel = 'Terminé';
+  const statutLabel = computeStatutLabel(done, total);
 
   const priorite = d.champs.priorite || 'normale';
   const prioBadge = (priorite === 'haute' || priorite === 'urgente')
@@ -1530,7 +1587,7 @@ function buildDashboardHtml() {
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dashboard \u2014 ${titre}</title>
+<title>Rapport de chantier \u2014 ${titre}</title>
 <style>
   :root {
     --bg: #0c1016; --surface: #141a22; --surface-2: #1a212b; --border: #262e3a;
@@ -1874,12 +1931,17 @@ function openWorkspace() {
   $('#screenWorkspace').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'auto' });
 
-  $('#wsNum').textContent = state.numero + (d.champs.bt ? ` (${d.champs.bt})` : '');
-  $('#wsMeta').textContent = `${d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement'} · créé le ${new Date(d.creeLe).toLocaleDateString('fr-CA')}`;
-  $('#wsCreated').textContent = state.isNewDraft ? 'nouveau dossier' : 'dossier existant';
-  $('#wsFolderPill').textContent = d.derniereSauvegardeOfficielle
-    ? `📁 dernière sauvegarde : ${new Date(d.derniereSauvegardeOfficielle.at).toLocaleDateString('fr-CA')}`
-    : '📁 brouillon local seulement';
+  $('#wsNum').textContent = state.numero + (d.champs.bt ? ` · ${d.champs.bt}` : '');
+  const titreHeader = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
+    || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
+  $('#wsTitle').textContent = titreHeader;
+  const { done: doneHeader, total: totalHeader } = computeProgress();
+  $('#wsStatusBadge').textContent = computeStatutLabel(doneHeader, totalHeader);
+  const metaParts = [];
+  if (d.champs.desc) metaParts.push(d.champs.desc);
+  if (d.champs.employe) metaParts.push(`Responsable : ${d.champs.employe}`);
+  metaParts.push(`Mise à jour : ${new Date(d.modifieLe || d.creeLe).toLocaleString('fr-CA')}`);
+  $('#wsMeta').textContent = metaParts.join(' · ');
 
   $$('[data-link]').forEach((input) => { input.value = d.liens[input.dataset.link] || ''; });
   updateLinkTargets();
@@ -2461,7 +2523,8 @@ function updateFilesCount() {
   const tabTotal = Object.values(state.draft.files || {}).reduce((sum, arr) => sum + arr.length, 0);
   const taskTotal = Object.values(state.draft.casesFichiers || {}).reduce((sum, arr) => sum + arr.length, 0);
   const ncTotal = Object.values(state.draft.ncFichiers || {}).reduce((sum, arr) => sum + arr.length, 0);
-  $('#wsFilesCount').textContent = `${tabTotal + taskTotal + ncTotal} document(s)`;
+  const wsFilesCountEl = $('#wsFilesCount');
+  if (wsFilesCountEl) wsFilesCountEl.textContent = `${tabTotal + taskTotal + ncTotal} document(s)`;
   renderApercu();
   renderDocuments();
 }
@@ -2669,10 +2732,9 @@ function generateQrSvg(text) {
 }
 
 function renderQrThumb() {
-  [$('#btnShowQr'), $('#btnShowQrPlus')].forEach((btn) => {
-    if (!btn || !state.numero || !state.draft) return;
-    btn.innerHTML = generateQrSvg(buildDossierUrl());
-  });
+  const btn = $('#btnShowQrPlus');
+  if (!btn || !state.numero || !state.draft) return;
+  btn.innerHTML = generateQrSvg(buildDossierUrl());
 }
 
 function showQrModal() {
@@ -2694,7 +2756,6 @@ function showQrModal() {
     confirmLabel: 'Fermer',
   });
 }
-$('#btnShowQr').addEventListener('click', showQrModal);
 $('#btnShowQrPlus').addEventListener('click', showQrModal);
 $('#btnExportPlus').addEventListener('click', exportDashboardFile);
 $('#btnSharePlus').addEventListener('click', shareDossierLink);
