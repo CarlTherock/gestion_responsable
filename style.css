@@ -1089,3 +1089,14 @@ select.ncextra-gravite {
 .gravite-dot.gravite-critique { background: var(--color-error); }
 .gravite-dot.gravite-majeure { background: #eab308; }
 .gravite-dot.gravite-mineure { background: var(--color-text-faint); }
+
+/* ---------- Vignette agrandie et cliquable pour les photos de tâche ---------- */
+.file-row-lg { align-items: center; }
+.thumb-lg {
+  width: 84px; height: 84px; object-fit: cover; border-radius: var(--radius-sm);
+  flex-shrink: 0; cursor: zoom-in; border: 1px solid var(--color-border);
+  transition: transform 120ms ease;
+}
+.thumb-lg:hover { transform: scale(1.04); }
+.file-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.file-row-info .file-name { white-space: normal; word-break: break-word; }

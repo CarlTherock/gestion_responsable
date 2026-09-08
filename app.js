@@ -1014,18 +1014,30 @@ function renderDocuments() {
       </select>
     </div>`;
 
-  container.innerHTML = filterBarHtml + (filtered.length ? `<div class="doc-list-rich">${filtered.map((doc) => `
+  container.innerHTML = filterBarHtml + (filtered.length ? `<div class="doc-list-rich">${filtered.map((doc, i) => `
     <div class="doc-row-rich">
-      ${isImageFile(doc.file.name) ? `<img src="${URL.createObjectURL(doc.file.blob)}" class="thumb" alt="${escapeHtml(doc.file.name)}">` : `<span class="ext-badge">${extBadge(doc.file.name)}</span>`}
+      ${isImageFile(doc.file.name)
+        ? `<img src="${URL.createObjectURL(doc.file.blob)}" class="thumb-lg" alt="${escapeHtml(doc.file.name)}" data-doc-enlarge="${i}">`
+        : `<span class="ext-badge">${extBadge(doc.file.name)}</span>`}
       <div class="doc-row-info">
         <div class="doc-row-name">${escapeHtml(doc.file.name)}</div>
-        <div class="doc-row-meta">${escapeHtml(doc.link)} · ${fmtSize(doc.file.size)}${doc.date ? ' · ' + new Date(doc.date).toLocaleDateString('fr-CA') : ''}</div>
+        <div class="doc-row-meta">${escapeHtml(doc.link)} · ${fmtSize(doc.file.size)}${doc.date ? ' · ' + new Date(doc.date).toLocaleDateString('fr-CA') : ''}${doc.file.partages && doc.file.partages.length ? ` · partagé ${doc.file.partages.length} fois` : ''}</div>
         <div class="doc-row-proof proof-${doc.preuveStatus}">${PROOF_LABEL[doc.preuveStatus]}</div>
       </div>
+      ${isImageFile(doc.file.name) ? `<button type="button" class="btn btn-tertiary" data-doc-share="${i}">Partager</button>` : ''}
       <button type="button" class="btn btn-tertiary doc-dl-btn" data-doc-name="${escapeHtml(doc.file.name)}">Télécharger</button>
       <button type="button" class="btn btn-tertiary" data-doc-jump="${doc.tab}">Ouvrir</button>
     </div>`).join('')}</div>` : '<div class="empty-state">Aucun document pour ce filtre.</div>');
 
+  $$('[data-doc-enlarge]', container).forEach((img) => {
+    img.addEventListener('click', () => openImageLightbox(filtered[Number(img.dataset.docEnlarge)].file));
+  });
+  $$('[data-doc-share]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const doc = filtered[Number(btn.dataset.docShare)];
+      sharePhoto(doc.file, doc.link, renderDocuments);
+    });
+  });
   $('#documentsFilterSelect').addEventListener('change', (e) => {
     state.documentsFilter = e.target.value;
     renderDocuments();
@@ -1302,9 +1314,9 @@ function renderNonConformites() {
 
   el.innerHTML = rows.map((r) => {
     const files = state.draft.ncFichiers[r.numero] || [];
-    const filesHtml = files.length ? `<div class="attachments">${files.map((f) => {
+    const filesHtml = files.length ? `<div class="attachments">${files.map((f, i) => {
       return isImageFile(f.name)
-        ? `<span class="thumb-link" title="${escapeHtml(f.name)}"><img src="${URL.createObjectURL(f.blob)}" class="thumb" alt="${escapeHtml(f.name)}"></span>`
+        ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}" data-nc-file-enlarge="${r.numero}::${i}">`
         : `<span class="doc-link"><span class="icon-inline" data-icon="folder" style="margin-right:4px;"></span>${escapeHtml(f.name)}</span>`;
     }).join('')}</div>` : '';
     return `
@@ -1329,6 +1341,12 @@ function renderNonConformites() {
     </div>`;
   }).join('');
 
+  $$('[data-nc-file-enlarge]', el).forEach((img) => {
+    img.addEventListener('click', () => {
+      const [numero, idx] = img.dataset.ncFileEnlarge.split('::');
+      openImageLightbox((state.draft.ncFichiers[numero] || [])[Number(idx)]);
+    });
+  });
   $$('.btn-nc-add-photo', el).forEach((btn) => {
     btn.addEventListener('click', () => {
       const input = el.querySelector(`[data-nc-photo-input="${btn.dataset.ncNumeroBtn}"]`);
@@ -2590,12 +2608,88 @@ function renderItemFileList(group, name) {
   const files = state.draft.casesFichiers[name] || [];
   if (countEl) countEl.textContent = files.length ? `${files.length}` : '';
   if (!listEl) return;
-  listEl.innerHTML = files.length ? files.map((f) => `
-    <div class="file-row">
-      <span class="ext-badge">${extBadge(f.name)}</span>
-      <span class="file-name">${f.name}</span>
-      <span class="file-meta">${fmtSize(f.size)}</span>
+  listEl.innerHTML = files.length ? files.map((f, i) => `
+    <div class="file-row file-row-lg">
+      ${isImageFile(f.name)
+        ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" data-file-enlarge="${name}::${i}">`
+        : `<span class="ext-badge">${extBadge(f.name)}</span>`}
+      <div class="file-row-info">
+        <span class="file-name">${escapeHtml(f.name)}</span>
+        <span class="file-meta">${fmtSize(f.size)}${f.partages && f.partages.length ? ` · partagé ${f.partages.length} fois` : ''}</span>
+      </div>
+      ${isImageFile(f.name) ? `<button type="button" class="btn btn-tertiary" data-file-share="${name}::${i}">Partager</button>` : ''}
     </div>`).join('') : '';
+
+  $$('[data-file-enlarge]', listEl).forEach((img) => {
+    img.addEventListener('click', () => {
+      const [, idx] = img.dataset.fileEnlarge.split('::');
+      openImageLightbox(files[Number(idx)]);
+    });
+  });
+  $$('[data-file-share]', listEl).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [, idx] = btn.dataset.fileShare.split('::');
+      const label = (CHECKLISTS[state.draft.mode][group] || []).find(([n]) => n === name)?.[1] || name;
+      sharePhoto(files[Number(idx)], `Tâche : ${label}`, () => renderItemFileList(group, name));
+    });
+  });
+}
+
+// Affiche une image jointe en grand, dans une fenêtre simple.
+function openImageLightbox(file) {
+  const url = URL.createObjectURL(file.blob);
+  showModal({
+    title: file.name,
+    bodyHtml: `<img src="${url}" style="max-width:100%;border-radius:var(--radius-sm);display:block;">`,
+    confirmLabel: 'Fermer',
+  });
+}
+
+// Partage une photo par le partage natif de l'appareil (qui PEUT joindre le
+// fichier) avec repli sur un courriel pré-rempli si non supporté (un
+// navigateur ne peut jamais joindre un fichier automatiquement à un mailto:).
+// Garde un historique (date, destinataire) sur le fichier lui-même — une trace
+// de l'intention de partage, pas une confirmation de livraison.
+async function sharePhoto(file, contextLabel, onUpdate) {
+  const confirmed = await showModal({
+    title: 'Partager cette photo',
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">${escapeHtml(contextLabel)}</p>
+      <div class="field"><label>Nom du destinataire</label><input type="text" id="shareDestName" placeholder="Ex. : Carl Tremblay"></div>
+      <div class="field" style="margin-top:var(--space-2);"><label>Courriel (optionnel, pour le repli)</label><input type="email" id="shareDestEmail" placeholder="nom@exemple.com"></div>
+    `,
+    confirmLabel: 'Partager',
+  });
+  if (!confirmed) return;
+  const destName = $('#shareDestName').value.trim();
+  const destEmail = $('#shareDestEmail').value.trim();
+  if (!destName) { toast('Nom du destinataire requis.'); return; }
+
+  const shareData = { files: [file.blob instanceof File ? file.blob : new File([file.blob], file.name, { type: file.type })], title: file.name, text: `${contextLabel} — Suivi TEI` };
+  let methode = 'inconnue';
+  try {
+    if (navigator.canShare && navigator.canShare({ files: shareData.files })) {
+      await navigator.share(shareData);
+      methode = 'Partage natif';
+    } else {
+      throw new Error('non supporté');
+    }
+  } catch (err) {
+    // Repli : ouvre un courriel pré-rempli. La photo doit être jointe
+    // manuellement — aucune API web ne permet de joindre un fichier à un
+    // mailto: automatiquement.
+    const sujet = encodeURIComponent(`Photo à corriger — ${contextLabel}`);
+    const corps = encodeURIComponent(`Bonjour ${destName},\n\nVeuillez trouver ci-joint une photo à corriger concernant : ${contextLabel}.\nMerci de joindre manuellement le fichier « ${file.name} » (téléchargé séparément) à ce courriel.\n\n— Suivi TEI`);
+    window.location.href = `mailto:${destEmail}?subject=${sujet}&body=${corps}`;
+    methode = 'Courriel (pièce jointe à ajouter manuellement)';
+    toast('Le fichier n\u2019a pas pu être joint automatiquement — un navigateur ne peut jamais le faire par courriel. Téléchargez-le puis joignez-le manuellement.', 6000);
+  }
+
+  if (!file.partages) file.partages = [];
+  file.partages.push({ date: new Date().toISOString(), destinataire: destName, email: destEmail || null, methode });
+  logActivity(`Photo « ${file.name} » partagée avec ${destName} (${methode})`);
+  schedulePersist();
+  if (onUpdate) onUpdate();
 }
 
 function refreshChecklistProgressFor(group) {
