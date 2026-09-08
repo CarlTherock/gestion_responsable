@@ -1312,6 +1312,7 @@ function renderNonConformites() {
       ${filesHtml}
       <div class="nc-card-actions">
         ${r.numero ? `<button type="button" class="btn btn-outline btn-nc-add-photo" data-nc-numero-btn="${r.numero}"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Ajouter une photo</button>
+        <button type="button" class="btn btn-outline btn-nc-paste-photo" data-nc-numero-paste="${r.numero}">Coller</button>
         <input type="file" class="hidden" data-nc-photo-input="${r.numero}" accept="image/*" multiple>` : ''}
         <button type="button" class="btn btn-outline btn-nc-toggle-resolu">${r.resolu ? 'Rouvrir' : 'Marquer résolue'}</button>
       </div>
@@ -1326,6 +1327,12 @@ function renderNonConformites() {
   });
   $$('[data-nc-photo-input]', el).forEach((input) => {
     input.addEventListener('change', () => attachFilesToNc(input.dataset.ncPhotoInput, input.files));
+  });
+  $$('.btn-nc-paste-photo', el).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const file = await readImageFromClipboard();
+      if (file) await attachFilesToNc(btn.dataset.ncNumeroPaste, [file]);
+    });
   });
 
   $$('.btn-nc-toggle-resolu', el).forEach((btn) => {
@@ -2399,6 +2406,7 @@ function renderChecklist(group) {
             <span class="dz-text-desktop">Glissez-déposez un document, cliquez pour parcourir, ou</span>
             <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Prendre une photo</span>
             <button type="button" class="btn btn-outline dz-snagit-btn" data-item-snagit="${name}">utiliser Snagit</button>
+            <button type="button" class="btn btn-outline dz-snagit-btn" data-item-paste="${name}">Coller</button>
             <input type="file" data-item-file-input="${name}" capture="environment" multiple class="hidden">
           </div>
           <div class="file-list-mini" data-item-file-list="${name}"></div>
@@ -2507,11 +2515,44 @@ function renderChecklist(group) {
           toast('Ouverture de Snagit… capturez, puis glissez l\u2019image ici.', 4000);
         });
       }
+      const pasteBtn = dz.querySelector('[data-item-paste]');
+      if (pasteBtn) {
+        pasteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const file = await readImageFromClipboard();
+          if (file) await attachFilesToTask(group, name, [file]);
+        });
+      }
       renderItemFileList(group, name);
     });
   }
 
   refreshChecklistProgressFor(group);
+}
+
+// Lit une image du presse-papiers et la retourne comme File — réutilisée par
+// tous les points d'attache (checklist, non-conformités, panneau de tâche).
+async function readImageFromClipboard() {
+  if (!navigator.clipboard || !navigator.clipboard.read) {
+    toast('Le collage direct n\u2019est pas supporté par ce navigateur. Essayez Ctrl+V, ou glissez-déposez l\u2019image.', 4000);
+    return null;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imgType = item.types.find((t) => t.startsWith('image/'));
+      if (imgType) {
+        const blob = await item.getType(imgType);
+        const ext = imgType.split('/')[1] || 'png';
+        return new File([blob], `presse-papiers-${Date.now()}.${ext}`, { type: imgType });
+      }
+    }
+    toast('Aucune image trouvée dans le presse-papiers.');
+    return null;
+  } catch (err) {
+    toast('Impossible de lire le presse-papiers (autorisation refusée). Essayez Ctrl+V ou le glisser-déposer.', 4000);
+    return null;
+  }
 }
 
 async function attachFilesToTask(group, name, fileList) {
@@ -3588,6 +3629,7 @@ function renderTaskPanelBody() {
       <button type="button" class="btn btn-primary" id="tpBtnDone">${val === true ? 'Annuler « Fait »' : 'Marquer fait'}</button>
       <button type="button" class="btn btn-outline" id="tpBtnNote">${note ? 'Modifier la note' : 'Ajouter une note'}</button>
       <button type="button" class="btn btn-outline" id="tpBtnDoc">Ajouter un document</button>
+      <button type="button" class="btn btn-outline" id="tpBtnPaste">Coller</button>
       <input type="file" id="tpFileInput" multiple class="hidden">
     </div>
 
@@ -3631,6 +3673,13 @@ function renderTaskPanelBody() {
     if (changed) { renderChecklist(group); renderTaskPanelBody(); }
   });
   $('#tpBtnDoc').addEventListener('click', () => $('#tpFileInput').click());
+  $('#tpBtnPaste').addEventListener('click', async () => {
+    const file = await readImageFromClipboard();
+    if (!file) return;
+    await attachFilesToTask(group, name, [file]);
+    renderChecklist(group);
+    renderTaskPanelBody();
+  });
   $('#tpFileInput').addEventListener('change', async (e) => {
     if (!e.target.files || !e.target.files.length) return;
     await attachFilesToTask(group, name, e.target.files);

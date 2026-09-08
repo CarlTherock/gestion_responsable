@@ -870,7 +870,7 @@ select.ncextra-gravite {
 /* ---------- Libellés adaptés desktop/mobile pour la zone de dépôt ---------- */
 .dz-text-mobile { display: none; }
 @media (max-width: 680px) {
-  .dz-text-desktop, .dz-snagit-btn { display: none; }
+  .dz-text-desktop, .dz-snagit-btn, .btn-nc-paste-photo { display: none; }
   .dz-text-mobile { display: inline; font-weight: 600; }
 }
 
