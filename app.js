@@ -118,6 +118,7 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 // ---------- Icônes SVG des onglets (traits fins, style professionnel) ----------
 const ICONS = {
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
   clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/>',
@@ -135,8 +136,11 @@ const ICONS = {
   alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   messageCircle: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
+  x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  moreHorizontal: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
 };
-$$('.tab-icon[data-icon]').forEach((span) => {
+$$('.tab-icon[data-icon], .icon-inline[data-icon]').forEach((span) => {
   const inner = ICONS[span.dataset.icon];
   if (inner) span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 });
@@ -162,8 +166,8 @@ const splashDonePromise = new Promise((resolve) => {
 // ---------- Détection hors ligne / en ligne ----------
 function updateOfflineIndicator() {
   const pill = document.getElementById('wsOfflinePill');
-  if (!pill) return;
-  pill.classList.toggle('hidden', navigator.onLine);
+  if (pill) pill.classList.toggle('hidden', navigator.onLine);
+  updateMobileSaveStatus();
 }
 window.addEventListener('online', () => { updateOfflineIndicator(); toast('Connexion rétablie.'); });
 window.addEventListener('offline', () => { updateOfflineIndicator(); toast('Hors ligne — vos modifications restent conservées sur cet appareil.', 4500); });
@@ -178,18 +182,10 @@ if ('serviceWorker' in navigator) {
 // ---------- Theme toggle ----------
 (function () {
   const root = document.documentElement;
-  // Le thème par défaut (clair sur mobile, sombre sur PC) est géré entièrement
-  // en CSS via une media query — jamais de dépendance au JS pour l'affichage
-  // initial, donc aucun risque de désynchronisation selon le moment d'exécution.
-  // Ce bouton sert seulement à forcer manuellement l'autre thème si désiré.
-  let theme = null;
+  let theme = 'dark'; // industriel : sombre par défaut, PC et mobile
+  root.setAttribute('data-theme', theme);
   $('#themeToggle').addEventListener('click', () => {
-    if (theme === null) {
-      const currentlyLight = window.matchMedia('(max-width: 680px)').matches;
-      theme = currentlyLight ? 'dark' : 'light';
-    } else {
-      theme = theme === 'dark' ? 'light' : 'dark';
-    }
+    theme = theme === 'dark' ? 'light' : 'dark';
     root.setAttribute('data-theme', theme);
   });
 })();
@@ -434,7 +430,26 @@ function schedulePersist() {
     if (!state.draft) return;
     state.draft.modifieLe = new Date().toISOString();
     await dbPut(state.draft);
+    updateMobileSaveStatus();
   }, 400);
+}
+
+// Petit état compact en haut sur mobile : "Enregistré à HH:MM" ou "Hors ligne".
+// Le hors ligne prend priorité visuellement (info la plus utile sur le terrain).
+function updateMobileSaveStatus() {
+  const el = document.getElementById('mobileSaveStatus');
+  if (!el) return;
+  if (!navigator.onLine) {
+    el.textContent = 'Hors ligne — conservé sur cet appareil';
+    el.classList.add('offline');
+    return;
+  }
+  el.classList.remove('offline');
+  if (state.draft && state.draft.modifieLe) {
+    el.textContent = `Enregistré à ${new Date(state.draft.modifieLe).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}`;
+  } else {
+    el.textContent = 'Nouveau dossier';
+  }
 }
 
 // ---------- Étape 1 : choix du type ----------
@@ -464,6 +479,18 @@ $$('.choice-card').forEach((card) => {
 });
 
 $('#homeBtn').addEventListener('click', () => location.reload());
+
+$('#topbarMenuBtn').addEventListener('click', async () => {
+  const dossierOuvert = !$('#homeBtn').classList.contains('hidden');
+  const choice = await showChoiceModal('Menu', `
+    <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+      <button type="button" class="btn btn-outline" id="menuChoixTheme" style="width:100%;justify-content:flex-start;">Changer de thème (clair/sombre)</button>
+      ${dossierOuvert ? '<button type="button" class="btn btn-outline" id="menuChoixNouveau" style="width:100%;justify-content:flex-start;">Nouveau dossier</button>' : ''}
+    </div>
+  `, dossierOuvert ? ['menuChoixTheme', 'menuChoixNouveau'] : ['menuChoixTheme']);
+  if (choice === 'menuChoixTheme') $('#themeToggle').click();
+  else if (choice === 'menuChoixNouveau') location.reload();
+});
 
 // ---------- Emplacement local du dossier (File System Access API) ----------
 const FS_ACCESS_SUPPORTED = 'showDirectoryPicker' in window;
@@ -518,6 +545,7 @@ function updateProgressPill() {
     pill.style.background = `hsl(${hue}, 70%, 45%)`;
   }
   renderApercu();
+  updateMobileSummary();
 }
 
 function computeNcStats() {
@@ -649,7 +677,7 @@ function computeClosureVerdict() {
     if (vpo.pendingOptionnel > 0) text += ` (Note : ${vpo.pendingOptionnel} VPO non obligatoire${vpo.pendingOptionnel > 1 ? 's' : ''} encore non évalué${vpo.pendingOptionnel > 1 ? 's' : ''}.)`;
     return { ready: true, text };
   }
-  return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.` };
+  return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.`, problems };
 }
 
 const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
@@ -770,12 +798,14 @@ function renderApercu() {
         <span class="priorite-badge priorite-${priorite}">Priorité ${PRIORITE_LABEL[priorite] || priorite}</span>
         ${responsable ? `<span class="tag-pill">Responsable : ${escapeHtml(responsable)}</span>` : ''}
         ${echeance ? `<span class="tag-pill">Échéance : ${escapeHtml(echeance)}</span>` : ''}
-        <button type="button" class="btn btn-outline" id="btnExportApercu">💾 Exporter</button>
-        <button type="button" class="btn btn-outline" id="btnShareApercu">🔗 Partager</button>
-        <button type="button" class="btn btn-outline" id="btnPrintApercu">🖨 Imprimer</button>
+        <button type="button" class="btn btn-outline" id="btnExportApercu">Exporter</button>
+        <button type="button" class="btn btn-outline" id="btnShareApercu">Partager</button>
+        <button type="button" class="btn btn-outline" id="btnPrintApercu">Imprimer</button>
       </div>
     </div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
+
+    <button type="button" class="btn btn-primary btn-start-intervention" id="btnStartIntervention"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">${ICONS.play}</svg> Démarrer l'intervention</button>
 
     <div class="next-action-card">
       <div class="next-action-body">
@@ -811,6 +841,8 @@ function renderApercu() {
       </div>` : ''}
     </div>
 
+    <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">${closure.ready ? ICONS.checkCircle : ICONS.alertTriangle}</svg> Vérification avant fermeture</button>
+
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Progression par section</div>
     <div class="rings-grid">${ringsHtml}</div>
 
@@ -841,6 +873,24 @@ function renderApercu() {
 
   const printBtn = $('#btnPrintApercu', container);
   if (printBtn) printBtn.addEventListener('click', () => window.print());
+
+  const startIvBtn = $('#btnStartIntervention', container);
+  if (startIvBtn) startIvBtn.addEventListener('click', startInterventionMode);
+
+  const closureCheckBtn = $('#btnClosureCheckMobile', container);
+  if (closureCheckBtn) {
+    closureCheckBtn.addEventListener('click', async () => {
+      const listHtml = closure.ready
+        ? `<p style="color:var(--color-success);">Toutes les conditions sont remplies.</p>`
+        : `<ul style="padding-left: 20px; display:flex; flex-direction:column; gap: 6px;">${(closure.problems || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`;
+      const confirmed = await showModal({
+        title: closure.ready ? '\u2705 Dossier prêt' : '\u26d4 Éléments à corriger',
+        bodyHtml: listHtml,
+        confirmLabel: closure.ready ? 'Fermer' : 'Ouvrir le premier élément à corriger',
+      });
+      if (confirmed && !closure.ready) selectTab(nextAction.tab);
+    });
+  }
 
   const exportBtn = $('#btnExportApercu', container);
   if (exportBtn) exportBtn.addEventListener('click', exportDashboardFile);
@@ -1057,6 +1107,29 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     toast('Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.', 4500);
   }
 });
+
+// Bouton Enregistrer version mobile : déclenche exactement la même action
+// (même confirmation, même écriture sur disque) que le bouton du haut.
+$('#btnSaveFolderMobile').addEventListener('click', () => $('#btnSaveFolder').click());
+$('#btnResumeChecklistMobile').addEventListener('click', startInterventionMode);
+
+function updateMobileSummary() {
+  const el = $('#wsSummaryMobile');
+  if (!el || !state.draft) return;
+  const d = state.draft;
+  const { done, total, pct } = computeProgress();
+  const titre = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement';
+  const localisation = d.champs.tag || state.numero;
+  const statutDossier = d.derniereSauvegardeOfficielle ? 'Sauvegardé' : 'Brouillon local';
+  const docTotal = Object.values(d.files || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+  el.innerHTML = `
+    <div class="ws-summary-line1">${escapeHtml(state.numero)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}</div>
+    <div class="ws-summary-line2">${escapeHtml(titre)} · ${escapeHtml(localisation)}</div>
+    <div class="ws-summary-line3">${statutDossier} · ${Math.round(pct)}% complété (${done}/${total}) · ${docTotal} document${docTotal > 1 ? 's' : ''}</div>
+  `;
+}
 
 // ---------- Navigation mobile par catégories (Aperçu / Exécution / Terrain / Qualité / Dossier) ----------
 const TAB_CATEGORIES = {
@@ -1803,6 +1876,71 @@ $$('.tab-btn').forEach((btn) => {
 });
 
 // ---------- Cases à cocher ----------
+// ---------- Actions de tâche partagées (utilisées par la checklist ET le mode intervention) ----------
+// Une seule logique par action — jamais dupliquée entre les deux interfaces.
+async function taskToggleNA(name) {
+  const isCurrentlyNa = state.draft.casesCochees[name] === 'na';
+  if (isCurrentlyNa) {
+    state.draft.casesCochees[name] = false;
+    delete state.draft.casesRaisons[name];
+  } else {
+    const reason = await askNaReason();
+    if (reason === null) return false;
+    state.draft.casesCochees[name] = 'na';
+    state.draft.casesRaisons[name] = reason;
+  }
+  schedulePersist();
+  return true;
+}
+
+async function taskToggleNC(name, label) {
+  const isCurrentlyNc = state.draft.casesCochees[name] === 'nc';
+  if (isCurrentlyNc) {
+    state.draft.casesCochees[name] = false;
+    delete state.draft.casesRaisons[name];
+    delete state.draft.casesGravites[name];
+    delete state.draft.casesNcDetails[name];
+  } else {
+    const result = await askNcReason();
+    if (result === null) return false;
+    state.draft.casesCochees[name] = 'nc';
+    state.draft.casesRaisons[name] = result.reason;
+    state.draft.casesGravites[name] = result.gravite;
+    state.draft.casesNcDetails[name] = {
+      zone: result.zone, actionCorrective: result.actionCorrective,
+      responsable: result.responsable, dateCreation: result.dateCreation, resolu: false,
+      numero: nextNcId(),
+    };
+    logActivity(`Non-conformité (${result.gravite}) relevée : ${label || name}`);
+  }
+  schedulePersist();
+  return true;
+}
+
+async function taskQuickNote(name) {
+  const current = state.draft.casesNotes[name] || '';
+  const confirmed = await showModal({
+    title: 'Commentaire rapide',
+    bodyHtml: `<textarea id="modalTaskNote" rows="3" placeholder="Note sur cette tâche…">${escapeHtml(current)}</textarea>`,
+    confirmLabel: 'Enregistrer',
+  });
+  if (!confirmed) return false;
+  const val = $('#modalTaskNote').value.trim();
+  if (val) state.draft.casesNotes[name] = val; else delete state.draft.casesNotes[name];
+  schedulePersist();
+  return true;
+}
+
+function taskSetDone(name, label, done) {
+  state.draft.casesCochees[name] = done;
+  if (done) {
+    delete state.draft.casesRaisons[name];
+    delete state.draft.casesGravites[name];
+    logActivity(`Tâche complétée : ${label || name}`);
+  }
+  schedulePersist();
+}
+
 function renderChecklist(group) {
   const container = $(`[data-checklist="${group}"]`);
   if (!container) return;
@@ -1850,9 +1988,10 @@ function renderChecklist(group) {
         ${canAttach ? `
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
           <div class="dropzone-mini" data-item-dropzone="${name}">
-            📎 Glissez-déposez un document, cliquez pour parcourir, ou
-            <button type="button" class="btn btn-outline" data-item-snagit="${name}">utiliser Snagit</button>
-            <input type="file" data-item-file-input="${name}" multiple class="hidden">
+            <span class="dz-text-desktop">📎 Glissez-déposez un document, cliquez pour parcourir, ou</span>
+            <span class="dz-text-mobile">📷 Prendre une photo</span>
+            <button type="button" class="btn btn-outline dz-snagit-btn" data-item-snagit="${name}">utiliser Snagit</button>
+            <input type="file" data-item-file-input="${name}" capture="environment" multiple class="hidden">
           </div>
           <div class="file-list-mini" data-item-file-list="${name}"></div>
         </div>` : ''}
@@ -1862,17 +2001,12 @@ function renderChecklist(group) {
   $$('.ci-checkbox', container).forEach((cb) => {
     cb.addEventListener('change', () => {
       const name = cb.dataset.name;
-      state.draft.casesCochees[name] = cb.checked;
-      if (cb.checked) {
-        delete state.draft.casesRaisons[name];
-        delete state.draft.casesGravites[name];
-        logActivity(`Tâche complétée : ${cb.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
-      }
+      const label = cb.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name;
+      taskSetDone(name, label, cb.checked);
       const wrap = container.querySelector(`[data-item-wrap="${name}"]`);
       if (wrap) { wrap.classList.toggle('checked', cb.checked); wrap.classList.remove('na', 'nc'); }
       const drawer = container.querySelector(`[data-drawer="${name}"]`);
       if (drawer) drawer.classList.toggle('hidden', !cb.checked);
-      schedulePersist();
       refreshChecklistProgressFor(group);
       updateProgressPill();
       renderNonConformites();
@@ -1889,17 +2023,8 @@ function renderChecklist(group) {
   $$('.btn-na', container).forEach((btn) => {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.na;
-      const isCurrentlyNa = state.draft.casesCochees[name] === 'na';
-      if (isCurrentlyNa) {
-        state.draft.casesCochees[name] = false;
-        delete state.draft.casesRaisons[name];
-      } else {
-        const reason = await askNaReason();
-        if (reason === null) return;
-        state.draft.casesCochees[name] = 'na';
-        state.draft.casesRaisons[name] = reason;
-      }
-      schedulePersist();
+      const changed = await taskToggleNA(name);
+      if (!changed) return;
       renderChecklist(group);
       refreshChecklistProgressFor(group);
       updateProgressPill();
@@ -1910,26 +2035,9 @@ function renderChecklist(group) {
   $$('.btn-nc', container).forEach((btn) => {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.nc;
-      const isCurrentlyNc = state.draft.casesCochees[name] === 'nc';
-      if (isCurrentlyNc) {
-        state.draft.casesCochees[name] = false;
-        delete state.draft.casesRaisons[name];
-        delete state.draft.casesGravites[name];
-        delete state.draft.casesNcDetails[name];
-      } else {
-        const result = await askNcReason();
-        if (result === null) return;
-        state.draft.casesCochees[name] = 'nc';
-        state.draft.casesRaisons[name] = result.reason;
-        state.draft.casesGravites[name] = result.gravite;
-        state.draft.casesNcDetails[name] = {
-          zone: result.zone, actionCorrective: result.actionCorrective,
-          responsable: result.responsable, dateCreation: result.dateCreation, resolu: false,
-          numero: nextNcId(),
-        };
-        logActivity(`Non-conformité (${result.gravite}) relevée : ${btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name}`);
-      }
-      schedulePersist();
+      const label = btn.closest('[data-item-wrap]')?.querySelector('.ci-label')?.textContent || name;
+      const changed = await taskToggleNC(name, label);
+      if (!changed) return;
       renderChecklist(group);
       refreshChecklistProgressFor(group);
       updateProgressPill();
@@ -1950,16 +2058,8 @@ function renderChecklist(group) {
   $$('.btn-note', container).forEach((btn) => {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.note;
-      const current = state.draft.casesNotes[name] || '';
-      const confirmed = await showModal({
-        title: 'Commentaire rapide',
-        bodyHtml: `<textarea id="modalTaskNote" rows="3" placeholder="Note sur cette tâche…">${escapeHtml(current)}</textarea>`,
-        confirmLabel: 'Enregistrer',
-      });
-      if (!confirmed) return;
-      const val = $('#modalTaskNote').value.trim();
-      if (val) state.draft.casesNotes[name] = val; else delete state.draft.casesNotes[name];
-      schedulePersist();
+      const changed = await taskQuickNote(name);
+      if (!changed) return;
       renderChecklist(group);
     });
   });
@@ -2340,6 +2440,7 @@ const ctx = canvas.getContext('2d');
 let drawing = false, currentTool = 'pen', lastX = 0, lastY = 0, startX = 0, startY = 0;
 
 function resetCanvas() {
+  if (!ctx) return;
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-surface-2') || '#1e2630';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.strokeStyle = '#555f6b';
@@ -2676,3 +2777,207 @@ $('#btnImportNetwork').addEventListener('click', () => importDossierFromPickedFo
     toast('Cliquez sur Continuer pour démarrer un nouveau brouillon local.', 4500);
   }
 })();
+
+// ==================== MODE INTERVENTION (mobile — une tâche à la fois) ====================
+// Réutilise entièrement les fonctions déjà existantes (taskSetDone, taskToggleNA,
+// taskToggleNC, taskQuickNote, attachFilesToTask, askNcReason, newVpoItem, nextNcId) —
+// aucune logique parallèle : le mode intervention est une simple autre FAÇON de
+// naviguer et déclencher exactement les mêmes actions que la checklist normale.
+let ivTaskList = [];
+let ivIndex = 0;
+
+function buildInterventionTaskList() {
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  const list = [];
+  Object.entries(groups).forEach(([group, items]) => {
+    items.forEach(([name, label]) => list.push({ group, name, label }));
+  });
+  return list;
+}
+
+function startInterventionMode() {
+  if (!state.draft) return;
+  ivTaskList = buildInterventionTaskList();
+  if (!ivTaskList.length) { toast('Aucune tâche dans ce dossier.'); return; }
+  const firstIncomplete = ivTaskList.findIndex((t) => state.draft.casesCochees[t.name] !== true);
+  ivIndex = firstIncomplete === -1 ? 0 : firstIncomplete;
+  $('#interventionMode').classList.remove('hidden');
+  renderInterventionStep();
+}
+
+function exitInterventionMode() {
+  $('#interventionMode').classList.add('hidden');
+  $('#ivPhotoConfirm').classList.add('hidden');
+  // Rafraîchit toutes les vues qui pourraient avoir changé pendant l'intervention.
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  Object.keys(groups).forEach((g) => renderChecklist(g));
+  renderApercu();
+  renderNonConformites();
+  renderVpoList();
+  updateProgressPill();
+  updateFilesCount();
+}
+
+function renderInterventionStep() {
+  const task = ivTaskList[ivIndex];
+  if (!task || !state.draft) return;
+  const d = state.draft;
+  $('#ivBt').textContent = `BT ${d.champs.bt || '—'} · ${[d.champs.type, d.champs.tag].filter(Boolean).join(' — ') || d.localisation}`;
+  const doneCount = ivTaskList.filter((t) => d.casesCochees[t.name] === true).length;
+  $('#ivProgress').textContent = `${doneCount} / ${ivTaskList.length} tâches complétées`;
+  $('#ivStep').textContent = `Tâche ${ivIndex + 1} sur ${ivTaskList.length}`;
+  $('#ivSection').textContent = GROUP_LABELS[task.group] || task.group;
+  $('#ivTaskLabel').textContent = task.label;
+
+  const note = d.casesNotes[task.name];
+  const noteEl = $('#ivTaskNote');
+  if (note) { noteEl.textContent = `🗨 ${note}`; noteEl.classList.remove('hidden'); }
+  else { noteEl.classList.add('hidden'); }
+
+  $('#ivPhotoConfirm').classList.add('hidden');
+
+  const val = d.casesCochees[task.name];
+  const doneBtn = $('#btnIvDone');
+  const checkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="20 6 9 17 4 12"/></svg>';
+  if (val === true) {
+    doneBtn.innerHTML = `${checkSvg} Fait — toucher pour annuler`;
+    doneBtn.classList.add('iv-done-active');
+  } else {
+    doneBtn.innerHTML = `${checkSvg} Marquer fait`;
+    doneBtn.classList.remove('iv-done-active');
+  }
+
+  $('#btnIvPrev').disabled = ivIndex === 0;
+  $('#btnIvNext').disabled = ivIndex === ivTaskList.length - 1;
+}
+
+// Choix à deux options réutilisant la même fenêtre modale que le reste de l'app
+// (même overlay, mêmes styles) — seule la façon de résoudre le choix diffère
+// du confirmer/annuler binaire habituel.
+function showChoiceModal(title, bodyHtml, choiceIds) {
+  return new Promise((resolve) => {
+    const overlay = $('#modalOverlay');
+    $('#modalTitle').textContent = title;
+    $('#modalBody').innerHTML = bodyHtml;
+    $('#modalConfirm').classList.add('hidden');
+    overlay.classList.remove('hidden');
+
+    const handlers = [];
+    function cleanup(value) {
+      overlay.classList.add('hidden');
+      $('#modalConfirm').classList.remove('hidden');
+      handlers.forEach(({ el, fn }) => el.removeEventListener('click', fn));
+      $('#modalCancel').removeEventListener('click', onCancel);
+      resolve(value);
+    }
+    function onCancel() { cleanup(null); }
+    $('#modalCancel').addEventListener('click', onCancel);
+    choiceIds.forEach((id) => {
+      const el = $('#' + id);
+      if (!el) return;
+      const fn = () => cleanup(id);
+      handlers.push({ el, fn });
+      el.addEventListener('click', fn);
+    });
+  });
+}
+
+async function reportEcartForTask(name, label) {
+  const choice = await showChoiceModal('Signaler un écart', `
+    <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Lié à : <strong>${escapeHtml(label)}</strong></p>
+    <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+      <button type="button" class="btn btn-outline" id="ecartChoixNc" style="width:100%;">Non-conformité sur cette tâche</button>
+      <button type="button" class="btn btn-outline" id="ecartChoixVpo" style="width:100%;">Nouveau point VPO lié</button>
+    </div>
+  `, ['ecartChoixNc', 'ecartChoixVpo']);
+
+  if (choice === 'ecartChoixNc') {
+    await taskToggleNC(name, label);
+    renderNonConformites();
+  } else if (choice === 'ecartChoixVpo') {
+    const result = await askNcReason();
+    if (result === null) return;
+    const item = newVpoItem();
+    item.texte = `Écart lié à : ${label}`;
+    item.statut = 'nc';
+    item.raison = result.reason;
+    item.gravite = result.gravite;
+    item.zone = result.zone;
+    item.actionCorrective = result.actionCorrective;
+    item.responsable = result.responsable;
+    item.dateCreation = result.dateCreation;
+    item.numero = nextNcId();
+    item.resolu = false;
+    item.dateValidation = new Date().toISOString();
+    item.validePar = (state.draft.champs.employeeName || '').trim();
+    state.draft.vpoItems.push(item);
+    logActivity(`Non-conformité VPO (${result.gravite}) relevée depuis le mode intervention : ${item.texte}`);
+    schedulePersist();
+    renderVpoList();
+    renderNonConformites();
+  }
+  updateProgressPill();
+}
+
+// ---- Câblage (une seule fois — les éléments du mode intervention ne sont jamais recréés) ----
+$('#btnCloseIntervention').addEventListener('click', exitInterventionMode);
+
+$('#btnIvPrev').addEventListener('click', () => {
+  if (ivIndex > 0) { ivIndex--; renderInterventionStep(); }
+});
+$('#btnIvNext').addEventListener('click', () => {
+  if (ivIndex < ivTaskList.length - 1) { ivIndex++; renderInterventionStep(); }
+});
+
+$('#btnIvDone').addEventListener('click', () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const currentlyDone = state.draft.casesCochees[task.name] === true;
+  taskSetDone(task.name, task.label, !currentlyDone);
+  renderInterventionStep();
+  if (!currentlyDone && ivIndex < ivTaskList.length - 1) {
+    setTimeout(() => { ivIndex++; renderInterventionStep(); }, 350);
+  }
+});
+
+$('#btnIvNote').addEventListener('click', async () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const changed = await taskQuickNote(task.name);
+  if (changed) renderInterventionStep();
+});
+
+$('#btnIvEcart').addEventListener('click', async () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  await reportEcartForTask(task.name, task.label);
+  renderInterventionStep();
+});
+
+$('#btnIvPhoto').addEventListener('click', () => { $('#ivPhotoInput').click(); });
+$('#ivPhotoInput').addEventListener('change', async () => {
+  const task = ivTaskList[ivIndex];
+  const input = $('#ivPhotoInput');
+  if (!task || !input.files || !input.files.length) return;
+  await attachFilesToTask(task.group, task.name, input.files);
+  input.value = '';
+  $('#ivPhotoConfirm').classList.remove('hidden');
+});
+$('#btnIvViewPhoto').addEventListener('click', () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const files = state.draft.casesFichiers[task.name] || [];
+  const last = files[files.length - 1];
+  if (!last) return;
+  if (isImageFile(last.name)) {
+    showModal({ title: last.name, bodyHtml: `<img src="${URL.createObjectURL(last.blob)}" style="max-width:100%;border-radius:8px;">`, confirmLabel: 'Fermer' });
+  } else {
+    toast('Document non visualisable directement (pas une image).');
+  }
+});
+$('#btnIvAddNoteAfterPhoto').addEventListener('click', async () => {
+  const task = ivTaskList[ivIndex];
+  if (!task) return;
+  const changed = await taskQuickNote(task.name);
+  if (changed) renderInterventionStep();
+});

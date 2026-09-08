@@ -95,32 +95,6 @@
   --shadow-lg: 0 16px 40px rgba(20,20,10,0.14);
 }
 
-/* Mobile : le thème clair s'applique par défaut, en CSS pur — aucune dépendance
-   au JavaScript ni à son ordre d'exécution. Le bouton de thème peut forcer le
-   sombre explicitement (data-theme="dark" a alors priorité, voir :not() ci-dessous). */
-@media (max-width: 680px) {
-  :root:not([data-theme='dark']) {
-    --color-bg: #eef0ec;
-    --color-surface: #f8f8f5;
-    --color-surface-2: #ffffff;
-    --color-surface-offset: #e9e9e2;
-    --color-divider: #d7d7cd;
-    --color-border: #c7c8bd;
-    --color-text: #1a2027;
-    --color-text-muted: #5b6470;
-    --color-text-faint: #909aa4;
-    --color-text-inverse: #f8f8f5;
-    --color-primary-highlight: #d5eef1;
-    --color-install-highlight: #ffe6d1;
-    --color-decom-highlight: #fbdadb;
-    --color-warning-highlight: #fbecc0;
-    --color-success-highlight: #d9f0e1;
-    --color-error-highlight: #fbdadb;
-    --shadow-sm: 0 1px 2px rgba(20,20,10,0.08);
-    --shadow-md: 0 6px 18px rgba(20,20,10,0.10);
-    --shadow-lg: 0 16px 40px rgba(20,20,10,0.14);
-  }
-}
 
 [data-mode='installation'] {
   --mode-accent: var(--color-install);
@@ -179,6 +153,8 @@
   color: var(--color-text-muted); background: var(--color-surface-2);
 }
 .icon-btn:hover { color: var(--color-text); border-color: var(--mode-accent); }
+.topbar-menu-btn { display: none; }
+.topbar-menu-btn .icon-inline svg { width: 18px; height: 18px; }
 
 main { flex: 1; }
 
@@ -286,6 +262,8 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 .tab-btn:hover { color: var(--color-text); }
 .tab-btn[aria-selected="true"] { color: var(--mode-accent); border-bottom-color: var(--mode-accent); }
 .tab-icon { display: none; }
+.icon-inline { display: inline-flex; vertical-align: -3px; }
+.icon-inline svg { width: 15px; height: 15px; }
 .category-nav { display: none; }
 
 .tab-panel { padding: var(--space-6) var(--space-5); max-width: 980px; margin: 0 auto; animation: tabFadeIn 0.18s ease; }
@@ -554,6 +532,13 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
    AMÉLIORATIONS MOBILE UNIQUEMENT — n'affecte jamais la version PC
    ============================================================ */
 @media (max-width: 680px) {
+  /* Retire la barre rayée orange/noir décorative — reste sur PC seulement */
+  .hazard-strip { display: none; }
+
+  /* Menu discret unique (⋯) au lieu de deux boutons carrés séparés */
+  #themeToggle, #homeBtn { display: none; }
+  .topbar-menu-btn { display: grid; }
+
   /* En-tête du dossier : passe d'une rangée surchargée à un empilement clair */
   .workspace-header {
     padding: var(--space-4) var(--space-4);
@@ -811,3 +796,127 @@ select.ncextra-gravite {
 
 /* ---------- Rangée d'accès rapide (QR/Exporter/Partager) — onglet Documents ---------- */
 .quick-actions-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-5); }
+
+/* ==================== Mode intervention (mobile — une tâche à la fois) ==================== */
+.btn-start-intervention { display: none; }
+
+.intervention-overlay {
+  position: fixed; inset: 0; z-index: 900; background: var(--color-bg);
+  display: flex; flex-direction: column;
+}
+.intervention-overlay.hidden { display: none; }
+.intervention-header {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-4); border-bottom: 1px solid var(--color-divider);
+  padding-top: max(var(--space-4), env(safe-area-inset-top));
+}
+.intervention-bt { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 700; }
+.intervention-progress { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
+.intervention-close {
+  background: none; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  padding: 8px 14px; color: var(--color-text-muted); font-size: var(--text-sm); min-height: 44px; cursor: pointer;
+  flex-shrink: 0;
+}
+.intervention-body { flex: 1; overflow-y: auto; padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
+.intervention-step { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.intervention-section { font-size: var(--text-sm); color: var(--color-primary); font-weight: 700; }
+.intervention-task { font-size: var(--text-xl); font-weight: 700; line-height: 1.3; }
+.intervention-note { background: var(--color-surface-offset); border-radius: var(--radius-sm); padding: var(--space-3); font-size: var(--text-sm); }
+.intervention-photo-confirm {
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  background: var(--color-success-highlight); border-radius: var(--radius-sm); padding: var(--space-3);
+  font-size: var(--text-sm);
+}
+.intervention-actions-secondary { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.intervention-actions-secondary .btn { flex: 1 1 auto; min-height: 44px; }
+.intervention-footer {
+  border-top: 1px solid var(--color-divider); padding: var(--space-4) var(--space-5);
+  padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.intervention-done-btn {
+  width: 100%; min-height: 56px; font-size: var(--text-base); font-weight: 700;
+  background: var(--mode-accent); color: var(--color-text-inverse); border: none; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.intervention-done-btn.iv-done-active { background: var(--color-success); }
+.intervention-nav { display: flex; gap: var(--space-3); }
+.intervention-nav .btn { flex: 1; min-height: 44px; }
+.intervention-nav .btn:disabled { opacity: 0.4; cursor: default; }
+
+@media (max-width: 680px) {
+  .btn-start-intervention { display: flex; width: 100%; min-height: 48px; margin: var(--space-3) 0 var(--space-4); }
+}
+
+/* ---------- Libellés adaptés desktop/mobile pour la zone de dépôt ---------- */
+.dz-text-mobile { display: none; }
+@media (max-width: 680px) {
+  .dz-text-desktop, .dz-snagit-btn { display: none; }
+  .dz-text-mobile { display: inline; font-weight: 600; }
+}
+
+/* ---------- Vérification avant fermeture : simplifiée sur mobile (un seul bouton) ---------- */
+.btn-closure-check-mobile { display: none; }
+@media (max-width: 680px) {
+  .closure-card { display: none; }
+  .btn-closure-check-mobile {
+    display: block; width: 100%; min-height: 48px; margin-bottom: var(--space-4);
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    font-size: var(--text-sm); font-weight: 700; color: var(--color-text); cursor: pointer;
+  }
+}
+
+/* ---------- État compact de sauvegarde/hors ligne (mobile seulement) ---------- */
+.mobile-save-status { display: none; }
+@media (max-width: 680px) {
+  .mobile-save-status {
+    display: block; text-align: center; font-size: 11px; font-weight: 600;
+    color: var(--color-text-muted); background: var(--color-surface-offset);
+    padding: 5px var(--space-3); padding-top: max(5px, env(safe-area-inset-top));
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .mobile-save-status.offline { color: #eab308; background: rgba(234,179,8,0.12); }
+}
+
+/* ---------- Résumé mobile consolidé (remplace la rangée de pills + QR direct) ---------- */
+.ws-summary-mobile { display: none; }
+.ws-actions-mobile { display: none; }
+@media (max-width: 680px) {
+  /* Masque l'ancienne rangée dense de pills + QR direct + gros bouton Enregistrer du haut */
+  .workspace-header #wsCreated,
+  .workspace-header #wsProgressPill,
+  .workspace-header #wsFolderPill,
+  .workspace-header #wsFilesCount,
+  .workspace-header .qr-thumb-btn,
+  .workspace-header #btnSaveFolder {
+    display: none;
+  }
+  /* Le pill hors ligne reste géré par mobile-save-status ; on évite la redite ici */
+  .workspace-header #wsOfflinePill { display: none; }
+  .workspace-header {
+    padding-bottom: var(--space-2);
+    border-bottom: none;
+  }
+
+  .ws-summary-mobile {
+    display: block; padding: 0 var(--space-4) var(--space-3);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .ws-summary-line1 { font-family: var(--font-mono); font-size: var(--text-base); font-weight: 700; }
+  .ws-summary-line2 { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: 2px; }
+  .ws-summary-line3 { font-size: 12px; color: var(--color-text-faint); margin-top: 4px; }
+
+  .ws-actions-mobile {
+    display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .ws-actions-mobile .btn { flex: 1; min-height: 46px; }
+
+  /* ---------- Hiérarchie visuelle allégée : moins de bordures/ombres/décoration ---------- */
+  body.blueprint-bg { background-image: none; } /* retire la grille de fond sur tous les écrans mobiles */
+  .next-action-card { border: 1px solid var(--color-border); box-shadow: none; }
+  .status-banner { border-radius: var(--radius-sm); box-shadow: none; }
+  .checklist-item-wrap, .nc-summary-item, .hero-ring, .next-action-card, .closure-card, .stat-card, .ring-card {
+    border-radius: var(--radius-sm);
+  }
+}
