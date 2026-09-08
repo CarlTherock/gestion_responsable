@@ -546,6 +546,7 @@ function updateProgressPill() {
   }
   renderApercu();
   updateMobileSummary();
+  renderMobileResumeBody();
 }
 
 function computeNcStats() {
@@ -1111,23 +1112,64 @@ $('#btnSaveFolder').addEventListener('click', async () => {
 // Bouton Enregistrer version mobile : déclenche exactement la même action
 // (même confirmation, même écriture sur disque) que le bouton du haut.
 $('#btnSaveFolderMobile').addEventListener('click', () => $('#btnSaveFolder').click());
-$('#btnResumeChecklistMobile').addEventListener('click', startInterventionMode);
+$('#btnStartInterventionHeader').addEventListener('click', startInterventionMode);
 
 function updateMobileSummary() {
   const el = $('#wsSummaryMobile');
   if (!el || !state.draft) return;
   const d = state.draft;
-  const { done, total, pct } = computeProgress();
-  const titre = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement';
-  const localisation = d.champs.tag || state.numero;
-  const statutDossier = d.derniereSauvegardeOfficielle ? 'Sauvegardé' : 'Brouillon local';
+  const { done, total } = computeProgress();
+  const titre = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
+    || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
+
+  let statutLabel = 'Brouillon';
+  if (done > 0) statutLabel = 'En cours';
+  if (total > 0 && done === total) statutLabel = 'Terminé';
+
+  const priorite = d.champs.priorite || 'normale';
+  const prioBadge = (priorite === 'haute' || priorite === 'urgente')
+    ? `<span class="mobile-priority-tag priorite-${priorite}">${escapeHtml(PRIORITE_LABEL[priorite] || priorite)}</span>` : '';
+
   const docTotal = Object.values(d.files || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+
+  const saveText = !navigator.onLine
+    ? 'Hors ligne'
+    : (d.modifieLe ? `Enregistré à ${new Date(d.modifieLe).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}` : 'Non enregistré');
+
   el.innerHTML = `
-    <div class="ws-summary-line1">${escapeHtml(state.numero)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}</div>
-    <div class="ws-summary-line2">${escapeHtml(titre)} · ${escapeHtml(localisation)}</div>
-    <div class="ws-summary-line3">${statutDossier} · ${Math.round(pct)}% complété (${done}/${total}) · ${docTotal} document${docTotal > 1 ? 's' : ''}</div>
+    <div class="ws-summary-line1">
+      <span class="ws-summary-id">${escapeHtml(state.numero || '')}${d.champs.bt ? ' · ' + escapeHtml(d.champs.bt) : ''}</span>
+      <span class="ws-summary-status">${statutLabel}</span>
+      ${prioBadge}
+    </div>
+    <div class="ws-summary-line2">${escapeHtml(titre)}</div>
+    <div class="ws-summary-line3">${done}/${total} tâches · ${docTotal} document${docTotal > 1 ? 's' : ''} · ${saveText}</div>
+  `;
+}
+
+function renderMobileResumeBody() {
+  const el = $('#mobileResumeBody');
+  if (!el || !state.draft) return;
+  const list = buildInterventionTaskList();
+  const idx = list.findIndex((t) => state.draft.casesCochees[t.name] !== true);
+  const nc = computeNcStats();
+  const vpo = computeVpoStats();
+
+  const nextTaskHtml = idx !== -1 ? `
+    <div class="mobile-next-task">
+      <div class="mnt-kicker">Prochaine tâche</div>
+      <div class="mnt-title">${escapeHtml(list[idx].label)}</div>
+      <div class="mnt-meta">${escapeHtml(GROUP_LABELS[list[idx].group] || list[idx].group)} · Étape ${idx + 1} sur ${list.length}</div>
+    </div>` : `<div class="mobile-next-task mnt-done">Checklist complétée.</div>`;
+
+  el.innerHTML = `
+    ${nextTaskHtml}
+    <div class="mobile-control-lines">
+      <div>VPO ouvertes : ${vpo.pending}</div>
+      <div>Non-conformités : ${nc.total}</div>
+    </div>
   `;
 }
 

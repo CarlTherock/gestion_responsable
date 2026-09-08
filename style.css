@@ -545,7 +545,7 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
     gap: var(--space-2);
   }
   .workspace-header .topbar-spacer { flex-basis: 100%; height: 0; }
-  .workspace-header > div:first-child { flex-basis: 100%; }
+  .workspace-header > div:first-child { display: none; }
   .tag-pill { font-size: 10px; padding: 3px 8px; }
   #btnSaveFolder { flex: 1 1 auto; justify-content: center; }
   .qr-thumb-btn svg { width: 30px; height: 30px; }
@@ -878,11 +878,12 @@ select.ncextra-gravite {
   .mobile-save-status.offline { color: #eab308; background: rgba(234,179,8,0.12); }
 }
 
-/* ---------- Résumé mobile consolidé (remplace la rangée de pills + QR direct) ---------- */
+/* ---------- Résumé mobile consolidé — SEULE source de vérité de l'identité du dossier sur mobile ---------- */
 .ws-summary-mobile { display: none; }
 .ws-actions-mobile { display: none; }
+.mobile-resume-body { display: none; }
 @media (max-width: 680px) {
-  /* Masque l'ancienne rangée dense de pills + QR direct + gros bouton Enregistrer du haut */
+  /* Source #1 (en-tête PC) : masquée entièrement, pas seulement réduite */
   .workspace-header #wsCreated,
   .workspace-header #wsProgressPill,
   .workspace-header #wsFolderPill,
@@ -891,19 +892,38 @@ select.ncextra-gravite {
   .workspace-header #btnSaveFolder {
     display: none;
   }
-  /* Le pill hors ligne reste géré par mobile-save-status ; on évite la redite ici */
   .workspace-header #wsOfflinePill { display: none; }
   .workspace-header {
-    padding-bottom: var(--space-2);
+    padding-bottom: 0;
     border-bottom: none;
+    min-height: 0;
   }
 
+  /* Source #3 (cockpit de l'Aperçu PC) : masquée entièrement sur mobile, remplacée par mobile-resume-body */
+  .tab-panel[data-panel="apercu"] > .panel-title,
+  .tab-panel[data-panel="apercu"] > .panel-desc,
+  .tab-panel[data-panel="apercu"] > #apercuContent {
+    display: none;
+  }
+  .mobile-resume-body { display: block; }
+
+  /* Source #2 (résumé mobile consolidé) : seule source visible */
   .ws-summary-mobile {
-    display: block; padding: 0 var(--space-4) var(--space-3);
+    display: block; padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--color-divider);
   }
-  .ws-summary-line1 { font-family: var(--font-mono); font-size: var(--text-base); font-weight: 700; }
-  .ws-summary-line2 { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: 2px; }
+  .ws-summary-line1 { display: flex; align-items: center; gap: var(--space-2); font-family: var(--font-mono); font-size: var(--text-base); font-weight: 700; }
+  .ws-summary-status {
+    margin-left: auto; font-family: var(--font-body); font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.03em; color: var(--color-text-muted); background: var(--color-surface-offset);
+    padding: 2px 8px; border-radius: var(--radius-sm);
+  }
+  .mobile-priority-tag {
+    font-family: var(--font-body); font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius-sm);
+  }
+  .mobile-priority-tag.priorite-haute { background: rgba(234,179,8,0.18); color: #eab308; }
+  .mobile-priority-tag.priorite-urgente { background: rgba(214,69,69,0.18); color: #e05a5a; }
+  .ws-summary-line2 { font-size: var(--text-sm); color: var(--color-text); margin-top: 3px; font-weight: 600; }
   .ws-summary-line3 { font-size: 12px; color: var(--color-text-faint); margin-top: 4px; }
 
   .ws-actions-mobile {
@@ -919,4 +939,19 @@ select.ncextra-gravite {
   .checklist-item-wrap, .nc-summary-item, .hero-ring, .next-action-card, .closure-card, .stat-card, .ring-card {
     border-radius: var(--radius-sm);
   }
+}
+
+/* ---------- Prochaine tâche (info non cliquable) + lignes de contrôle VPO/NC ---------- */
+@media (max-width: 680px) {
+  .mobile-resume-body { padding: var(--space-4); }
+  .mobile-next-task {
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    padding: var(--space-4); margin-bottom: var(--space-4);
+  }
+  .mnt-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); font-weight: 700; }
+  .mnt-title { font-size: var(--text-base); font-weight: 700; margin-top: 4px; }
+  .mnt-meta { font-size: 12px; color: var(--color-text-faint); margin-top: 4px; }
+  .mobile-next-task.mnt-done { color: var(--color-success); text-align: center; font-weight: 600; }
+
+  .mobile-control-lines { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
 }
