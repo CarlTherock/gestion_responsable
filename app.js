@@ -139,11 +139,24 @@ const ICONS = {
   check: '<polyline points="20 6 9 17 4 12"/>',
   x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   moreHorizontal: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  arrowDown: '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>',
+  share2: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
+  qr: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="14" y1="14" x2="14" y2="17"/><line x1="14" y1="20" x2="14" y2="20.01"/><line x1="17" y1="14" x2="20" y2="14"/><line x1="20" y1="17" x2="17" y2="17"/><line x1="17" y1="20" x2="20" y2="20"/>',
+  printer: '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
 };
 $$('.tab-icon[data-icon], .icon-inline[data-icon]').forEach((span) => {
   const inner = ICONS[span.dataset.icon];
   if (inner) span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 });
+
+// Génère une icône SVG à la volée pour du contenu créé dynamiquement (menus, listes).
+function iconSvg(name, size = 15) {
+  const inner = ICONS[name];
+  if (!inner) return '';
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}" style="vertical-align:-3px;margin-right:6px;flex-shrink:0;">${inner}</svg>`;
+}
 
 // ---------- Splash screen (3 secondes, avec clic de secours) ----------
 function hideSplash() {
@@ -202,12 +215,24 @@ function toast(msg, ms = 2600) {
 // ---------- Fenêtre modale générique ----------
 // ---------- Raccourcis clavier simples (PC) ----------
 document.addEventListener('keydown', (e) => {
+  const isTyping = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
   const modalOpen = !$('#modalOverlay').classList.contains('hidden');
+  const searchOpen = !$('#searchOverlay').classList.contains('hidden');
+  const panelOpen = $('#taskPanel') && !$('#taskPanel').classList.contains('hidden');
+
+  if (e.key === 'Escape') {
+    if (searchOpen) { closeSearch(); return; }
+    if (modalOpen) { $('#modalCancel')?.click(); return; }
+    if (panelOpen) { closeTaskPanel(); return; }
+    return;
+  }
+  if (isTyping) return; // les raccourcis suivants sont désactivés pendant la saisie de texte
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault();
     if (state.draft) $('#btnSaveFolder')?.click();
-  } else if (e.key === 'Escape' && modalOpen) {
-    $('#modalCancel')?.click();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openSearch();
   }
 });
 
@@ -507,17 +532,31 @@ $('#topbarMenuBtn').addEventListener('click', async () => {
 // Recalcule toujours à la demande — jamais de donnée figée d'un rendu précédent.
 async function showClosureCheckModal() {
   if (!state.draft) return;
-  const closure = computeClosureVerdict();
-  const nextAction = computeNextAction();
-  const listHtml = closure.ready
-    ? `<p style="color:var(--color-success);">Toutes les conditions sont remplies.</p>`
-    : `<ul style="padding-left: 20px; display:flex; flex-direction:column; gap: 6px;">${(closure.problems || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`;
-  const confirmed = await showModal({
-    title: closure.ready ? 'Dossier prêt' : 'Éléments à corriger',
-    bodyHtml: listHtml,
-    confirmLabel: closure.ready ? 'Fermer' : 'Ouvrir le premier élément à corriger',
-  });
-  if (confirmed && !closure.ready) selectTab(nextAction.tab);
+  const items = computeClosureItems();
+  if (!items.length) {
+    await showModal({
+      title: 'Dossier prêt',
+      bodyHtml: `<p style="color:var(--color-success);">Toutes les conditions sont remplies pour la fermeture.</p>`,
+      confirmLabel: 'Fermer',
+    });
+    return;
+  }
+  const bodyHtml = `
+    <div style="display:flex;flex-direction:column;gap:var(--space-3);">
+      ${items.map((it, i) => `
+        <div style="border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:var(--space-3);">
+          <div style="font-size:var(--text-sm);"><strong>${i + 1}.</strong> ${escapeHtml(it.label)} — ${escapeHtml(it.detail)}</div>
+          <button type="button" class="btn btn-outline" id="closureItem${i}" style="margin-top:var(--space-2);width:100%;">${escapeHtml(it.buttonLabel)}</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  const choiceIds = items.map((_, i) => `closureItem${i}`);
+  const choice = await showChoiceModal(`Contrôle de complétude : ${items.length} élément${items.length > 1 ? 's' : ''} à corriger`, bodyHtml, choiceIds);
+  if (choice) {
+    const idx = parseInt(choice.replace('closureItem', ''), 10);
+    selectTab(items[idx].tab);
+  }
 }
 $('#btnClosureCheckPc').addEventListener('click', showClosureCheckModal);
 
@@ -546,11 +585,11 @@ $('#btnMoreMenuPc').addEventListener('click', async () => {
   if (!state.draft) return;
   const choice = await showChoiceModal('Options du dossier', `
     <div style="display:flex;flex-direction:column;gap:var(--space-2);">
-      <button type="button" class="btn btn-outline" id="menuQr" style="width:100%;justify-content:flex-start;">QR du dossier</button>
-      <button type="button" class="btn btn-outline" id="menuExporter" style="width:100%;justify-content:flex-start;">Exporter le rapport de chantier</button>
-      <button type="button" class="btn btn-outline" id="menuPartager" style="width:100%;justify-content:flex-start;">Partager le dossier</button>
-      <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">Imprimer</button>
-      <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">Historique / activité récente</button>
+      <button type="button" class="btn btn-outline" id="menuQr" style="width:100%;justify-content:flex-start;">${iconSvg('qr')}QR du dossier</button>
+      <button type="button" class="btn btn-outline" id="menuExporter" style="width:100%;justify-content:flex-start;">${iconSvg('arrowDown')}Exporter le rapport de chantier</button>
+      <button type="button" class="btn btn-outline" id="menuPartager" style="width:100%;justify-content:flex-start;">${iconSvg('share2')}Partager le dossier</button>
+      <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">${iconSvg('printer')}Imprimer</button>
+      <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Historique / activité récente</button>
     </div>
   `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique']);
   if (choice === 'menuQr') showQrModal();
@@ -754,6 +793,41 @@ function computeClosureVerdict() {
     return { ready: true, text };
   }
   return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.`, problems };
+}
+
+// Version détaillée, élément par élément, pour la fenêtre de vérification avant
+// fermeture : chaque ligne pointe directement vers la tâche, VPO ou NC concernée.
+function computeClosureItems() {
+  if (!state.draft) return [];
+  const items = [];
+  const groups = CHECKLISTS[state.draft.mode] || {};
+  Object.entries(groups).forEach(([group, tasks]) => {
+    tasks.forEach(([name, label]) => {
+      const val = state.draft.casesCochees[name];
+      if (val !== true && val !== 'na' && val !== 'nc') {
+        items.push({ label, detail: 'tâche incomplète', tab: group, buttonLabel: 'Ouvrir la tâche' });
+      } else if (val === true && state.draft.casesPreuveRequise[name] && !(state.draft.casesFichiers[name] || []).length) {
+        items.push({ label, detail: 'preuve manquante', tab: group, buttonLabel: 'Ouvrir la tâche' });
+      } else if (val === 'nc' && !(state.draft.casesNcDetails[name]?.resolu)) {
+        const numero = state.draft.casesNcDetails[name]?.numero || '';
+        items.push({ label: `${numero ? numero + ' — ' : ''}${label}`, detail: 'non-conformité ouverte', tab: 'non-conformite', buttonLabel: 'Ouvrir la non-conformité' });
+      }
+    });
+  });
+  (state.draft.vpoItems || []).forEach((it) => {
+    if (!it.texte || !it.texte.trim()) return;
+    if (it.statut === 'nc' && !it.resolu) {
+      items.push({ label: `${it.numero ? it.numero + ' — ' : ''}${it.texte}`, detail: 'non-conformité ouverte', tab: 'vpo', buttonLabel: 'Ouvrir la VPO' });
+    } else if (it.obligatoire && !it.statut) {
+      items.push({ label: it.texte, detail: 'validation requise', tab: 'vpo', buttonLabel: 'Ouvrir la VPO' });
+    }
+  });
+  (state.draft.ncExtra || []).forEach((it) => {
+    if (it.texte && it.texte.trim() && !it.resolu) {
+      items.push({ label: `${it.numero ? it.numero + ' — ' : ''}${it.texte}`, detail: 'non-conformité ouverte', tab: 'non-conformite', buttonLabel: 'Ouvrir la non-conformité' });
+    }
+  });
+  return items;
 }
 
 const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urgente: 'Urgente' };
@@ -2077,7 +2151,7 @@ function renderChecklist(group) {
       <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}${preuveManquante ? ' preuve-manquante' : ''}" data-item-wrap="${name}">
         <div class="checklist-item-row">
           <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
-          <span class="ci-label" data-name="${name}">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">📎!</span>' : ''}${ncNumero ? ` <span class="nc-xref">${ncNumero}</span>` : ''}</span>
+          <span class="ci-label" data-name="${name}" data-task-detail="${name}" title="Voir les détails de la tâche">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">📎!</span>' : ''}${ncNumero ? ` <span class="nc-xref">${ncNumero}</span>` : ''}</span>
           <div class="ci-actions">
             ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? '📎 ' + files.length : ''}</span>` : ''}
             <button type="button" class="btn-note${note ? ' active' : ''}" data-note="${name}" title="Ajouter un commentaire rapide">🗨${note ? '' : ''}</button>
@@ -2165,6 +2239,13 @@ function renderChecklist(group) {
       const changed = await taskQuickNote(name);
       if (!changed) return;
       renderChecklist(group);
+    });
+  });
+
+  $$('[data-task-detail]', container).forEach((label) => {
+    label.addEventListener('click', () => {
+      if (window.innerWidth <= 680) return; // le panneau latéral reste réservé au PC
+      openTaskPanel(group, label.dataset.taskDetail);
     });
   });
 
@@ -3084,3 +3165,206 @@ $('#btnIvAddNoteAfterPhoto').addEventListener('click', async () => {
   const changed = await taskQuickNote(task.name);
   if (changed) renderInterventionStep();
 });
+
+// ==================== RECHERCHE INTERNE (PC — Ctrl/Cmd+K) ====================
+// Construit un index à partir des données déjà existantes — aucune structure
+// parallèle : tâches, VPO, NC, documents et notes proviennent tous de state.draft.
+function buildSearchIndex() {
+  if (!state.draft) return [];
+  const d = state.draft;
+  const groups = CHECKLISTS[d.mode] || {};
+  const index = [];
+
+  Object.entries(groups).forEach(([group, tasks]) => {
+    tasks.forEach(([name, label]) => {
+      index.push({ type: 'Tâche', text: label, sub: GROUP_LABELS[group] || group, tab: group });
+      const note = d.casesNotes[name];
+      if (note) index.push({ type: 'Note', text: note, sub: `Note sur : ${label}`, tab: group });
+      if (d.casesCochees[name] === 'nc') {
+        const det = d.casesNcDetails[name] || {};
+        index.push({ type: det.numero || 'NC', text: label, sub: 'Non-conformité (tâche)', tab: 'non-conformite' });
+      }
+      (d.casesFichiers[name] || []).forEach((f) => {
+        index.push({ type: 'Document', text: f.name, sub: `Lié à : ${label}`, tab: 'documents' });
+      });
+    });
+  });
+
+  (d.vpoItems || []).forEach((it) => {
+    if (!it.texte || !it.texte.trim()) return;
+    index.push({ type: it.numero || 'VPO', text: it.texte, sub: it.statut === 'nc' ? 'VPO — non-conformité' : 'VPO', tab: 'vpo' });
+    if (it.raison) index.push({ type: 'Note', text: it.raison, sub: `Raison — ${it.numero || 'VPO'}`, tab: 'vpo' });
+  });
+
+  (d.ncExtra || []).forEach((it) => {
+    if (!it.texte || !it.texte.trim()) return;
+    index.push({ type: it.numero || 'NC', text: it.texte, sub: 'Non-conformité', tab: 'non-conformite' });
+  });
+
+  (d.files['mise-a-jour'] || []).forEach((f) => index.push({ type: 'Document', text: f.name, sub: 'Photo de mise à jour', tab: 'mise-a-jour' }));
+  Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
+    files.forEach((f) => index.push({ type: 'Document', text: f.name, sub: `Photo — ${numero}`, tab: 'non-conformite' }));
+  });
+
+  if (d.champs.bt) index.push({ type: 'BT', text: d.champs.bt, sub: 'Identité du dossier', tab: 'identification' });
+  if (d.champs.tag) index.push({ type: 'Tag', text: d.champs.tag, sub: 'Identité du dossier', tab: 'identification' });
+  if (state.numero) index.push({ type: 'Localisation', text: state.numero, sub: 'Identité du dossier', tab: 'identification' });
+
+  return index;
+}
+
+function runSearch(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return buildSearchIndex()
+    .filter((item) => item.text.toLowerCase().includes(q) || (item.sub || '').toLowerCase().includes(q) || (item.type || '').toLowerCase().includes(q))
+    .slice(0, 30);
+}
+
+function renderSearchResults(results, query) {
+  const el = $('#searchResults');
+  if (!query.trim()) { el.innerHTML = ''; return; }
+  if (!results.length) { el.innerHTML = '<div class="search-empty">Aucun résultat.</div>'; return; }
+  el.innerHTML = results.map((r, i) => `
+    <button type="button" class="search-result-row" data-search-idx="${i}">
+      <span class="sr-type">${escapeHtml(r.type)}</span>
+      <span class="sr-text">${escapeHtml(r.text)}</span>
+      <span class="sr-sub">${escapeHtml(r.sub || '')}</span>
+    </button>`).join('');
+  $$('.search-result-row', el).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const r = results[parseInt(btn.dataset.searchIdx, 10)];
+      closeSearch();
+      selectTab(r.tab);
+    });
+  });
+}
+
+function openSearch() {
+  if (!state.draft) { toast('Ouvrez d\u2019abord un dossier.'); return; }
+  $('#searchOverlay').classList.remove('hidden');
+  $('#searchInput').value = '';
+  $('#searchResults').innerHTML = '';
+  $('#searchInput').focus();
+}
+function closeSearch() {
+  $('#searchOverlay').classList.add('hidden');
+}
+$('#searchInput').addEventListener('input', () => {
+  const q = $('#searchInput').value;
+  renderSearchResults(runSearch(q), q);
+});
+$('#searchOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'searchOverlay') closeSearch();
+});
+
+// ==================== PANNEAU LATÉRAL DE TÂCHE (PC seulement) ====================
+// Réutilise entièrement les fonctions et données de la checklist existante —
+// aucun deuxième système de tâches ou de preuves.
+let taskPanelCurrent = null; // { group, name }
+
+function openTaskPanel(group, name) {
+  if (!state.draft) return;
+  taskPanelCurrent = { group, name };
+  $('#taskPanel').classList.remove('hidden');
+  renderTaskPanelBody();
+}
+function closeTaskPanel() {
+  $('#taskPanel').classList.add('hidden');
+  taskPanelCurrent = null;
+}
+$('#btnCloseTaskPanel').addEventListener('click', closeTaskPanel);
+
+function renderTaskPanelBody() {
+  if (!taskPanelCurrent || !state.draft) return;
+  const { group, name } = taskPanelCurrent;
+  const d = state.draft;
+  const groups = CHECKLISTS[d.mode] || {};
+  const items = groups[group] || [];
+  const found = items.find(([n]) => n === name);
+  const label = found ? found[1] : name;
+
+  $('#tpSection').textContent = GROUP_LABELS[group] || group;
+  $('#tpTitle').textContent = label;
+
+  const val = d.casesCochees[name];
+  const statutLabel = val === true ? 'Fait' : val === 'na' ? 'Non applicable' : val === 'nc' ? 'Non-conformité' : 'À faire';
+  const statutColor = val === true ? 'var(--color-success)' : val === 'nc' ? 'var(--color-error)' : val === 'na' ? 'var(--color-text-muted)' : 'var(--color-warning)';
+
+  const preuveRequise = !!d.casesPreuveRequise[name];
+  const files = d.casesFichiers[name] || [];
+  const note = d.casesNotes[name] || '';
+  const ncDetail = val === 'nc' ? (d.casesNcDetails[name] || {}) : null;
+
+  const filesHtml = files.length
+    ? files.map((f) => `<div class="tp-history-item">${escapeHtml(f.name)} — ${fmtSize(f.size)}</div>`).join('')
+    : '<div class="tp-empty">Aucun document lié.</div>';
+
+  // Historique — approximatif, basé sur le journal d'activité existant (aucune
+  // structure de suivi par tâche n'existe séparément).
+  const historyEntries = (d.journal || []).filter((j) => j.text && j.text.includes(label)).slice(-6).reverse();
+  const historyHtml = historyEntries.length
+    ? historyEntries.map((j) => `<div class="tp-history-item">${new Date(j.at).toLocaleString('fr-CA')} — ${escapeHtml(j.text)}</div>`).join('')
+    : '<div class="tp-empty">Aucun évènement journalisé pour cette tâche.</div>';
+
+  $('#taskPanelBody').innerHTML = `
+    <div>
+      <span class="tp-status-badge" style="color:${statutColor};border-color:${statutColor};">${statutLabel}</span>
+      ${preuveRequise ? '<span class="tp-status-badge" style="margin-left:6px;">Preuve requise</span>' : ''}
+    </div>
+
+    <div class="tp-actions-row">
+      <button type="button" class="btn btn-primary" id="tpBtnDone">${val === true ? 'Annuler « Fait »' : 'Marquer fait'}</button>
+      <button type="button" class="btn btn-outline" id="tpBtnNote">${note ? 'Modifier la note' : 'Ajouter une note'}</button>
+      <button type="button" class="btn btn-outline" id="tpBtnDoc">Ajouter un document</button>
+      <input type="file" id="tpFileInput" multiple class="hidden">
+    </div>
+
+    ${ncDetail ? `
+    <div>
+      <div class="tp-block-title">Non-conformité${ncDetail.numero ? ' — ' + escapeHtml(ncDetail.numero) : ''}</div>
+      <div class="tp-note-box">
+        ${ncDetail.zone ? `Zone : ${escapeHtml(ncDetail.zone)}<br>` : ''}
+        ${d.casesGravites[name] ? `Gravité : ${escapeHtml(d.casesGravites[name])}<br>` : ''}
+        ${d.casesRaisons[name] ? `Raison : ${escapeHtml(d.casesRaisons[name])}<br>` : ''}
+        ${ncDetail.actionCorrective ? `Action corrective : ${escapeHtml(ncDetail.actionCorrective)}<br>` : ''}
+        ${ncDetail.responsable ? `Responsable : ${escapeHtml(ncDetail.responsable)}` : ''}
+      </div>
+    </div>` : ''}
+
+    <div>
+      <div class="tp-block-title">Note</div>
+      ${note ? `<div class="tp-note-box">${escapeHtml(note)}</div>` : '<div class="tp-empty">Aucune note.</div>'}
+    </div>
+
+    <div>
+      <div class="tp-block-title">Documents liés (${files.length})</div>
+      ${filesHtml}
+    </div>
+
+    <div>
+      <div class="tp-block-title">Historique</div>
+      ${historyHtml}
+    </div>
+  `;
+
+  $('#tpBtnDone').addEventListener('click', () => {
+    taskSetDone(name, label, val !== true);
+    renderChecklist(group);
+    refreshChecklistProgressFor(group);
+    updateProgressPill();
+    renderTaskPanelBody();
+  });
+  $('#tpBtnNote').addEventListener('click', async () => {
+    const changed = await taskQuickNote(name);
+    if (changed) { renderChecklist(group); renderTaskPanelBody(); }
+  });
+  $('#tpBtnDoc').addEventListener('click', () => $('#tpFileInput').click());
+  $('#tpFileInput').addEventListener('change', async (e) => {
+    if (!e.target.files || !e.target.files.length) return;
+    await attachFilesToTask(group, name, e.target.files);
+    e.target.value = '';
+    renderChecklist(group);
+    renderTaskPanelBody();
+  });
+}
