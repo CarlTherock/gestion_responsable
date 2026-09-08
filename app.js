@@ -1207,9 +1207,16 @@ function renderApercu() {
   if (shareBtn) shareBtn.addEventListener('click', shareDossierLink);
 }
 
+// Retire les caractères interdits dans un nom de fichier sur Windows/Mac/Linux
+// (/ \ : * ? " < > |), qui peuvent autrement casser le téléchargement ou faire
+// que le fichier soit enregistré sans la bonne extension .html.
+function sanitizeFilename(str) {
+  return String(str || '').replace(/[/\\:*?"<>|]/g, '-').trim();
+}
+
 function exportDashboardFile() {
   if (!state.draft) return;
-  const filename = `Dashboard - ${state.numero || 'dossier'}${state.draft.champs.bt ? ' (' + state.draft.champs.bt + ')' : ''}.html`;
+  const filename = `Dashboard - ${sanitizeFilename(state.numero || 'dossier')}${state.draft.champs.bt ? ' (' + sanitizeFilename(state.draft.champs.bt) + ')' : ''}.html`;
   const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1597,9 +1604,10 @@ function updateApprobationBadge() {
 }
 
 function folderName(date) {
-  const bt = (state.draft && state.draft.champs.bt) || '';
+  const bt = sanitizeFilename((state.draft && state.draft.champs.bt) || '');
+  const numero = sanitizeFilename(state.numero || '');
   const ds = (date || new Date()).toISOString().slice(0, 10);
-  return bt ? `${state.numero} (${bt}) - ${ds}` : `${state.numero} - ${ds}`;
+  return bt ? `${numero} (${bt}) - ${ds}` : `${numero} - ${ds}`;
 }
 
 async function ensureLocalDossierFolder(date) {
