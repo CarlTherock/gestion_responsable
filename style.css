@@ -748,11 +748,20 @@ input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:foc
 /* ---------- Impression ---------- */
 @media print {
   .topbar, .tabs-nav, .workspace-header, .toast, .legal-footer, .category-nav,
-  .btn, button, .dropzone-mini, .incomplete-filter-row, .modal-overlay { display: none !important; }
+  .btn, button, .dropzone-mini, .incomplete-filter-row, .modal-overlay,
+  .ws-summary-mobile, .ws-actions-mobile, .mobile-resume-body,
+  .search-overlay, .task-panel, .checklist-context-bar { display: none !important; }
   .tab-panel.hidden { display: block !important; }
+  /* Force le contenu de l'Aperçu à s'afficher même si une media query
+     largeur-écran s'évalue de façon inattendue pendant l'impression
+     (comportement connu de certains navigateurs). */
+  .tab-panel[data-panel="apercu"] > .panel-title,
+  .tab-panel[data-panel="apercu"] > .panel-desc,
+  .tab-panel[data-panel="apercu"] > #apercuContent { display: block !important; }
   body { background: #fff !important; color: #000 !important; padding: 0 !important; }
-  .cockpit-header, .status-banner, .next-action-card, .closure-card, .stat-card, .ring-card,
-  .checklist-item-wrap, .nc-summary-item, .timeline-item, .hero-ring {
+  .status-banner, .next-action-card, .closure-card, .stat-card, .ring-card,
+  .checklist-item-wrap, .nc-summary-item, .timeline-item, .hero-ring,
+  .vpo-nc-summary-item, .handoff-grid > div, .closure-summary-grid > div {
     background: #fff !important; border: 1px solid #ccc !important; color: #000 !important; box-shadow: none !important;
   }
 }
