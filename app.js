@@ -3452,10 +3452,12 @@ async function importDossierFromPickedFolder(expectedNumero) {
       toast(`Attention : ce dossier correspond à ${draft.localisation}, pas à ${expectedNumero}.`, 5500);
     }
 
-    // Toujours vider le nom de l'employé à l'import, même s'il était resté
-    // dans le fichier importé — la traçabilité exige de le retaper à chaque
-    // fois, peu importe si le dossier est nouveau ou repris.
+    // Toujours vider le nom ET le rôle de l'employé à l'import, même s'ils
+    // étaient restés dans le fichier importé — la traçabilité exige de les
+    // retaper/choisir à chaque fois, peu importe si le dossier est nouveau
+    // ou repris.
     draft.champs.employeeName = '';
+    draft.champs.employeeRole = '';
 
     // Remplit les champs visibles de l'écran d'identification
     $('#numLoc').value = draft.localisation;
