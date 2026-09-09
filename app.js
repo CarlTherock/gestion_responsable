@@ -2099,15 +2099,6 @@ function categorizeDocument(group, name) {
 async function ensureLocalDossierFolder(date) {
   if (!state.rootDirHandle || !state.numero) return;
   state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(folderName(date), { create: true });
-  await state.dossierDirHandle.getDirectoryHandle('00_Dashboard', { create: true });
-  await state.dossierDirHandle.getDirectoryHandle('01_Dossier_actif', { create: true });
-  const d02 = await state.dossierDirHandle.getDirectoryHandle('02_Documents', { create: true });
-  for (const sub of ['Plans', 'Preuves', 'Autres']) await d02.getDirectoryHandle(sub, { create: true });
-  const d03 = await state.dossierDirHandle.getDirectoryHandle('03_Photos', { create: true });
-  for (const sub of ['Taches', 'VPO', 'NonConformites']) await d03.getDirectoryHandle(sub, { create: true });
-  await state.dossierDirHandle.getDirectoryHandle('04_NonConformites', { create: true });
-  await state.dossierDirHandle.getDirectoryHandle('05_Historique', { create: true });
-  await state.dossierDirHandle.getDirectoryHandle('06_Exports', { create: true });
   const pill = $('#wsFolderPill');
   if (pill) pill.textContent = `Lié : ${state.rootDirHandle.name}/${folderName(date)}`;
   await dbPutHandles(state.numero, state.rootDirHandle, state.dossierDirHandle);
@@ -2126,13 +2117,14 @@ $('#numLoc').addEventListener('blur', async () => {
 // Écrit tout le contenu du brouillon (suivi.json, resume.txt, documents par
 // tâche, photos de mise à jour) sur le disque. N'est appelé QUE lors de la
 // sauvegarde officielle (100 % des tâches cochées ou N/A + nom d'employé).
-// Fichier à la racine du dossier exporté : redirige vers le vrai Dashboard
-// dans 00_Dashboard/. Utilise un chemin relatif seulement (aucun chemin
-// Windows absolu), pour fonctionner peu importe où le dossier est déplacé,
-// copié sur OneDrive ou une clé USB. Une redirection automatique ET un lien
-// visible sont fournis, au cas où le navigateur bloquerait la redirection.
-function buildDashboardRedirectHtml() {
-  const cible = '00_Dashboard/Dashboard.html';
+// Fichier à la racine du dossier exporté : redirige vers le Dashboard de la
+// DERNIÈRE sauvegarde (chaque sauvegarde est maintenant un paquet complet et
+// autonome avec ses propres 00_Dashboard/01_Dossier_actif/02_Documents/
+// 03_Photos/04_NonConformites/06_Exports). Chemin relatif seulement (aucun
+// chemin Windows absolu), pour fonctionner peu importe où le dossier est
+// déplacé, copié sur OneDrive ou une clé USB.
+function buildDashboardRedirectHtml(cibleSauvegarde) {
+  const cible = `${cibleSauvegarde}/00_Dashboard/Dashboard.html`;
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta http-equiv="refresh" content="0; url=${cible}">
@@ -2169,10 +2161,9 @@ function slugForFolder(text, maxLen) {
 
 // Écrit les documents/photos/non-conformités d'un brouillon dans un dossier
 // cible donné, avec la même structure (02_Documents style, Photos, NC).
-// Réutilisée à la fois pour la racine du dossier ET pour chaque sauvegarde
-// dans 05_Historique — pour que chaque S-XXX soit un instantané COMPLET et
-// autonome, avec ses propres fichiers tels qu'ils étaient à ce moment, plutôt
-// que de dépendre des dossiers communs à la racine.
+// Appelée pour chaque sauvegarde S-XXX, qui devient ainsi un paquet complet
+// et autonome à la racine du dossier — avec ses propres fichiers tels qu'ils
+// étaient à ce moment, sans dépendre d'aucun dossier commun partagé.
 async function writeDocumentsPhotosNc(destHandle, draft) {
   const groupOfTask = {};
   Object.entries(CHECKLISTS[draft.mode] || {}).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
@@ -2219,51 +2210,44 @@ async function writeEverythingToDisk(date) {
   if (!state.dossierDirHandle || !state.draft) return;
   const jsonContent = JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2);
   const resumeContent = buildResumeText();
+  // Nom du sous-dossier de cette sauvegarde (S-001 - date - motif), créé
+  // DIRECTEMENT à la racine du dossier — plus de dossiers communs partagés.
+  const dernier = state.draft.approbations[state.draft.approbations.length - 1];
+  if (!dernier) return; // rien à sauvegarder tant qu'aucune sauvegarde officielle n'a été faite
+  const dt = new Date(dernier.at);
+  const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
+  const motifSlug = slugForFolder((dernier.resume && dernier.resume[0]) || 'Sauvegarde');
+  const nomSauvegarde = `${dernier.id} - ${dateSlug} - ${motifSlug}`;
+  const dSave = await state.dossierDirHandle.getDirectoryHandle(nomSauvegarde, { create: true });
+
   const dashboardContent = buildDashboardHtml({ docPrefix: '../', estInstantaneHistorique: false });
 
-  // 01_Dossier_actif : les données brutes du dossier.
-  const d01 = await state.dossierDirHandle.getDirectoryHandle('01_Dossier_actif', { create: true });
+  // 01_Dossier_actif : les données brutes du dossier, propres à cette sauvegarde.
+  const d01 = await dSave.getDirectoryHandle('01_Dossier_actif', { create: true });
   await writeTextFile(d01, 'suivi.json', jsonContent);
   await writeTextFile(d01, 'resume.txt', resumeContent);
 
-  // 00_Dashboard + racine : point d'entrée principal, en double pour que
-  // l'ouverture reste fiable peu importe où l'utilisateur clique en premier.
+  // 00_Dashboard : point d'entrée de CETTE sauvegarde.
   try {
-    const d00 = await state.dossierDirHandle.getDirectoryHandle('00_Dashboard', { create: true });
+    const d00 = await dSave.getDirectoryHandle('00_Dashboard', { create: true });
     await writeTextFile(d00, 'Dashboard.html', dashboardContent);
-    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml());
   } catch (err) { /* best effort */ }
 
-  // 06_Exports : copie du rapport de chantier, prête à partager.
+  // 06_Exports : copie du rapport de chantier de cette sauvegarde, prête à partager.
   try {
-    const d06 = await state.dossierDirHandle.getDirectoryHandle('06_Exports', { create: true });
+    const d06 = await dSave.getDirectoryHandle('06_Exports', { create: true });
     await writeTextFile(d06, 'Rapport_de_chantier.html', dashboardContent);
   } catch (err) { /* best effort */ }
 
-  // 02_Documents / 03_Photos / 04_NonConformites à la racine : reflètent
-  // toujours l'état ACTUEL (pratique pour parcourir sans ouvrir une
-  // sauvegarde précise).
-  await writeDocumentsPhotosNc(state.dossierDirHandle, state.draft);
+  // 02_Documents / 03_Photos / 04_NonConformites : copie complète telle
+  // qu'elle était à ce moment précis — chaque sauvegarde est autonome.
+  await writeDocumentsPhotosNc(dSave, state.draft);
+  await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n'));
 
-  // 05_Historique : un dossier COMPLET et autonome par sauvegarde officielle
-  // — pas seulement le texte, mais une vraie copie des documents/photos/NC
-  // tels qu'ils étaient à ce moment précis, pour pouvoir ouvrir S-001 comme
-  // si S-002 n'avait jamais existé.
+  // OUVRIR_DASHBOARD.html à la racine : pointe toujours vers la sauvegarde
+  // la PLUS RÉCENTE.
   try {
-    const d05 = await state.dossierDirHandle.getDirectoryHandle('05_Historique', { create: true });
-    const dernier = state.draft.approbations[state.draft.approbations.length - 1];
-    if (dernier) {
-      const dt = new Date(dernier.at);
-      const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
-      const motifSlug = slugForFolder((dernier.resume && dernier.resume[0]) || 'Sauvegarde');
-      const nomSousDossier = `${dernier.id} - ${dateSlug} - ${motifSlug}`;
-      const dSave = await d05.getDirectoryHandle(nomSousDossier, { create: true });
-      await writeTextFile(dSave, 'suivi.json', jsonContent);
-      await writeTextFile(dSave, 'resume.txt', resumeContent);
-      await writeTextFile(dSave, 'Dashboard.html', buildDashboardHtml({ docPrefix: './', estInstantaneHistorique: true }));
-      await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n'));
-      await writeDocumentsPhotosNc(dSave, state.draft);
-    }
+    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml(nomSauvegarde));
   } catch (err) { /* best effort */ }
 }
 
@@ -2598,7 +2582,7 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" href="../02_Documents/"><span class="nav-label">Ouvrir les documents</span><span class="nav-path">02_Documents/</span></a>
       <a class="nav-btn" href="../03_Photos/"><span class="nav-label">Ouvrir les photos</span><span class="nav-path">03_Photos/</span></a>
       <a class="nav-btn" href="../04_NonConformites/"><span class="nav-label">Ouvrir les non-conformités</span><span class="nav-path">04_NonConformites/</span></a>
-      <a class="nav-btn" href="../05_Historique/"><span class="nav-label">Voir l\u2019historique</span><span class="nav-path">05_Historique/</span></a>
+      <a class="nav-btn" href="../../"><span class="nav-label">Voir l\u2019historique (autres sauvegardes)</span><span class="nav-path">.. (racine du dossier)</span></a>
       <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
       <a class="nav-btn" href="${appUrl}"><span class="nav-label">Créer une révision</span><span class="nav-path">Ouvre l\u2019application</span></a>
       <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre l\u2019application' : 'Disponible à 100 % seulement'}</span></a>
