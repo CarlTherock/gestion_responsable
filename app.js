@@ -1599,7 +1599,6 @@ function updateChecklistContextBar(visible) {
   const nc = computeNcStats();
   const vpo = computeVpoStats();
   const parts = [
-    [formatBt(d.champs.bt), state.numero].filter(Boolean).join(' · '),
     d.champs.desc,
     d.mode === 'installation' ? 'Installation' : 'Démantèlement',
   ].filter(Boolean);
