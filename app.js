@@ -1903,8 +1903,14 @@ function buildDashboardHtml() {
 <title>Rapport de chantier \u2014 ${titre}</title>
 <style>
   :root {
-    --bg: #ffffff; --surface: #f7f7f5; --surface-2: #eeeeeb; --border: #d8d8d2;
-    --text: #1c1c1a; --text-muted: #5c5c56; --accent: #b85a1f; --accent-soft: rgba(184,90,31,0.10);
+    --bg: #10151b; --surface: #171d25; --surface-2: #1e2630; --border: #333e4b;
+    --text: #e7ebef; --text-muted: #99a6b5; --accent: #ff8f3f; --accent-soft: rgba(255,143,63,0.14);
+  }
+  @media print {
+    :root {
+      --bg: #ffffff; --surface: #f7f7f5; --surface-2: #eeeeeb; --border: #d8d8d2;
+      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #b85a1f; --accent-soft: rgba(184,90,31,0.10);
+    }
   }
   * { box-sizing: border-box; }
   body {
@@ -1925,7 +1931,7 @@ function buildDashboardHtml() {
     display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #10151b; font-weight: 700;
     padding: 12px 22px; border-radius: 10px; text-decoration: none; font-size: 14px; box-shadow: 0 8px 24px rgba(255,122,26,0.25);
   }
-  .open-app-link:hover { background: #ff8f3f; }
+  .open-app-link:hover { background: #ffab6b; }
   .qr-card { background: #fff; border-radius: 12px; padding: 8px; display: flex; align-items: center; justify-content: center; }
   .qr-card svg { display: block; width: 78px; height: 78px; }
   .qr-wrap { display: flex; align-items: center; gap: 10px; }
