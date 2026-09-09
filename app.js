@@ -816,17 +816,36 @@ function buildLightSnapshot(d) {
   };
 }
 
+// Trouve le libellé humain d'une tâche à partir de son nom interne.
+function findTaskLabel(mode, name) {
+  const groups = CHECKLISTS[mode] || {};
+  for (const items of Object.values(groups)) {
+    const found = items.find(([n]) => n === name);
+    if (found) return found[1];
+  }
+  return name;
+}
+
 // Compare deux instantanés légers et retourne un résumé texte (+ / ~ / −).
-function diffSnapshots(avant, apres) {
+// Sans mode : résumé agrégé (compteurs), utilisé dans la liste de l'historique.
+// Avec mode : détail nommé (une ligne par tâche/VPO), utilisé pour la
+// comparaison à la demande avec la version actuelle.
+function diffSnapshots(avant, apres, mode) {
   if (!avant) return ['Première sauvegarde de cette révision.'];
   const lignes = [];
   const nouvellesTaches = apres.tachesCochees.filter((t) => !avant.tachesCochees.includes(t));
   const tachesRetirees = avant.tachesCochees.filter((t) => !apres.tachesCochees.includes(t));
-  if (nouvellesTaches.length) lignes.push(`+ ${nouvellesTaches.length} tâche(s) complétée(s)`);
-  if (tachesRetirees.length) lignes.push(`~ ${tachesRetirees.length} tâche(s) décochée(s)`);
+  if (mode) {
+    nouvellesTaches.forEach((t) => lignes.push(`+ Tâche complétée : ${findTaskLabel(mode, t)}`));
+    tachesRetirees.forEach((t) => lignes.push(`~ Tâche décochée : ${findTaskLabel(mode, t)}`));
+  } else {
+    if (nouvellesTaches.length) lignes.push(`+ ${nouvellesTaches.length} tâche(s) complétée(s)`);
+    if (tachesRetirees.length) lignes.push(`~ ${tachesRetirees.length} tâche(s) décochée(s)`);
+  }
 
   const nouvellesNA = apres.tachesNA.filter((t) => !avant.tachesNA.includes(t));
-  if (nouvellesNA.length) lignes.push(`~ ${nouvellesNA.length} tâche(s) marquée(s) N/A`);
+  if (mode) nouvellesNA.forEach((t) => lignes.push(`~ Marquée N/A : ${findTaskLabel(mode, t)}`));
+  else if (nouvellesNA.length) lignes.push(`~ ${nouvellesNA.length} tâche(s) marquée(s) N/A`);
 
   if (apres.docCount > avant.docCount) lignes.push(`+ ${apres.docCount - avant.docCount} document(s)/photo(s) ajouté(s)`);
   else if (apres.docCount < avant.docCount) lignes.push(`\u2212 ${avant.docCount - apres.docCount} document(s)/photo(s) retiré(s)`);
@@ -836,12 +855,13 @@ function diffSnapshots(avant, apres) {
   const avantVpoById = Object.fromEntries(avant.vpo.map((v) => [v.id, v]));
   apres.vpo.forEach((v) => {
     const prev = avantVpoById[v.id];
-    if (!prev && v.texte) lignes.push(`+ VPO${v.numero ? ' ' + v.numero : ''} ajoutée`);
+    const nomVpo = v.numero ? `VPO ${v.numero}` : (v.texte ? `VPO « ${v.texte} »` : 'VPO');
+    if (!prev && v.texte) lignes.push(`+ ${nomVpo} ajoutée`);
     else if (prev && prev.statut !== v.statut) {
       const label = (s) => ({ ok: 'Validée', nc: 'Non conforme', null: 'En attente' }[s] || s || 'En attente');
-      lignes.push(`~ VPO${v.numero ? ' ' + v.numero : ''} : ${label(prev.statut)} → ${label(v.statut)}`);
+      lignes.push(`~ ${nomVpo} : ${label(prev.statut)} → ${label(v.statut)}`);
     } else if (prev && prev.resolu !== v.resolu && v.resolu) {
-      lignes.push(`~ VPO${v.numero ? ' ' + v.numero : ''} : résolue`);
+      lignes.push(`~ ${nomVpo} : résolue`);
     }
   });
 
@@ -3710,7 +3730,7 @@ function showSaveDetailModal(idx) {
   $('#btnComparerSauvegarde').addEventListener('click', () => {
     const avant = record.snapshot;
     const actuel = buildLightSnapshot(state.draft);
-    const diff = diffSnapshots(avant, actuel);
+    const diff = diffSnapshots(avant, actuel, state.draft.mode);
     showModal({
       title: 'Comparaison avec la version actuelle',
       bodyHtml: `<ul class="approval-resume">${diff.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
@@ -3754,11 +3774,12 @@ function refreshApprovals() {
     if (techEl) techEl.innerHTML = '<div class="empty-state">Aucune copie de sauvegarde pour cette révision.</div>';
     return;
   }
-  // Vue principale : lisible, sans numéro technique — date, personne, résumé.
+  // Vue principale : lisible, avec numéro — date, personne, résumé.
   el.innerHTML = list.slice().reverse().map((a, i) => `
     <div class="approval-row approval-row-rich approval-row-clickable" data-save-idx="${list.length - 1 - i}">
       <div class="approval-row-header">
         <span class="badge-ok">✓</span>
+        <span class="revision-id">${escapeHtml(a.id || '')}</span>
         <span class="when">${formatDateRelative(a.at)}</span>
         <span class="who">${escapeHtml(a.nom)} <span style="color:var(--color-text-faint);font-weight:400;">· ${escapeHtml(a.role)}</span></span>
       </div>
