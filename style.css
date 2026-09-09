@@ -1118,3 +1118,15 @@ select.ncextra-gravite {
 }
 
 .share-history-more { color: #5eb8ff; cursor: pointer; text-decoration: underline; }
+
+/* ---------- Liste des révisions du dossier principal ---------- */
+.revision-list { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
+.revision-row {
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3);
+  background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.revision-row.revision-active { border-color: var(--color-primary); background: var(--color-primary-highlight); }
+.revision-id { font-family: var(--font-mono); font-weight: 700; color: var(--color-primary); flex-shrink: 0; }
+.revision-nom { flex: 1; }
+.revision-statut { color: var(--color-text-muted); font-size: var(--text-xs); white-space: nowrap; }
