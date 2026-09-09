@@ -1222,13 +1222,20 @@ function renderApercu() {
 // Retire les caractères interdits dans un nom de fichier sur Windows/Mac/Linux
 // (/ \ : * ? " < > |), qui peuvent autrement casser le téléchargement ou faire
 // que le fichier soit enregistré sans la bonne extension .html.
+// Ajoute toujours le préfixe BT devant le numéro de bon de travail à
+// l'affichage, sans le dupliquer si l'utilisateur l'a déjà tapé lui-même.
+function formatBt(bt) {
+  if (!bt) return '';
+  return /^bt/i.test(bt.trim()) ? bt.trim() : `BT${bt.trim()}`;
+}
+
 function sanitizeFilename(str) {
   return String(str || '').replace(/[/\\:*?"<>|]/g, '-').trim();
 }
 
 function exportDashboardFile() {
   if (!state.draft) return;
-  const filename = `Dashboard - ${sanitizeFilename(state.numero || 'dossier')}${state.draft.champs.bt ? ' (' + sanitizeFilename(state.draft.champs.bt) + ')' : ''}.html`;
+  const filename = `Dashboard - ${sanitizeFilename(state.numero || 'dossier')}${state.draft.champs.bt ? ' (' + sanitizeFilename(formatBt(state.draft.champs.bt)) + ')' : ''}.html`;
   const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1485,7 +1492,7 @@ function updateMobileSummary() {
 
   el.innerHTML = `
     <div class="ws-summary-line1">
-      <span class="ws-summary-id">${escapeHtml(state.numero || '')}${d.champs.bt ? ' · ' + escapeHtml(d.champs.bt) : ''}</span>
+      <span class="ws-summary-id">${escapeHtml(state.numero || '')}${d.champs.bt ? ' · ' + escapeHtml(formatBt(d.champs.bt)) : ''}</span>
       <span class="ws-summary-status">${statutLabel}</span>
       ${prioBadge}
     </div>
@@ -1591,7 +1598,7 @@ function updateChecklistContextBar(visible) {
   const nc = computeNcStats();
   const vpo = computeVpoStats();
   const parts = [
-    [d.champs.bt, state.numero].filter(Boolean).join(' · '),
+    [formatBt(d.champs.bt), state.numero].filter(Boolean).join(' · '),
     d.champs.desc,
     d.mode === 'installation' ? 'Installation' : 'Démantèlement',
   ].filter(Boolean);
@@ -1622,7 +1629,7 @@ function updateApprobationBadge() {
 }
 
 function folderName(date) {
-  const bt = sanitizeFilename((state.draft && state.draft.champs.bt) || '');
+  const bt = sanitizeFilename(formatBt((state.draft && state.draft.champs.bt) || ''));
   const numero = sanitizeFilename(state.numero || '');
   const ds = (date || new Date()).toISOString().slice(0, 10);
   return bt ? `${numero} (${bt}) - ${ds}` : `${numero} - ${ds}`;
@@ -1891,7 +1898,7 @@ function buildDashboardHtml() {
         </div>`).join('')}</div>`
     : '<p class="empty">Aucune sauvegarde officielle enregistrée.</p>';
 
-  const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(d.champs.bt) + ')' : ''}`;
+  const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(formatBt(d.champs.bt)) + ')' : ''}`;
   const appUrl = buildDossierUrl();
   const qrSvg = generateQrSvg(appUrl);
   const statutLabel = pct >= 100 ? 'Terminé' : pct > 0 ? 'En cours' : 'Non commencé';
@@ -2097,7 +2104,7 @@ function buildResumeText() {
   lines.push('=======================================');
   lines.push('');
   lines.push(`Type d\u2019intervention : ${modeLabel}`);
-  lines.push(`Localisation : ${d.localisation}${d.champs.bt ? ' (B.T. ' + d.champs.bt + ')' : ''}`);
+  lines.push(`Localisation : ${d.localisation}${d.champs.bt ? ' (' + formatBt(d.champs.bt) + ')' : ''}`);
   if (d.derniereSauvegardeOfficielle) {
     const off = d.derniereSauvegardeOfficielle;
     const dt = new Date(off.at);
@@ -2176,9 +2183,17 @@ const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
 
 $('#numLoc').addEventListener('input', () => {
   const el = $('#numLoc');
-  const val = el.value.trim();
-  if (!val) { el.classList.remove('invalid', 'valid'); return; }
-  const ok = NUMERO_PATTERN.test(val);
+  let val = el.value;
+  // Insère automatiquement un tiret après les 3 premiers caractères, pour
+  // respecter le format habituel (ex. 888-FT-8888), sans le dupliquer si le
+  // trait a déjà été tapé manuellement.
+  if (val.length === 3 && !val.includes('-')) {
+    val += '-';
+    el.value = val;
+  }
+  const trimmed = val.trim();
+  if (!trimmed) { el.classList.remove('invalid', 'valid'); return; }
+  const ok = NUMERO_PATTERN.test(trimmed);
   el.classList.toggle('invalid', !ok);
   el.classList.toggle('valid', ok);
 });
@@ -2250,7 +2265,7 @@ function openWorkspace() {
   $('#screenWorkspace').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'auto' });
 
-  $('#wsNum').textContent = state.numero + (d.champs.bt ? ` · ${d.champs.bt}` : '');
+  $('#wsNum').textContent = state.numero + (d.champs.bt ? ` · ${formatBt(d.champs.bt)}` : '');
   const titreHeader = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
     || (d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI');
   $('#wsTitle').textContent = titreHeader;
@@ -2636,7 +2651,7 @@ function renderItemFileList(group, name) {
     btn.addEventListener('click', () => {
       const [, idx] = btn.dataset.fileShare.split('::');
       const label = (CHECKLISTS[state.draft.mode][group] || []).find(([n]) => n === name)?.[1] || name;
-      sharePhoto(files[Number(idx)], `Tâche : ${label}`, () => renderItemFileList(group, name));
+      sharePhoto(files[Number(idx)], `Tâche : ${label}`, () => renderItemFileList(group, name), label);
     });
   });
 }
@@ -2656,7 +2671,7 @@ function openImageLightbox(file) {
 // navigateur ne peut jamais joindre un fichier automatiquement à un mailto:).
 // Garde un historique (date, destinataire) sur le fichier lui-même — une trace
 // de l'intention de partage, pas une confirmation de livraison.
-async function sharePhoto(file, contextLabel, onUpdate) {
+async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
   const confirmed = await showModal({
     title: 'Partager cette photo',
     bodyHtml: `
@@ -2671,7 +2686,13 @@ async function sharePhoto(file, contextLabel, onUpdate) {
   const destEmail = $('#shareDestEmail').value.trim();
   if (!destName) { toast('Nom du destinataire requis.'); return; }
 
-  const shareData = { files: [file.blob instanceof File ? file.blob : new File([file.blob], file.name, { type: file.type })], title: file.name, text: `${contextLabel} — Suivi TEI` };
+  // Sujet du courriel : "Libellé de la tâche - NUMERO-BTxxxx" (ex. Mise à
+  // jour dans Immpower - 811-LV-7051A-BT1234567).
+  const numero = state.numero || '';
+  const btPart = state.draft && state.draft.champs.bt ? '-' + formatBt(state.draft.champs.bt) : '';
+  const sujetTexte = `${subjectLabel || contextLabel} - ${numero}${btPart}`;
+
+  const shareData = { files: [file.blob instanceof File ? file.blob : new File([file.blob], file.name, { type: file.type })], title: sujetTexte, text: `${sujetTexte} — Suivi TEI` };
   let methode = 'inconnue';
   try {
     if (navigator.canShare && navigator.canShare({ files: shareData.files })) {
@@ -2684,8 +2705,8 @@ async function sharePhoto(file, contextLabel, onUpdate) {
     // Repli : ouvre un courriel pré-rempli. La photo doit être jointe
     // manuellement — aucune API web ne permet de joindre un fichier à un
     // mailto: automatiquement.
-    const sujet = encodeURIComponent(`Photo à corriger — ${contextLabel}`);
-    const corps = encodeURIComponent(`Bonjour ${destName},\n\nVeuillez trouver ci-joint une photo à corriger concernant : ${contextLabel}.\nMerci de joindre manuellement le fichier « ${file.name} » (téléchargé séparément) à ce courriel.\n\n— Suivi TEI`);
+    const sujet = encodeURIComponent(sujetTexte);
+    const corps = encodeURIComponent(`Bonjour ${destName},\n\nVeuillez trouver ci-joint une photo à corriger concernant : ${subjectLabel || contextLabel}.\nMerci de joindre manuellement le fichier « ${file.name} » (téléchargé séparément) à ce courriel.\n\n— Suivi TEI`);
     window.location.href = `mailto:${destEmail}?subject=${sujet}&body=${corps}`;
     methode = 'Courriel (pièce jointe à ajouter manuellement)';
     toast('Le fichier n\u2019a pas pu être joint automatiquement — un navigateur ne peut jamais le faire par courriel. Téléchargez-le puis joignez-le manuellement.', 6000);
@@ -3271,7 +3292,7 @@ async function importDossierFromPickedFolder(expectedNumero) {
       bodyHtml: `
         <div class="closure-summary-grid" style="margin-bottom:var(--space-3);">
           <div>Localisation<br><strong>${escapeHtml(draft.localisation || '—')}</strong></div>
-          <div>B.T.<br><strong>${escapeHtml(draft.champs.bt || '—')}</strong></div>
+          <div>B.T.<br><strong>${escapeHtml(draft.champs.bt ? formatBt(draft.champs.bt) : '—')}</strong></div>
           <div>Type<br><strong>${draft.mode === 'installation' ? 'Installation' : 'Démantèlement'}</strong></div>
           <div>Créé le<br><strong>${draft.creeLe ? new Date(draft.creeLe).toLocaleDateString('fr-CA') : '—'}</strong></div>
           <div>Dernière sauvegarde<br><strong>${draft.derniereSauvegardeOfficielle ? new Date(draft.derniereSauvegardeOfficielle.at).toLocaleDateString('fr-CA') : (draft.modifieLe ? new Date(draft.modifieLe).toLocaleDateString('fr-CA') : '—')}</strong></div>
@@ -3324,7 +3345,7 @@ async function importDossierFromPickedFolder(expectedNumero) {
     const statusEl = $('#dossierStatus');
     statusEl.classList.remove('hidden', 'err', 'new');
     statusEl.classList.add('ok');
-    statusEl.textContent = `Dossier importé : ${draft.localisation}${draft.champs.bt ? ' (' + draft.champs.bt + ')' : ''}. Cliquez sur Continuer pour l\u2019ouvrir.`;
+    statusEl.textContent = `Dossier importé : ${draft.localisation}${draft.champs.bt ? ' (' + formatBt(draft.champs.bt) + ')' : ''}. Cliquez sur Continuer pour l\u2019ouvrir.`;
     toast(`Dossier ${state.numero} importé avec succès.`, 4000);
     return true;
   } catch (err) {
@@ -3434,7 +3455,7 @@ function renderInterventionStep() {
   const task = ivTaskList[ivIndex];
   if (!task || !state.draft) return;
   const d = state.draft;
-  $('#ivBt').textContent = `BT ${d.champs.bt || '—'} · ${[d.champs.type, d.champs.tag].filter(Boolean).join(' — ') || d.localisation}`;
+  $('#ivBt').textContent = `${formatBt(d.champs.bt) || '—'} · ${[d.champs.type, d.champs.tag].filter(Boolean).join(' — ') || d.localisation}`;
   const doneCount = ivTaskList.filter((t) => d.casesCochees[t.name] === true).length;
   $('#ivProgress').textContent = `${doneCount} / ${ivTaskList.length} tâches complétées`;
   $('#ivStep').textContent = `Tâche ${ivIndex + 1} sur ${ivTaskList.length}`;
@@ -3634,7 +3655,7 @@ function buildSearchIndex() {
     files.forEach((f) => index.push({ type: 'Document', text: f.name, sub: `Photo — ${numero}`, tab: 'non-conformite' }));
   });
 
-  if (d.champs.bt) index.push({ type: 'BT', text: d.champs.bt, sub: 'Identité du dossier', tab: 'identification' });
+  if (d.champs.bt) index.push({ type: 'BT', text: formatBt(d.champs.bt), sub: 'Identité du dossier', tab: 'identification' });
   if (d.champs.tag) index.push({ type: 'Tag', text: d.champs.tag, sub: 'Identité du dossier', tab: 'identification' });
   if (state.numero) index.push({ type: 'Localisation', text: state.numero, sub: 'Identité du dossier', tab: 'identification' });
 
