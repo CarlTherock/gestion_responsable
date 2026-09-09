@@ -1429,7 +1429,7 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   if (!nom) {
     toast('Entrez le nom de l\u2019employé (onglet Approbation) avant de sauvegarder.', 4500);
     selectTab('approbation');
-    flashField('#fldEmployeeName');
+    flashField('#fldEmployeeName', '#fldRole');
     return;
   }
 
@@ -1448,6 +1448,12 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     }
     // Sinon, state.dossierDirHandle pointe déjà vers le dossier importé — on réécrit dedans.
     await writeEverythingToDisk(now);
+
+    // Le nom de l'employé doit être retapé à chaque sauvegarde officielle
+    // (traçabilité : jamais réutilisé silencieusement d'une sauvegarde à l'autre).
+    state.draft.champs.employeeName = '';
+    $('#fldEmployeeName').value = '';
+
     await dbPut(state.draft);
     refreshApprovals();
     updateApprobationBadge();
@@ -1605,14 +1611,16 @@ function updateChecklistContextBar(visible) {
   bar.textContent = `${parts.join(' · ')} — ${statsParts.join(' · ')}`;
 }
 
-function flashField(selector) {
-  const el = $(selector);
-  if (!el) return;
-  el.classList.remove('flash-field');
-  void el.offsetWidth; // force le redémarrage de l'animation
-  el.classList.add('flash-field');
-  el.focus();
-  setTimeout(() => el.classList.remove('flash-field'), 1800);
+function flashField(...selectors) {
+  selectors.forEach((selector, i) => {
+    const el = $(selector);
+    if (!el) return;
+    el.classList.remove('flash-field');
+    void el.offsetWidth; // force le redémarrage de l'animation
+    el.classList.add('flash-field');
+    if (i === 0) el.focus();
+    setTimeout(() => el.classList.remove('flash-field'), 5000);
+  });
 }
 
 function updateApprobationBadge() {
@@ -3443,6 +3451,11 @@ async function importDossierFromPickedFolder(expectedNumero) {
     if (expectedNumero && draft.localisation !== expectedNumero) {
       toast(`Attention : ce dossier correspond à ${draft.localisation}, pas à ${expectedNumero}.`, 5500);
     }
+
+    // Toujours vider le nom de l'employé à l'import, même s'il était resté
+    // dans le fichier importé — la traçabilité exige de le retaper à chaque
+    // fois, peu importe si le dossier est nouveau ou repris.
+    draft.champs.employeeName = '';
 
     // Remplit les champs visibles de l'écran d'identification
     $('#numLoc').value = draft.localisation;
