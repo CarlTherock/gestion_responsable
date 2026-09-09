@@ -1988,7 +1988,7 @@ function folderName(date) {
   const tag = sanitizeFilename((state.draft && state.draft.champs.tag) || '');
   const ds = (date || new Date()).toISOString().slice(0, 10);
   const identite = tag || numero;
-  return bt ? `${bt} - ${identite} - ${ds}` : `${identite} - ${ds}`;
+  return bt ? `${identite} - ${bt} - ${ds}` : `${identite} - ${ds}`;
 }
 
 // Catégorise un document de tâche pour le classer dans le bon sous-dossier
@@ -2625,13 +2625,15 @@ $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirD
 
 const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
 
-$('#numLoc').addEventListener('input', () => {
+$('#numLoc').addEventListener('input', (e) => {
   const el = $('#numLoc');
   let val = el.value;
   // Insère automatiquement un tiret après les 3 premiers caractères, pour
-  // respecter le format habituel (ex. 888-FT-8888), sans le dupliquer si le
-  // trait a déjà été tapé manuellement.
-  if (val.length === 3 && !val.includes('-')) {
+  // respecter le format habituel (ex. 888-FT-8888), mais seulement quand on
+  // tape vers l'avant — jamais pendant une suppression (backspace/delete),
+  // sinon le tiret réapparaît aussitôt effacé et bloque la correction.
+  const enTrainDeSupprimer = e.inputType && e.inputType.startsWith('delete');
+  if (val.length === 3 && !val.includes('-') && !enTrainDeSupprimer) {
     val += '-';
     el.value = val;
   }
@@ -2645,8 +2647,11 @@ $('#numLoc').addEventListener('input', () => {
 $('#numBt').addEventListener('input', () => {
   const el = $('#numBt');
   const val = el.value.trim();
-  el.classList.toggle('valid', !!val);
-  el.classList.remove('invalid');
+  if (!val) { el.classList.remove('valid', 'invalid'); return; }
+  const chiffres = val.replace(/\D/g, '');
+  const ok = chiffres.length === 7;
+  el.classList.toggle('valid', ok);
+  el.classList.toggle('invalid', !ok);
 });
 
 async function ouvrirDossier() {
@@ -2671,7 +2676,15 @@ async function ouvrirDossier() {
   if (!bt) {
     statusEl.classList.remove('hidden', 'ok', 'new');
     statusEl.classList.add('err');
-    statusEl.textContent = 'Entrez le B.T. (n\u2019importe quel contenu est accepté).';
+    statusEl.textContent = 'Entrez le B.T. (7 chiffres requis).';
+    $('#numBt').classList.add('invalid');
+    $('#numBt').focus();
+    return;
+  }
+  if (bt.replace(/\D/g, '').length !== 7) {
+    statusEl.classList.remove('hidden', 'ok', 'new');
+    statusEl.classList.add('err');
+    statusEl.textContent = 'Le B.T. doit contenir exactement 7 chiffres.';
     $('#numBt').classList.add('invalid');
     $('#numBt').focus();
     return;
