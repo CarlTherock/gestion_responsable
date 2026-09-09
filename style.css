@@ -472,10 +472,11 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 
 /* ---------- Mise en évidence : champ manquant / onglet Approbation ---------- */
 @keyframes fieldFlash {
-  0%, 100% { box-shadow: none; }
-  8%, 92% { box-shadow: 0 0 0 3px var(--mode-accent), 0 0 20px rgba(255,122,26,0.5); }
+  0%, 100% { transform: scale(1); box-shadow: none; }
+  5%, 25%, 45%, 65%, 85% { transform: scale(1.045); box-shadow: 0 0 0 3px var(--mode-accent), 0 0 20px rgba(255,122,26,0.55); }
+  15%, 35%, 55%, 75%, 95% { transform: scale(1); box-shadow: 0 0 0 2px var(--mode-accent), 0 0 8px rgba(255,122,26,0.25); }
 }
-.flash-field { animation: fieldFlash 5s ease; }
+.flash-field { animation: fieldFlash 5s ease-in-out; transform-origin: center; }
 
 .tab-btn[data-tab="approbation"] { position: relative; font-weight: 700; }
 .tab-btn[data-tab="approbation"].needs-attention::after {

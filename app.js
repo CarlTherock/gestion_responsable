@@ -1426,8 +1426,8 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   }
   const nom = $('#fldEmployeeName').value.trim();
   const role = $('#fldRole').value;
-  if (!nom) {
-    toast('Entrez le nom de l\u2019employé (onglet Approbation) avant de sauvegarder.', 4500);
+  if (!nom || !role) {
+    toast('Entrez le nom de l\u2019employé et choisissez son rôle (onglet Approbation) avant de sauvegarder.', 4500);
     selectTab('approbation');
     flashField('#fldEmployeeName', '#fldRole');
     return;
@@ -1626,7 +1626,7 @@ function flashField(...selectors) {
 function updateApprobationBadge() {
   const btn = $('.tab-btn[data-tab="approbation"]');
   if (!btn || !state.draft) return;
-  const manque = !(state.draft.champs.employeeName || '').trim();
+  const manque = !(state.draft.champs.employeeName || '').trim() || !(state.draft.champs.employeeRole || '').trim();
   btn.classList.toggle('needs-attention', manque);
 }
 
@@ -2294,7 +2294,7 @@ function openWorkspace() {
   $('#fldPriorite').value = d.champs.priorite || 'normale';
   $('#fldCommentaires').value = d.champs.commentaires || '';
   $('#fldEmployeeName').value = d.champs.employeeName || '';
-  $('#fldRole').value = d.champs.employeeRole || 'technicien';
+  $('#fldRole').value = d.champs.employeeRole || '';
 
   renderAllChecklists();
   renderVpoList();
