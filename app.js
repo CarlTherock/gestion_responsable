@@ -3679,14 +3679,16 @@ function summarizeSnapshotComplet(snap, mode) {
 
 function showSaveDetailModal(idx) {
   const record = state.draft.approbations[idx];
-  if (!record || !record.snapshotComplet) { toast('Détail non disponible pour cette sauvegarde.'); return; }
-  const resume = summarizeSnapshotComplet(record.snapshotComplet, state.draft.mode);
+  if (!record) return;
   const sourceRevisionId = state.draft.activeRevision.id;
+  const complet = !!record.snapshotComplet;
+  const resume = complet ? summarizeSnapshotComplet(record.snapshotComplet, state.draft.mode) : null;
 
   showModal({
     title: `Sauvegarde du ${formatDateRelative(record.at)}`,
     bodyHtml: `
       <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Par ${escapeHtml(record.nom)} · ${escapeHtml(record.role)}</p>
+      ${complet ? `
       <div class="closure-summary-grid" style="margin-bottom:var(--space-3);">
         <div>Tâches<br><strong>${resume.faites} / ${resume.total}</strong></div>
         <div>N/A<br><strong>${resume.na}</strong></div>
@@ -3694,11 +3696,12 @@ function showSaveDetailModal(idx) {
         <div>VPO<br><strong>${resume.vpoValidees} / ${resume.vpoCount} validées</strong></div>
         <div>Photos sur NC<br><strong>${resume.ncFichiersCount}</strong></div>
         <div>Documents / photos<br><strong>${resume.docCount}</strong></div>
-      </div>
+      </div>` : `
+      <p style="font-size:var(--text-sm);color:var(--color-warning, #eab308);margin-bottom:var(--space-3);">Cette sauvegarde a été faite avant l\u2019ajout de la consultation détaillée et de la copie — l\u2019état complet (tâches, VPO, NC, documents) n\u2019a pas été conservé pour elle. Le résumé des changements et la comparaison restent disponibles ci-dessous.</p>`}
       ${record.resume ? `<div class="panel-title" style="font-size:var(--text-sm);">Changements à cette sauvegarde</div><ul class="approval-resume" style="margin-bottom:var(--space-3);">${record.resume.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : ''}
       <div class="tools-row">
         <button type="button" class="btn btn-outline" id="btnComparerSauvegarde">Comparer avec la version actuelle</button>
-        <button type="button" class="btn btn-outline" id="btnCopierDepuisSauvegarde">Créer une copie depuis cette sauvegarde</button>
+        ${complet ? `<button type="button" class="btn btn-outline" id="btnCopierDepuisSauvegarde">Créer une copie depuis cette sauvegarde</button>` : ''}
       </div>
     `,
     confirmLabel: 'Fermer',
@@ -3714,6 +3717,8 @@ function showSaveDetailModal(idx) {
       confirmLabel: 'Fermer',
     });
   });
+
+  if (!complet) return;
 
   $('#btnCopierDepuisSauvegarde').addEventListener('click', () => {
     const suggestion = `${nextRevisionId()} — Reprise depuis sauvegarde du ${new Date(record.at).toLocaleDateString('fr-CA')}, ${new Date(record.at).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}`;
