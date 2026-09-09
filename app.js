@@ -357,7 +357,7 @@ function newVpoItem() {
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     application: 'Gestion responsable',
     localisation: numero,
     mode,
@@ -381,6 +381,15 @@ function newDraft(numero, mode) {
     journal: [],
     derniereSauvegardeOfficielle: null,
     meta: { source: 'pwa', modeSauvegarde: 'brouillon-local' },
+    // ---- Dossier principal / révisions ----
+    // Le dossier principal reste identifié par localisation (BT/tag) et ne
+    // change jamais. Une révision est une phase du travail sur ce même
+    // dossier; `revisions` archive les révisions passées (avec un instantané
+    // complet de leurs données), tandis que les champs ci-dessus
+    // (champs, casesCochees, vpoItems, etc.) représentent toujours la
+    // révision ACTIVE — aucun changement au schéma IndexedDB existant.
+    revisions: [],
+    activeRevision: { id: 'R00', nom: 'Installation initiale', motif: '', creeLe: now },
   };
 }
 
@@ -390,6 +399,12 @@ function nextNcId() {
 }
 
 function normalizeDraft(d) {
+  if (!d.revisions) d.revisions = [];
+  if (!d.activeRevision) {
+    // Ancien dossier créé avant le système de révisions : sa donnée actuelle
+    // devient la révision active R00 — aucune perte, juste une étiquette.
+    d.activeRevision = { id: 'R00', nom: 'Installation initiale', motif: '', creeLe: d.creeLe || new Date().toISOString() };
+  }
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
   if (!d.casesCochees) d.casesCochees = {};
@@ -519,7 +534,6 @@ $$('.choice-card').forEach((card) => {
   });
 });
 
-$('#homeBtn').addEventListener('click', () => location.reload());
 
 $('#topbarMenuBtn').addEventListener('click', async () => {
   const dossierOuvert = !$('#homeBtn').classList.contains('hidden');
@@ -754,6 +768,57 @@ function computeStatutLabel(done, total) {
 // (aucune nouvelle structure). « Archivé » n'est pas atteignable : aucune action
 // d'archivage distincte n'existe dans l'architecture actuelle — plutôt que
 // d'inventer un déclencheur, ce niveau reste documenté comme limite connue.
+// Clone en profondeur en préservant les Blob/File tels quels (JSON.stringify
+// les détruirait). Les Blob sont immuables — les partager par référence entre
+// l'instantané archivé et la nouvelle révision active est sans danger.
+function deepCloneKeepingBlobs(value) {
+  if (value instanceof Blob) return value;
+  if (Array.isArray(value)) return value.map(deepCloneKeepingBlobs);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).forEach((k) => { out[k] = deepCloneKeepingBlobs(value[k]); });
+    return out;
+  }
+  return value;
+}
+
+const REVISION_DATA_FIELDS = [
+  'champs', 'liens', 'casesCochees', 'casesRaisons', 'casesGravites', 'casesNcDetails',
+  'casesFichiers', 'casesPreuveRequise', 'casesNotes', 'ncFichiers', 'ncSeq', 'files',
+  'vpoItems', 'ncExtra',
+];
+
+// Archive la révision active dans un instantané complet, puis démarre une
+// nouvelle révision active — soit en copiant les données actuelles vers
+// l'avant (par défaut), soit en repartant d'une révision vide. Le dossier
+// principal (localisation, BT via champs.bt s'il est copié, mode) et
+// l'historique global (approbations, journal) ne sont jamais touchés.
+function creerRevision(nom, motif, copier) {
+  if (!state.draft) return null;
+  const snapshot = {};
+  REVISION_DATA_FIELDS.forEach((f) => { snapshot[f] = deepCloneKeepingBlobs(state.draft[f]); });
+  state.draft.revisions.push({
+    ...state.draft.activeRevision,
+    statut: computeGlobalStatus().key,
+    fermeeLe: new Date().toISOString(),
+    data: snapshot,
+  });
+
+  if (!copier) {
+    const vierge = newDraft(state.draft.localisation, state.draft.mode);
+    REVISION_DATA_FIELDS.forEach((f) => { state.draft[f] = vierge[f]; });
+  }
+  // Si copier === true, les champs actifs restent tels quels (c'est déjà la copie).
+
+  const nums = state.draft.revisions.map((r) => parseInt((r.id || 'R00').replace('R', ''), 10) || 0);
+  const prochainNum = Math.max(...nums, -1) + 1;
+  const nouvelId = 'R' + String(prochainNum).padStart(2, '0');
+  state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: motif || '', creeLe: new Date().toISOString() };
+  logActivity(`Révision ${nouvelId} créée (${nom || nouvelId})${motif ? ' — ' + motif : ''}`);
+  schedulePersist();
+  return nouvelId;
+}
+
 function computeGlobalStatus() {
   if (!state.draft) return { key: 'brouillon', label: 'Brouillon' };
   const { done, total } = computeProgress();
@@ -1056,6 +1121,124 @@ function renderDocuments() {
   });
 }
 
+function showCreerRevisionModal() {
+  if (!state.draft) return;
+  showModal({
+    title: 'Nouvelle révision',
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-2);">Dossier principal : <strong>${escapeHtml(state.draft.localisation)}</strong>${state.draft.champs.bt ? ' (' + escapeHtml(formatBt(state.draft.champs.bt)) + ')' : ''}</p>
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Révision précédente : <strong>${escapeHtml(state.draft.activeRevision.id)} — ${escapeHtml(state.draft.activeRevision.nom)}</strong></p>
+      <div class="field"><label>Nom de la nouvelle révision</label><input type="text" id="revNom" placeholder="Ex. : Fermeture finale"></div>
+      <div class="field" style="margin-top:var(--space-2);">
+        <label>Motif</label>
+        <select id="revMotif">
+          <option value="Modification">Modification</option>
+          <option value="Correction">Correction</option>
+          <option value="Nouvelle phase">Nouvelle phase</option>
+          <option value="Fermeture">Fermeture</option>
+        </select>
+      </div>
+      <div class="field" style="margin-top:var(--space-3);">
+        <label style="display:flex;align-items:center;gap:var(--space-2);font-family:inherit;text-transform:none;letter-spacing:normal;">
+          <input type="radio" name="revCopie" value="copier" checked style="width:auto;"> Copier la checklist, VPO, NC, documents et photos
+        </label>
+        <label style="display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-1);font-family:inherit;text-transform:none;letter-spacing:normal;">
+          <input type="radio" name="revCopie" value="vide" style="width:auto;"> Créer une révision vide
+        </label>
+      </div>
+    `,
+    confirmLabel: 'Créer la révision',
+  }).then((confirmed) => {
+    if (!confirmed) return;
+    const nom = $('#revNom').value.trim();
+    const motif = $('#revMotif').value;
+    const copier = document.querySelector('input[name="revCopie"]:checked').value === 'copier';
+    const nouvelId = creerRevision(nom, motif, copier);
+    if (nouvelId) {
+      toast(`Révision ${nouvelId} créée.`);
+      renderApercu();
+      renderAllChecklists();
+      renderVpoList();
+      renderNonConformites();
+      renderDocuments();
+    }
+  });
+}
+
+function getDernierDossierActif() {
+  try {
+    const raw = localStorage.getItem('dernierDossierActif');
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) { return null; }
+}
+
+async function showDashboard() {
+  $('#screenChoice').classList.add('hidden');
+  $('#screenDossier').classList.add('hidden');
+  $('#screenWorkspace').classList.add('hidden');
+  $('#screenDashboard').classList.remove('hidden');
+  $('#homeBtn').classList.add('hidden');
+  $('#modeBadge').classList.add('hidden');
+  $('#brandSub').textContent = "Usine — module de terrain";
+
+  const dernier = getDernierDossierActif();
+  const reprendreBtn = $('#dashBtnReprendre');
+  const zone = $('#dashDossierActif');
+  if (!dernier) {
+    reprendreBtn.classList.add('hidden');
+    zone.innerHTML = '';
+    return;
+  }
+  reprendreBtn.classList.remove('hidden');
+  const existing = await dbGet(dernier.numero);
+  if (!existing) {
+    reprendreBtn.classList.add('hidden');
+    zone.innerHTML = '';
+    return;
+  }
+  const d = normalizeDraft(existing);
+  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
+  zone.innerHTML = `
+    <div class="panel-title" style="font-size:var(--text-base);">Dossier actif</div>
+    <div class="revision-row revision-active" style="margin-top:var(--space-2);margin-bottom:var(--space-4);">
+      <span class="revision-id">${escapeHtml(dernier.numero)}${d.champs.bt ? ' · ' + escapeHtml(formatBt(d.champs.bt)) : ''}</span>
+      <span class="revision-nom">${escapeHtml(d.champs.desc || '')} · ${modeLabel}</span>
+      <span class="revision-statut">Révision ${escapeHtml(d.activeRevision.id)} · ${new Date(d.modifieLe || d.creeLe).toLocaleString('fr-CA')}</span>
+    </div>
+    ${(d.revisions && d.revisions.length) ? `
+    <div class="panel-title" style="font-size:var(--text-base);">Révisions du dossier</div>
+    <div class="revision-list" style="margin-top:var(--space-2);">
+      ${d.revisions.slice().reverse().map((r) => `
+      <div class="revision-row">
+        <span class="revision-id">${escapeHtml(r.id)}</span>
+        <span class="revision-nom">${escapeHtml(r.nom)}${r.motif ? ' — ' + escapeHtml(r.motif) : ''}</span>
+        <span class="revision-statut">Archivée</span>
+      </div>`).join('')}
+    </div>` : ''}
+  `;
+}
+
+$('#dashBtnNouveau').addEventListener('click', () => {
+  $('#screenDashboard').classList.add('hidden');
+  $('#screenChoice').classList.remove('hidden');
+});
+$('#dashBtnOuvrir').addEventListener('click', () => {
+  $('#screenDashboard').classList.add('hidden');
+  $('#screenChoice').classList.remove('hidden');
+});
+$('#dashBtnReprendre').addEventListener('click', async () => {
+  const dernier = getDernierDossierActif();
+  if (!dernier) return;
+  const existing = await dbGet(dernier.numero);
+  if (!existing) { toast('Ce dossier n\u2019est plus disponible localement.'); return; }
+  selectMode(dernier.mode);
+  state.draft = normalizeDraft(existing);
+  state.numero = dernier.numero;
+  state.isNewDraft = false;
+  openWorkspace();
+});
+$('#homeBtn').addEventListener('click', showDashboard);
+
 function renderApercu() {
   const container = $('#apercuContent');
   if (!container || !state.draft) return;
@@ -1189,8 +1372,30 @@ function renderApercu() {
       <button type="button" class="btn btn-outline" id="btnPrintApercu">Imprimer</button>
     </div>
 
+    <div class="panel-title" style="font-size:var(--text-base);margin-top:var(--space-5);">Révisions du dossier</div>
+    <p class="panel-desc" style="margin-bottom:var(--space-3);">Le dossier principal (${escapeHtml(d.localisation)}) reste stable. Une révision est créée seulement pour une vraie correction, phase ou modification importante — pas pour chaque petit changement.</p>
+    <div class="tools-row" style="margin-bottom:var(--space-3);">
+      <button type="button" class="btn btn-outline" id="btnCreerRevision">Créer une révision</button>
+    </div>
+    <div class="revision-list">
+      <div class="revision-row revision-active">
+        <span class="revision-id">${escapeHtml(d.activeRevision.id)}</span>
+        <span class="revision-nom">${escapeHtml(d.activeRevision.nom)}</span>
+        <span class="revision-statut">${globalStatus.label} (active)</span>
+      </div>
+      ${(d.revisions || []).slice().reverse().map((r) => `
+      <div class="revision-row">
+        <span class="revision-id">${escapeHtml(r.id)}</span>
+        <span class="revision-nom">${escapeHtml(r.nom)}${r.motif ? ' — ' + escapeHtml(r.motif) : ''}</span>
+        <span class="revision-statut">Archivée</span>
+      </div>`).join('')}
+    </div>
+
     <button type="button" class="btn-closure-check-mobile" id="btnClosureCheckMobile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">${closure.ready ? ICONS.checkCircle : ICONS.alertTriangle}</svg> Vérification avant fermeture</button>
   `;
+
+  const creerRevisionBtn = $('#btnCreerRevision', container);
+  if (creerRevisionBtn) creerRevisionBtn.addEventListener('click', showCreerRevisionModal);
 
   $$('[data-apercu-jump]', container).forEach((card) => {
     card.addEventListener('click', () => selectTab(card.dataset.apercuJump));
@@ -2263,7 +2468,11 @@ async function ouvrirDossier() {
 // ---------- Étape 3 : espace de travail ----------
 function openWorkspace() {
   const d = state.draft;
+  try {
+    localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
+  } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
   $('#screenDossier').classList.add('hidden');
+  $('#screenDashboard').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'auto' });
 
@@ -3959,3 +4168,6 @@ function renderTaskPanelBody() {
     renderTaskPanelBody();
   });
 }
+
+// Affiche le Dashboard au chargement initial de la page.
+showDashboard();
