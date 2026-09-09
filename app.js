@@ -1741,6 +1741,32 @@ async function attachFilesToNc(numero, fileList) {
   toast(`${fileList.length} photo(s) ajoutée(s) à ${numero}.`);
 }
 
+// Demande à l'utilisateur où enregistrer : dans le même dossier qu'avant
+// (nouvelle sauvegarde S-XXX au même endroit) ou ailleurs (nouvel
+// emplacement à choisir). Réutilise l'infrastructure de showModal en
+// déclenchant son propre bouton Annuler pour un nettoyage propre.
+function showSaveLocationChoice() {
+  return new Promise((resolve) => {
+    let choix = 'annuler';
+    const emplacementActuel = state.rootDirHandle
+      ? `${state.rootDirHandle.name} / ${folderName()}`
+      : (state.dossierDirHandle && state.dossierDirHandle.name) || '';
+    showModal({
+      title: 'Où enregistrer cette sauvegarde ?',
+      bodyHtml: `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Emplacement actuel : <strong>${escapeHtml(emplacementActuel)}</strong></p>
+        <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+          <button type="button" class="btn btn-primary" id="btnSaveIci" style="justify-content:flex-start;">Enregistrer ici (nouvelle sauvegarde au même endroit)</button>
+          <button type="button" class="btn btn-outline" id="btnSaveAilleurs" style="justify-content:flex-start;">Choisir un autre emplacement</button>
+        </div>
+      `,
+      confirmLabel: 'Annuler',
+    }).then(() => resolve(choix));
+    $('#btnSaveIci').addEventListener('click', () => { choix = 'ici'; $('#modalCancel').click(); });
+    $('#btnSaveAilleurs').addEventListener('click', () => { choix = 'ailleurs'; $('#modalCancel').click(); });
+  });
+}
+
 $('#btnSaveFolder').addEventListener('click', async () => {
   if (!FS_ACCESS_SUPPORTED) {
     toast('La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.', 4000);
@@ -1749,6 +1775,15 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   if (!state.rootDirHandle && !state.dossierDirHandle) {
     const chosen = await pickSaveFolder();
     if (!chosen) return; // l'utilisateur a fermé le sélecteur sans choisir
+  } else {
+    const choix = await showSaveLocationChoice();
+    if (choix === 'annuler') return;
+    if (choix === 'ailleurs') {
+      state.rootDirHandle = null;
+      state.dossierDirHandle = null;
+      const chosen = await pickSaveFolder();
+      if (!chosen) return;
+    }
   }
   const { done, total, pct } = computeProgress();
   if (pct < 100) {
