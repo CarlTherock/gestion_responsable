@@ -1985,16 +1985,34 @@ function updateApprobationBadge() {
 function folderName(date) {
   const bt = sanitizeFilename(formatBt((state.draft && state.draft.champs.bt) || ''));
   const numero = sanitizeFilename(state.numero || '');
+  const tag = sanitizeFilename((state.draft && state.draft.champs.tag) || '');
   const ds = (date || new Date()).toISOString().slice(0, 10);
-  return bt ? `${numero} (${bt}) - ${ds}` : `${numero} - ${ds}`;
+  const identite = tag || numero;
+  return bt ? `${identite} - ${bt} - ${ds}` : `${identite} - ${ds}`;
+}
+
+// Catégorise un document de tâche pour le classer dans le bon sous-dossier
+// (02_Documents/Plans, Preuves ou Autres) — utilisé à la fois pour écrire les
+// fichiers sur disque et pour construire les liens du Dashboard, afin que les
+// deux restent toujours d'accord sur l'emplacement exact.
+function categorizeDocument(group, name) {
+  if (group === 'plans') return 'Plans';
+  if (state.draft && state.draft.casesPreuveRequise && state.draft.casesPreuveRequise[name]) return 'Preuves';
+  return 'Autres';
 }
 
 async function ensureLocalDossierFolder(date) {
   if (!state.rootDirHandle || !state.numero) return;
   state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(folderName(date), { create: true });
-  for (const sub of ['Documents', 'Photos', 'Exports']) {
-    await state.dossierDirHandle.getDirectoryHandle(sub, { create: true });
-  }
+  await state.dossierDirHandle.getDirectoryHandle('00_Dashboard', { create: true });
+  await state.dossierDirHandle.getDirectoryHandle('01_Dossier_actif', { create: true });
+  const d02 = await state.dossierDirHandle.getDirectoryHandle('02_Documents', { create: true });
+  for (const sub of ['Plans', 'Preuves', 'Autres']) await d02.getDirectoryHandle(sub, { create: true });
+  const d03 = await state.dossierDirHandle.getDirectoryHandle('03_Photos', { create: true });
+  for (const sub of ['Taches', 'VPO', 'NonConformites']) await d03.getDirectoryHandle(sub, { create: true });
+  await state.dossierDirHandle.getDirectoryHandle('04_NonConformites', { create: true });
+  await state.dossierDirHandle.getDirectoryHandle('05_Historique', { create: true });
+  await state.dossierDirHandle.getDirectoryHandle('06_Exports', { create: true });
   const pill = $('#wsFolderPill');
   if (pill) pill.textContent = `Lié : ${state.rootDirHandle.name}/${folderName(date)}`;
 }
@@ -2012,79 +2030,130 @@ $('#numLoc').addEventListener('blur', async () => {
 // Écrit tout le contenu du brouillon (suivi.json, resume.txt, documents par
 // tâche, photos de mise à jour) sur le disque. N'est appelé QUE lors de la
 // sauvegarde officielle (100 % des tâches cochées ou N/A + nom d'employé).
+// Fichier à la racine du dossier exporté : redirige vers le vrai Dashboard
+// dans 00_Dashboard/. Utilise un chemin relatif seulement (aucun chemin
+// Windows absolu), pour fonctionner peu importe où le dossier est déplacé,
+// copié sur OneDrive ou une clé USB. Une redirection automatique ET un lien
+// visible sont fournis, au cas où le navigateur bloquerait la redirection.
+function buildDashboardRedirectHtml() {
+  const cible = '00_Dashboard/Dashboard.html';
+  return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<meta http-equiv="refresh" content="0; url=${cible}">
+<title>Ouverture du Dashboard\u2026</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+  .box { text-align:center; max-width:420px; padding:24px; }
+  a.btn { display:inline-block; margin-top:16px; padding:12px 22px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:8px; font-weight:600; }
+  p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:20px; }
+</style>
+</head><body>
+  <div class="box">
+    <p>Ouverture du Dashboard\u2026</p>
+    <p>Si rien ne se passe, cliquez ci-dessous :</p>
+    <a class="btn" href="${cible}">Ouvrir le Dashboard</a>
+    <p class="chemin">Emplacement : ${cible}</p>
+  </div>
+</body></html>`;
+}
+
+// Écrit un fichier texte/JSON dans un dossier (crée le fichier si nécessaire).
+async function writeTextFile(dirHandle, name, content) {
+  const fh = await dirHandle.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(content);
+  await w.close();
+}
+
+// Nettoie un texte pour en faire un court segment de nom de dossier lisible.
+function slugForFolder(text, maxLen) {
+  const base = (text || 'Sauvegarde').replace(/^[+~\u2212]\s*/, '').replace(/[^a-zA-Z0-9À-ÿ]+/g, '-').replace(/^-+|-+$/g, '');
+  return (base || 'Sauvegarde').slice(0, maxLen || 30);
+}
+
 async function writeEverythingToDisk(date) {
   if (!state.dossierDirHandle || !state.draft) return;
+  const jsonContent = JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2);
+  const resumeContent = buildResumeText();
+  const dashboardContent = buildDashboardHtml();
 
-  const jsonHandle = await state.dossierDirHandle.getFileHandle('suivi.json', { create: true });
-  const w1 = await jsonHandle.createWritable();
-  await w1.write(JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2));
-  await w1.close();
+  // 01_Dossier_actif : les données brutes du dossier.
+  const d01 = await state.dossierDirHandle.getDirectoryHandle('01_Dossier_actif', { create: true });
+  await writeTextFile(d01, 'suivi.json', jsonContent);
+  await writeTextFile(d01, 'resume.txt', resumeContent);
 
-  const resumeHandle = await state.dossierDirHandle.getFileHandle('resume.txt', { create: true });
-  const w2 = await resumeHandle.createWritable();
-  await w2.write(buildResumeText());
-  await w2.close();
-
-  // Archive versionnée : conserve un instantané horodaté de chaque sauvegarde
-  // officielle, pour pouvoir comparer l'évolution entre les versions.
+  // 00_Dashboard + racine : point d'entrée principal, en double pour que
+  // l'ouverture reste fiable peu importe où l'utilisateur clique en premier.
   try {
-    const histDir = await state.dossierDirHandle.getDirectoryHandle('Historique', { create: true });
-    const stamp = (date || new Date()).toISOString().replace(/[:.]/g, '-');
-    const jh = await histDir.getFileHandle(`suivi_${stamp}.json`, { create: true });
-    const wj = await jh.createWritable();
-    await wj.write(JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2));
-    await wj.close();
-    const rh = await histDir.getFileHandle(`resume_${stamp}.txt`, { create: true });
-    const wr = await rh.createWritable();
-    await wr.write(buildResumeText());
-    await wr.close();
+    const d00 = await state.dossierDirHandle.getDirectoryHandle('00_Dashboard', { create: true });
+    await writeTextFile(d00, 'Dashboard.html', dashboardContent);
+    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml());
   } catch (err) { /* best effort */ }
 
-  const docsDir = await state.dossierDirHandle.getDirectoryHandle('Documents', { create: true });
+  // 06_Exports : copie du rapport de chantier, prête à partager.
+  try {
+    const d06 = await state.dossierDirHandle.getDirectoryHandle('06_Exports', { create: true });
+    await writeTextFile(d06, 'Rapport_de_chantier.html', dashboardContent);
+  } catch (err) { /* best effort */ }
+
+  // 05_Historique : un sous-dossier autonome par sauvegarde officielle,
+  // nommé pour rester trié et lisible dans Windows/OneDrive.
+  try {
+    const d05 = await state.dossierDirHandle.getDirectoryHandle('05_Historique', { create: true });
+    const dernier = state.draft.approbations[state.draft.approbations.length - 1];
+    if (dernier) {
+      const dt = new Date(dernier.at);
+      const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
+      const motifSlug = slugForFolder((dernier.resume && dernier.resume[0]) || 'Sauvegarde');
+      const nomSousDossier = `${dernier.id} - ${dateSlug} - ${motifSlug}`;
+      const dSave = await d05.getDirectoryHandle(nomSousDossier, { create: true });
+      await writeTextFile(dSave, 'suivi.json', jsonContent);
+      await writeTextFile(dSave, 'resume.txt', resumeContent);
+      await writeTextFile(dSave, 'Dashboard.html', dashboardContent);
+      await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n'));
+    }
+  } catch (err) { /* best effort */ }
+
+  // 02_Documents : classés par Plans / Preuves / Autres.
+  const d02 = await state.dossierDirHandle.getDirectoryHandle('02_Documents', { create: true });
+  const groupOfTask = {};
+  Object.entries(CHECKLISTS[state.draft.mode] || {}).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
   for (const [name, files] of Object.entries(state.draft.casesFichiers || {})) {
     for (const f of files) {
       try {
+        const categorie = categorizeDocument(groupOfTask[name], name);
+        const catDir = await d02.getDirectoryHandle(categorie, { create: true });
         const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const fh = await docsDir.getFileHandle(`${name}__${safe}`, { create: true });
-        const w = await fh.createWritable();
-        await w.write(f.blob);
-        await w.close();
+        await writeTextFile(catDir, `${name}__${safe}`, f.blob);
       } catch (err) { /* best effort par fichier */ }
     }
   }
 
-  const photosDir = await state.dossierDirHandle.getDirectoryHandle('Photos', { create: true });
+  // 03_Photos/Taches : photos de mise à jour générale.
+  const d03 = await state.dossierDirHandle.getDirectoryHandle('03_Photos', { create: true });
+  const d03taches = await d03.getDirectoryHandle('Taches', { create: true });
   for (const f of (state.draft.files['mise-a-jour'] || [])) {
     try {
       const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-      const fh = await photosDir.getFileHandle(safe, { create: true });
-      const w = await fh.createWritable();
-      await w.write(f.blob);
-      await w.close();
+      await writeTextFile(d03taches, safe, f.blob);
     } catch (err) { /* best effort par fichier */ }
   }
 
+  // 04_NonConformites : un sous-dossier par NC, avec un registre à la racine.
   try {
-    const ncDir = await state.dossierDirHandle.getDirectoryHandle('NonConformites', { create: true });
+    const d04 = await state.dossierDirHandle.getDirectoryHandle('04_NonConformites', { create: true });
+    const registreLignes = [];
     for (const [numero, files] of Object.entries(state.draft.ncFichiers || {})) {
+      registreLignes.push(`${numero} — ${files.length} fichier(s)`);
+      const ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true });
       for (const f of files) {
         try {
           const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          const fh = await ncDir.getFileHandle(`${numero}__${safe}`, { create: true });
-          const w = await fh.createWritable();
-          await w.write(f.blob);
-          await w.close();
+          await writeTextFile(ncDir, safe, f.blob);
         } catch (err) { /* best effort par fichier */ }
       }
     }
-  } catch (err) { /* best effort */ }
-
-  try {
-    const dashName = `Dashboard - ${folderName(date)}.html`;
-    const dashHandle = await state.dossierDirHandle.getFileHandle(dashName, { create: true });
-    const w3 = await dashHandle.createWritable();
-    await w3.write(buildDashboardHtml());
-    await w3.close();
+    await writeTextFile(d04, 'registre.txt', registreLignes.length ? registreLignes.join('\n') : 'Aucune non-conformité avec fichier joint.');
   } catch (err) { /* best effort */ }
 }
 
@@ -2178,7 +2247,8 @@ function buildDashboardHtml() {
       const v = d.casesCochees[name];
       const reason = (v === 'na' || v === 'nc') ? d.casesRaisons[name] : '';
       const files = d.casesFichiers[name] || [];
-      const filesHtml = attachmentsHtml(files, `Documents/${name}__`);
+      const categorie = categorizeDocument(g.group, name);
+      const filesHtml = attachmentsHtml(files, `../02_Documents/${categorie}/${name}__`);
       return taskRowHtml(label, v, reason, filesHtml);
     }).join('');
     return `<details class="section-card" id="sec-${g.group}">
@@ -2238,7 +2308,7 @@ function buildDashboardHtml() {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = d.files['mise-a-jour'] || [];
-  const photosHtml = photos.length ? attachmentsHtml(photos, 'Photos/') : '<p class="empty">Aucune image de mise à jour.</p>';
+  const photosHtml = photos.length ? attachmentsHtml(photos, '../03_Photos/Taches/') : '<p class="empty">Aucune image de mise à jour.</p>';
 
   // ---- Historique ----
   const histHtml = (d.approbations || []).length
@@ -2297,6 +2367,15 @@ function buildDashboardHtml() {
   .qr-card svg { display: block; width: 78px; height: 78px; }
   .qr-wrap { display: flex; align-items: center; gap: 10px; }
   .qr-caption { font-size: 11px; color: var(--text-muted); max-width: 90px; line-height: 1.3; }
+  .nav-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 28px; }
+  .nav-btn {
+    display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text); text-decoration: none;
+  }
+  .nav-btn:hover { border-color: var(--accent); }
+  .nav-btn .nav-label { font-weight: 600; font-size: 14px; }
+  .nav-btn .nav-path { font-size: 11px; color: var(--text-muted); font-family: monospace; }
+  .nav-btn.disabled { opacity: 0.5; pointer-events: none; }
 
   .hero-ring { display: flex; align-items: center; gap: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 24px 32px; }
   .hero-ring-label { font-size: 14px; color: var(--text-muted); }
@@ -2391,6 +2470,17 @@ function buildDashboardHtml() {
         </div>
         <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
       </div>
+    </div>
+
+    <div class="nav-grid">
+      <a class="nav-btn" href="../01_Dossier_actif/"><span class="nav-label">Ouvrir le dossier actif</span><span class="nav-path">01_Dossier_actif/</span></a>
+      <a class="nav-btn" href="../02_Documents/"><span class="nav-label">Ouvrir les documents</span><span class="nav-path">02_Documents/</span></a>
+      <a class="nav-btn" href="../03_Photos/"><span class="nav-label">Ouvrir les photos</span><span class="nav-path">03_Photos/</span></a>
+      <a class="nav-btn" href="../04_NonConformites/"><span class="nav-label">Ouvrir les non-conformités</span><span class="nav-path">04_NonConformites/</span></a>
+      <a class="nav-btn" href="../05_Historique/"><span class="nav-label">Voir l\u2019historique</span><span class="nav-path">05_Historique/</span></a>
+      <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
+      <a class="nav-btn" href="${appUrl}"><span class="nav-label">Créer une révision</span><span class="nav-path">Ouvre l\u2019application</span></a>
+      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre l\u2019application' : 'Disponible à 100 % seulement'}</span></a>
     </div>
 
     <div class="hero-ring">
@@ -2535,13 +2625,15 @@ $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirD
 
 const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
 
-$('#numLoc').addEventListener('input', () => {
+$('#numLoc').addEventListener('input', (e) => {
   const el = $('#numLoc');
   let val = el.value;
   // Insère automatiquement un tiret après les 3 premiers caractères, pour
-  // respecter le format habituel (ex. 888-FT-8888), sans le dupliquer si le
-  // trait a déjà été tapé manuellement.
-  if (val.length === 3 && !val.includes('-')) {
+  // respecter le format habituel (ex. 888-FT-8888), mais seulement quand on
+  // tape vers l'avant — jamais pendant une suppression (backspace/delete),
+  // sinon le tiret réapparaît aussitôt effacé et bloque la correction.
+  const enTrainDeSupprimer = e.inputType && e.inputType.startsWith('delete');
+  if (val.length === 3 && !val.includes('-') && !enTrainDeSupprimer) {
     val += '-';
     el.value = val;
   }
@@ -2555,8 +2647,11 @@ $('#numLoc').addEventListener('input', () => {
 $('#numBt').addEventListener('input', () => {
   const el = $('#numBt');
   const val = el.value.trim();
-  el.classList.toggle('valid', !!val);
-  el.classList.remove('invalid');
+  if (!val) { el.classList.remove('valid', 'invalid'); return; }
+  const chiffres = val.replace(/\D/g, '');
+  const ok = chiffres.length === 7;
+  el.classList.toggle('valid', ok);
+  el.classList.toggle('invalid', !ok);
 });
 
 async function ouvrirDossier() {
@@ -2581,7 +2676,15 @@ async function ouvrirDossier() {
   if (!bt) {
     statusEl.classList.remove('hidden', 'ok', 'new');
     statusEl.classList.add('err');
-    statusEl.textContent = 'Entrez le B.T. (n\u2019importe quel contenu est accepté).';
+    statusEl.textContent = 'Entrez le B.T. (7 chiffres requis).';
+    $('#numBt').classList.add('invalid');
+    $('#numBt').focus();
+    return;
+  }
+  if (bt.replace(/\D/g, '').length !== 7) {
+    statusEl.classList.remove('hidden', 'ok', 'new');
+    statusEl.classList.add('err');
+    statusEl.textContent = 'Le B.T. doit contenir exactement 7 chiffres.';
     $('#numBt').classList.add('invalid');
     $('#numBt').focus();
     return;
@@ -3887,7 +3990,12 @@ async function importDossierFromPickedFolder(expectedNumero) {
   }
   try {
     const folder = await window.showDirectoryPicker({ mode: 'readwrite' });
-    const jsonFile = await (await folder.getFileHandle('suivi.json')).getFile();
+    // Nouveau format : 01_Dossier_actif/suivi.json. Ancien format (avant
+    // cette réorganisation) : suivi.json directement à la racine.
+    const dossierActifDir = await folder.getDirectoryHandle('01_Dossier_actif', { create: false }).catch(() => null);
+    const jsonFile = dossierActifDir
+      ? await (await dossierActifDir.getFileHandle('suivi.json')).getFile()
+      : await (await folder.getFileHandle('suivi.json')).getFile();
     const draft = normalizeDraft(JSON.parse(await jsonFile.text()));
 
     // ---- Aperçu avant import : montrer l'essentiel avant de toucher aux données locales ----
@@ -3924,21 +4032,58 @@ async function importDossierFromPickedFolder(expectedNumero) {
     });
     if (!confirmed) return false;
 
-    const docsDir = await folder.getDirectoryHandle('Documents', { create: false }).catch(() => null);
-    if (docsDir) {
+    // Documents : nouveau format réparti en 3 sous-dossiers, ancien format
+    // à plat dans Documents/. On cherche dans tous les emplacements possibles.
+    const docCandidateDirs = [];
+    const d02 = await folder.getDirectoryHandle('02_Documents', { create: false }).catch(() => null);
+    if (d02) {
+      for (const sub of ['Plans', 'Preuves', 'Autres']) {
+        const sd = await d02.getDirectoryHandle(sub, { create: false }).catch(() => null);
+        if (sd) docCandidateDirs.push(sd);
+      }
+    }
+    const oldDocsDir = await folder.getDirectoryHandle('Documents', { create: false }).catch(() => null);
+    if (oldDocsDir) docCandidateDirs.push(oldDocsDir);
+    if (docCandidateDirs.length) {
       for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
         for (const f of files) {
           const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          const blob = await readBlobFromDir(docsDir, `${name}__${safe}`);
-          if (blob) f.blob = blob;
+          for (const dir of docCandidateDirs) {
+            const blob = await readBlobFromDir(dir, `${name}__${safe}`);
+            if (blob) { f.blob = blob; break; }
+          }
         }
       }
     }
-    const photosDir = await folder.getDirectoryHandle('Photos', { create: false }).catch(() => null);
-    if (photosDir) {
+
+    const photoCandidateDirs = [];
+    const d03 = await folder.getDirectoryHandle('03_Photos', { create: false }).catch(() => null);
+    if (d03) {
+      const tachesDir = await d03.getDirectoryHandle('Taches', { create: false }).catch(() => null);
+      if (tachesDir) photoCandidateDirs.push(tachesDir);
+    }
+    const oldPhotosDir = await folder.getDirectoryHandle('Photos', { create: false }).catch(() => null);
+    if (oldPhotosDir) photoCandidateDirs.push(oldPhotosDir);
+    if (photoCandidateDirs.length) {
       for (const f of (draft.files['mise-a-jour'] || [])) {
         const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-        const blob = await readBlobFromDir(photosDir, safe);
+        for (const dir of photoCandidateDirs) {
+          const blob = await readBlobFromDir(dir, safe);
+          if (blob) { f.blob = blob; break; }
+        }
+      }
+    }
+
+    // Non-conformités : nouveau format en sous-dossier par NC, ancien format
+    // à plat dans NonConformites/.
+    const d04 = await folder.getDirectoryHandle('04_NonConformites', { create: false }).catch(() => null);
+    const oldNcDir = await folder.getDirectoryHandle('NonConformites', { create: false }).catch(() => null);
+    for (const [numero, files] of Object.entries(draft.ncFichiers || {})) {
+      const ncSousDossier = d04 ? await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: false }).catch(() => null) : null;
+      for (const f of files) {
+        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        let blob = ncSousDossier ? await readBlobFromDir(ncSousDossier, safe) : null;
+        if (!blob && oldNcDir) blob = await readBlobFromDir(oldNcDir, `${numero}__${safe}`);
         if (blob) f.blob = blob;
       }
     }
