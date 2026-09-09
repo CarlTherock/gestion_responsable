@@ -308,13 +308,17 @@ async function askNcReason() {
 // ============================================================
 const DB_NAME = 'suivi-instrumentation';
 const DB_STORE = 'dossiers';
+const DB_HANDLES_STORE = 'dossierHandles';
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(DB_STORE)) {
         req.result.createObjectStore(DB_STORE, { keyPath: 'localisation' });
+      }
+      if (!req.result.objectStoreNames.contains(DB_HANDLES_STORE)) {
+        req.result.createObjectStore(DB_HANDLES_STORE, { keyPath: 'localisation' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -344,6 +348,59 @@ async function dbPut(draft) {
       tx.onerror = () => reject(tx.error);
     });
   } catch (err) { return false; }
+}
+
+// Retient l'emplacement de sauvegarde (dossier racine + dossier du dossier
+// actif) d'une session à l'autre, pour éviter de redemander à chaque
+// réouverture. La permission d'accès au dossier peut néanmoins expirer selon
+// le navigateur — dans ce cas, on retombe simplement sur le choix normal.
+async function dbPutHandles(numero, rootHandle, dossierHandle) {
+  try {
+    const db = await openDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_HANDLES_STORE, 'readwrite');
+      tx.objectStore(DB_HANDLES_STORE).put({ localisation: numero, rootHandle: rootHandle || null, dossierHandle: dossierHandle || null });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) { return false; }
+}
+
+async function dbGetHandles(numero) {
+  try {
+    const db = await openDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_HANDLES_STORE, 'readonly');
+      const r = tx.objectStore(DB_HANDLES_STORE).get(numero);
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+  } catch (err) { return null; }
+}
+
+// Tente de restaurer silencieusement l'emplacement de sauvegarde retenu pour
+// ce dossier. Ne demande jamais de permission activement (ça exigerait un
+// geste de l'utilisateur) -- vérifie seulement si l'autorisation est déjà
+// accordée. Si non, l'utilisateur retombera simplement sur le choix normal
+// au prochain Enregistrer, comme si rien n'avait été retenu.
+async function tryRestoreSaveLocation(numero) {
+  if (!FS_ACCESS_SUPPORTED) return;
+  const saved = await dbGetHandles(numero);
+  if (!saved) return;
+  try {
+    if (saved.dossierDirHandle) {
+      const perm = await saved.dossierDirHandle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') {
+        state.dossierDirHandle = saved.dossierDirHandle;
+        state.rootDirHandle = saved.rootHandle || null;
+        return;
+      }
+    }
+    if (saved.rootHandle) {
+      const perm = await saved.rootHandle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') state.rootDirHandle = saved.rootHandle;
+    }
+  } catch (err) { /* permission expirée ou poignée invalide -- on ignore */ }
 }
 
 function generateId() {
@@ -1836,10 +1893,13 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     // Sinon, state.dossierDirHandle pointe déjà vers le dossier importé — on réécrit dedans.
     await writeEverythingToDisk(now);
 
-    // Le nom de l'employé doit être retapé à chaque sauvegarde officielle
-    // (traçabilité : jamais réutilisé silencieusement d'une sauvegarde à l'autre).
+    // Le nom de l'employé ET son rôle doivent être retapés/rechoisis à
+    // chaque sauvegarde officielle (traçabilité : jamais réutilisés
+    // silencieusement d'une sauvegarde à l'autre).
     state.draft.champs.employeeName = '';
+    state.draft.champs.employeeRole = '';
     $('#fldEmployeeName').value = '';
+    $('#fldRole').value = '';
 
     await dbPut(state.draft);
     refreshApprovals();
@@ -2050,6 +2110,7 @@ async function ensureLocalDossierFolder(date) {
   await state.dossierDirHandle.getDirectoryHandle('06_Exports', { create: true });
   const pill = $('#wsFolderPill');
   if (pill) pill.textContent = `Lié : ${state.rootDirHandle.name}/${folderName(date)}`;
+  await dbPutHandles(state.numero, state.rootDirHandle, state.dossierDirHandle);
 }
 
 // Pré-remplit le B.T. si un brouillon existe déjà pour ce numéro
@@ -2781,6 +2842,11 @@ function openWorkspace() {
   try {
     localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
   } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
+  // Tente de retrouver silencieusement l'emplacement de sauvegarde retenu
+  // pour ce dossier (sans bloquer l'affichage ni demander de permission
+  // activement) -- si l'autorisation a expiré, on retombe simplement sur le
+  // choix normal au prochain Enregistrer.
+  if (!state.rootDirHandle && !state.dossierDirHandle) tryRestoreSaveLocation(state.numero);
   $('#screenDossier').classList.add('hidden');
   $('#screenDashboard').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
@@ -4170,6 +4236,7 @@ async function importDossierFromPickedFolder(expectedNumero) {
     state.isNewDraft = false;
     state.dossierDirHandle = folder; // les futures sauvegardes réécrivent ce même dossier
     await dbPut(state.draft);
+    await dbPutHandles(state.numero, null, folder);
 
     const statusEl = $('#dossierStatus');
     statusEl.classList.remove('hidden', 'err', 'new');
