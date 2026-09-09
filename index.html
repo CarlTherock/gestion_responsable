@@ -423,10 +423,13 @@
           </div>
         </div>
 
-        <div class="panel-title" style="font-size: var(--text-base);">Historique des sauvegardes officielles</div>
+        <div class="panel-title" style="font-size: var(--text-base);">Historique des modifications</div>
         <div class="approval-history" id="approvalHistory">
-          <div class="empty-state">Aucune sauvegarde officielle enregistrée pour ce dossier.</div>
+          <div class="empty-state">Aucune sauvegarde enregistrée pour cette révision.</div>
         </div>
+
+        <button type="button" class="btn btn-tertiary" id="btnToggleSauvegardesTech" style="margin-top: var(--space-3);">Afficher les copies de sauvegarde</button>
+        <div class="approval-history hidden" id="sauvegardesTechniques" style="margin-top: var(--space-2);"></div>
       </div>
       <div class="legal-footer"><b>© 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
     </section>

@@ -787,34 +787,158 @@ const REVISION_DATA_FIELDS = [
   'casesFichiers', 'casesPreuveRequise', 'casesNotes', 'ncFichiers', 'ncSeq', 'files',
   'vpoItems', 'ncExtra',
 ];
+// L'historique de sauvegarde (S-001, S-002...) appartient toujours à SA
+// révision — toujours remis à zéro pour une nouvelle révision, copiée ou
+// vide, puisqu'il s'agit d'une nouvelle phase de travail.
+const REVISION_SAVE_FIELDS = ['approbations', 'derniereSauvegardeOfficielle'];
+// Champs identitaires du dossier principal (BT, tag, type) — préservés même
+// lorsqu'une révision est créée vide, contrairement au reste de champs.
+const DOSSIER_IDENTITY_FIELDS = ['bt', 'tag', 'type'];
 
 // Archive la révision active dans un instantané complet, puis démarre une
 // nouvelle révision active — soit en copiant les données actuelles vers
 // l'avant (par défaut), soit en repartant d'une révision vide. Le dossier
 // principal (localisation, BT via champs.bt s'il est copié, mode) et
 // l'historique global (approbations, journal) ne sont jamais touchés.
-function creerRevision(nom, motif, copier) {
-  if (!state.draft) return null;
+// Instantané léger (sans fichiers binaires) utilisé seulement pour comparer
+// une sauvegarde à la précédente — pas pour restaurer les données elles-mêmes.
+function buildLightSnapshot(d) {
+  const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length;
+  const ncFichiersCount = Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+  return {
+    tachesCochees: Object.entries(d.casesCochees || {}).filter(([, v]) => v === true).map(([k]) => k).sort(),
+    tachesNA: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'na').map(([k]) => k).sort(),
+    tachesNC: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'nc').map(([k]) => k).sort(),
+    docCount, ncFichiersCount,
+    vpo: (d.vpoItems || []).map((v) => ({ id: v.id, numero: v.numero, texte: v.texte, statut: v.statut, resolu: v.resolu })),
+    commentaires: (d.champs && d.champs.commentaires) || '',
+    statutGlobal: computeGlobalStatus().key,
+  };
+}
+
+// Trouve le libellé humain d'une tâche à partir de son nom interne.
+function findTaskLabel(mode, name) {
+  const groups = CHECKLISTS[mode] || {};
+  for (const items of Object.values(groups)) {
+    const found = items.find(([n]) => n === name);
+    if (found) return found[1];
+  }
+  return name;
+}
+
+// Compare deux instantanés légers et retourne un résumé texte (+ / ~ / −).
+// Sans mode : résumé agrégé (compteurs), utilisé dans la liste de l'historique.
+// Avec mode : détail nommé (une ligne par tâche/VPO), utilisé pour la
+// comparaison à la demande avec la version actuelle.
+function diffSnapshots(avant, apres, mode) {
+  if (!avant) return ['Première sauvegarde de cette révision.'];
+  const lignes = [];
+  const nouvellesTaches = apres.tachesCochees.filter((t) => !avant.tachesCochees.includes(t));
+  const tachesRetirees = avant.tachesCochees.filter((t) => !apres.tachesCochees.includes(t));
+  if (mode) {
+    nouvellesTaches.forEach((t) => lignes.push(`+ Tâche complétée : ${findTaskLabel(mode, t)}`));
+    tachesRetirees.forEach((t) => lignes.push(`~ Tâche décochée : ${findTaskLabel(mode, t)}`));
+  } else {
+    if (nouvellesTaches.length) lignes.push(`+ ${nouvellesTaches.length} tâche(s) complétée(s)`);
+    if (tachesRetirees.length) lignes.push(`~ ${tachesRetirees.length} tâche(s) décochée(s)`);
+  }
+
+  const nouvellesNA = apres.tachesNA.filter((t) => !avant.tachesNA.includes(t));
+  if (mode) nouvellesNA.forEach((t) => lignes.push(`~ Marquée N/A : ${findTaskLabel(mode, t)}`));
+  else if (nouvellesNA.length) lignes.push(`~ ${nouvellesNA.length} tâche(s) marquée(s) N/A`);
+
+  if (apres.docCount > avant.docCount) lignes.push(`+ ${apres.docCount - avant.docCount} document(s)/photo(s) ajouté(s)`);
+  else if (apres.docCount < avant.docCount) lignes.push(`\u2212 ${avant.docCount - apres.docCount} document(s)/photo(s) retiré(s)`);
+
+  if (apres.ncFichiersCount > avant.ncFichiersCount) lignes.push(`+ ${apres.ncFichiersCount - avant.ncFichiersCount} photo(s) ajoutée(s) à des non-conformités`);
+
+  const avantVpoById = Object.fromEntries(avant.vpo.map((v) => [v.id, v]));
+  apres.vpo.forEach((v) => {
+    const prev = avantVpoById[v.id];
+    const nomVpo = v.numero ? `VPO ${v.numero}` : (v.texte ? `VPO « ${v.texte} »` : 'VPO');
+    if (!prev && v.texte) lignes.push(`+ ${nomVpo} ajoutée`);
+    else if (prev && prev.statut !== v.statut) {
+      const label = (s) => ({ ok: 'Validée', nc: 'Non conforme', null: 'En attente' }[s] || s || 'En attente');
+      lignes.push(`~ ${nomVpo} : ${label(prev.statut)} → ${label(v.statut)}`);
+    } else if (prev && prev.resolu !== v.resolu && v.resolu) {
+      lignes.push(`~ ${nomVpo} : résolue`);
+    }
+  });
+
+  if (apres.commentaires !== avant.commentaires && apres.commentaires) lignes.push('~ Commentaire modifié');
+  if (apres.statutGlobal !== avant.statutGlobal) {
+    const labels = { brouillon: 'Brouillon', 'en-cours': 'En cours', 'attente-correction': 'En attente de correction', validation: 'En validation', pret: 'Prêt à fermer', termine: 'Terminé' };
+    lignes.push(`~ Statut : ${labels[avant.statutGlobal] || avant.statutGlobal} → ${labels[apres.statutGlobal] || apres.statutGlobal}`);
+  }
+
+  return lignes.length ? lignes : ['Aucun changement détecté depuis la dernière sauvegarde.'];
+}
+
+// Archive la révision active actuelle dans un instantané complet (avec son
+// propre historique de sauvegardes). Ne modifie pas encore les champs actifs.
+function archiverRevisionActive() {
   const snapshot = {};
-  REVISION_DATA_FIELDS.forEach((f) => { snapshot[f] = deepCloneKeepingBlobs(state.draft[f]); });
+  [...REVISION_DATA_FIELDS, ...REVISION_SAVE_FIELDS].forEach((f) => { snapshot[f] = deepCloneKeepingBlobs(state.draft[f]); });
   state.draft.revisions.push({
     ...state.draft.activeRevision,
     statut: computeGlobalStatus().key,
     fermeeLe: new Date().toISOString(),
     data: snapshot,
   });
+}
+
+function nextRevisionId() {
+  const nums = state.draft.revisions.map((r) => parseInt((r.id || 'R00').replace('R', ''), 10) || 0);
+  return 'R' + String(Math.max(...nums, -1) + 1).padStart(2, '0');
+}
+
+function creerRevision(nom, motif, copier) {
+  if (!state.draft) return null;
+  archiverRevisionActive();
 
   if (!copier) {
+    const identiteConservee = {};
+    DOSSIER_IDENTITY_FIELDS.forEach((f) => { identiteConservee[f] = state.draft.champs[f]; });
     const vierge = newDraft(state.draft.localisation, state.draft.mode);
     REVISION_DATA_FIELDS.forEach((f) => { state.draft[f] = vierge[f]; });
+    Object.assign(state.draft.champs, identiteConservee);
   }
   // Si copier === true, les champs actifs restent tels quels (c'est déjà la copie).
 
-  const nums = state.draft.revisions.map((r) => parseInt((r.id || 'R00').replace('R', ''), 10) || 0);
-  const prochainNum = Math.max(...nums, -1) + 1;
-  const nouvelId = 'R' + String(prochainNum).padStart(2, '0');
+  // L'historique de sauvegarde (S-001, S-002...) repart toujours à zéro pour
+  // la nouvelle révision, qu'elle soit copiée ou vide.
+  state.draft.approbations = [];
+  state.draft.derniereSauvegardeOfficielle = null;
+
+  const nouvelId = nextRevisionId();
   state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: motif || '', creeLe: new Date().toISOString() };
   logActivity(`Révision ${nouvelId} créée (${nom || nouvelId})${motif ? ' — ' + motif : ''}`);
+  schedulePersist();
+  return nouvelId;
+}
+
+// Crée une nouvelle révision à partir d'une ancienne sauvegarde (S-XXX d'une
+// révision quelconque, active ou archivée). Ne remplace jamais le dossier ou
+// la révision active — la révision active en cours est d'abord archivée
+// normalement, puis la nouvelle révision démarre avec les données de
+// l'ancienne sauvegarde. Le BT/tag/type du dossier principal sont conservés
+// tels qu'ils sont actuellement (pas ceux de l'ancienne sauvegarde), pour ne
+// jamais désynchroniser l'identité du dossier.
+function creerRevisionDepuisSauvegarde(saveRecord, sourceRevisionId, nom) {
+  if (!state.draft || !saveRecord || !saveRecord.snapshotComplet) return null;
+  archiverRevisionActive();
+
+  const identiteConservee = {};
+  DOSSIER_IDENTITY_FIELDS.forEach((f) => { identiteConservee[f] = state.draft.champs[f]; });
+  REVISION_DATA_FIELDS.forEach((f) => { state.draft[f] = deepCloneKeepingBlobs(saveRecord.snapshotComplet[f]); });
+  Object.assign(state.draft.champs, identiteConservee);
+
+  state.draft.approbations = [];
+  state.draft.derniereSauvegardeOfficielle = null;
+
+  const nouvelId = nextRevisionId();
+  state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: 'Reprise depuis sauvegarde', creeLe: new Date().toISOString() };
+  logActivity(`Révision ${nouvelId} créée depuis la sauvegarde ${saveRecord.id} de ${sourceRevisionId}`);
   schedulePersist();
   return nouvelId;
 }
@@ -1364,7 +1488,10 @@ function renderApercu() {
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Rapport de chantier et outils</div>
     <div class="stat-row" style="margin-bottom: var(--space-4);">
       <div class="stat-card"><div class="num">${docCount}</div><div class="lbl">Documents / photos</div></div>
-      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes</div></div>
+    </div>
+    <div class="tools-row" style="margin-bottom:var(--space-4);">
+      <button type="button" class="btn btn-tertiary" id="btnVoirHistoriqueApercu">Voir l\u2019historique des modifications</button>
     </div>
     <div class="tools-row">
       <button type="button" class="btn btn-outline" id="btnExportApercu">Exporter le rapport de chantier</button>
@@ -1417,6 +1544,9 @@ function renderApercu() {
 
   const closureCheckBtn = $('#btnClosureCheckMobile', container);
   if (closureCheckBtn) closureCheckBtn.addEventListener('click', showClosureCheckModal);
+
+  const voirHistoriqueBtn = $('#btnVoirHistoriqueApercu', container);
+  if (voirHistoriqueBtn) voirHistoriqueBtn.addEventListener('click', () => selectTab('approbation'));
 
   const exportBtn = $('#btnExportApercu', container);
   if (exportBtn) exportBtn.addEventListener('click', exportDashboardFile);
@@ -1639,12 +1769,29 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   }
 
   const now = new Date();
-  const record = { nom, role, at: now.toISOString() };
+  const derniereSauv = state.draft.approbations[state.draft.approbations.length - 1];
+  const snapshotAvant = derniereSauv ? derniereSauv.snapshot : null;
+  const snapshotApres = buildLightSnapshot(state.draft);
+  const resume = diffSnapshots(snapshotAvant, snapshotApres);
+  const idSauvegarde = 'S-' + String(state.draft.approbations.length + 1).padStart(3, '0');
+  const record = {
+    id: idSauvegarde,
+    revisionId: state.draft.activeRevision.id,
+    nom, role, at: now.toISOString(),
+    statut: snapshotApres.statutGlobal,
+    resume,
+    snapshot: snapshotApres,
+    snapshotComplet: (() => {
+      const s = {};
+      REVISION_DATA_FIELDS.forEach((f) => { s[f] = deepCloneKeepingBlobs(state.draft[f]); });
+      return s;
+    })(),
+  };
   state.draft.approbations.push(record);
   state.draft.derniereSauvegardeOfficielle = record;
   state.draft.champs.employeeName = nom;
   state.draft.champs.employeeRole = role;
-  logActivity(`Dossier sauvegardé officiellement par ${nom} (${role})`);
+  logActivity(`Sauvegarde ${idSauvegarde} (${state.draft.activeRevision.id}) par ${nom} (${role})`);
 
   try {
     if (state.rootDirHandle) {
@@ -3520,17 +3667,151 @@ $('#btnSaveAnnotated').addEventListener('click', () => {
 
 // ---------- Approbation : le nom/rôle sont persistés comme champs généraux
 // (voir GENERAL_FIELD_MAP) et lus au moment de la sauvegarde officielle ----------
+// Formate une date en "Aujourd'hui, 14:32" / "Hier, ..." / date complète.
+function formatDateRelative(iso) {
+  const d = new Date(iso);
+  const maintenant = new Date();
+  const heure = d.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
+  const memeJour = d.toDateString() === maintenant.toDateString();
+  const hier = new Date(maintenant); hier.setDate(hier.getDate() - 1);
+  if (memeJour) return `Aujourd\u2019hui, ${heure}`;
+  if (d.toDateString() === hier.toDateString()) return `Hier, ${heure}`;
+  return `${d.toLocaleDateString('fr-CA')}, ${heure}`;
+}
+
+// Résumé de l'état (tâches/VPO/NC/documents) à partir d'un instantané complet.
+function summarizeSnapshotComplet(snap, mode) {
+  const groups = CHECKLISTS[mode] || {};
+  let total = 0, faites = 0, na = 0, nc = 0;
+  Object.values(groups).forEach((items) => items.forEach(([name]) => {
+    total += 1;
+    const v = snap.casesCochees[name];
+    if (v === true) faites += 1;
+    else if (v === 'na') na += 1;
+    else if (v === 'nc') nc += 1;
+  }));
+  const vpoCount = (snap.vpoItems || []).filter((v) => v.texte && v.texte.trim()).length;
+  const vpoValidees = (snap.vpoItems || []).filter((v) => v.statut === 'ok').length;
+  const ncFichiersCount = Object.values(snap.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+  const docCount = Object.values(snap.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (snap.files['mise-a-jour'] || []).length;
+  return { total, faites, na, nc, vpoCount, vpoValidees, ncFichiersCount, docCount };
+}
+
+function showSaveDetailModal(idx) {
+  const record = state.draft.approbations[idx];
+  if (!record) return;
+  const sourceRevisionId = state.draft.activeRevision.id;
+  const complet = !!record.snapshotComplet;
+  const resume = complet ? summarizeSnapshotComplet(record.snapshotComplet, state.draft.mode) : null;
+
+  showModal({
+    title: `Sauvegarde du ${formatDateRelative(record.at)}`,
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Par ${escapeHtml(record.nom)} · ${escapeHtml(record.role)}</p>
+      ${complet ? `
+      <div class="closure-summary-grid" style="margin-bottom:var(--space-3);">
+        <div>Tâches<br><strong>${resume.faites} / ${resume.total}</strong></div>
+        <div>N/A<br><strong>${resume.na}</strong></div>
+        <div>Non conformes<br><strong>${resume.nc}</strong></div>
+        <div>VPO<br><strong>${resume.vpoValidees} / ${resume.vpoCount} validées</strong></div>
+        <div>Photos sur NC<br><strong>${resume.ncFichiersCount}</strong></div>
+        <div>Documents / photos<br><strong>${resume.docCount}</strong></div>
+      </div>` : `
+      <p style="font-size:var(--text-sm);color:var(--color-warning, #eab308);margin-bottom:var(--space-3);">Cette sauvegarde a été faite avant l\u2019ajout de la consultation détaillée et de la copie — l\u2019état complet (tâches, VPO, NC, documents) n\u2019a pas été conservé pour elle. Le résumé des changements et la comparaison restent disponibles ci-dessous.</p>`}
+      ${record.resume ? `<div class="panel-title" style="font-size:var(--text-sm);">Changements à cette sauvegarde</div><ul class="approval-resume" style="margin-bottom:var(--space-3);">${record.resume.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : ''}
+      <div class="tools-row">
+        <button type="button" class="btn btn-outline" id="btnComparerSauvegarde">Comparer avec la version actuelle</button>
+        ${complet ? `<button type="button" class="btn btn-outline" id="btnCopierDepuisSauvegarde">Créer une copie depuis cette sauvegarde</button>` : ''}
+      </div>
+    `,
+    confirmLabel: 'Fermer',
+  });
+
+  $('#btnComparerSauvegarde').addEventListener('click', () => {
+    const avant = record.snapshot;
+    const actuel = buildLightSnapshot(state.draft);
+    const diff = diffSnapshots(avant, actuel, state.draft.mode);
+    showModal({
+      title: 'Comparaison avec la version actuelle',
+      bodyHtml: `<ul class="approval-resume">${diff.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
+      confirmLabel: 'Fermer',
+    });
+  });
+
+  if (!complet) return;
+
+  $('#btnCopierDepuisSauvegarde').addEventListener('click', () => {
+    const suggestion = `${nextRevisionId()} — Reprise depuis sauvegarde du ${new Date(record.at).toLocaleDateString('fr-CA')}, ${new Date(record.at).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}`;
+    showModal({
+      title: 'Créer une copie depuis cette sauvegarde',
+      bodyHtml: `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Cette action créera une <strong>nouvelle révision</strong>. La révision active actuelle (${escapeHtml(sourceRevisionId)}) ne sera pas remplacée — elle sera archivée normalement.</p>
+        <div class="field"><label>Nom de la nouvelle révision</label><input type="text" id="revCopieNom" value="${escapeHtml(suggestion)}"></div>
+      `,
+      confirmLabel: 'Créer la copie',
+    }).then((confirmed) => {
+      if (!confirmed) return;
+      const nom = $('#revCopieNom').value.trim() || suggestion;
+      const nouvelId = creerRevisionDepuisSauvegarde(record, sourceRevisionId, nom);
+      if (nouvelId) {
+        toast(`Révision ${nouvelId} créée depuis ${record.id}.`);
+        renderApercu();
+        renderAllChecklists();
+        renderVpoList();
+        renderNonConformites();
+        renderDocuments();
+      }
+    });
+  });
+}
+
 function refreshApprovals() {
   const el = $('#approvalHistory');
+  const techEl = $('#sauvegardesTechniques');
   const list = state.draft ? state.draft.approbations : [];
-  if (!list || !list.length) { el.innerHTML = '<div class="empty-state">Aucune sauvegarde officielle enregistrée pour ce dossier.</div>'; return; }
-  el.innerHTML = list.slice().reverse().map((a) => `
-    <div class="approval-row">
-      <span class="badge-ok">✓</span>
-      <span class="who">${a.nom} <span style="color:var(--color-text-faint);font-weight:400;">(${a.role})</span></span>
-      <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
+  if (!list || !list.length) {
+    el.innerHTML = '<div class="empty-state">Aucune sauvegarde enregistrée pour cette révision.</div>';
+    if (techEl) techEl.innerHTML = '<div class="empty-state">Aucune copie de sauvegarde pour cette révision.</div>';
+    return;
+  }
+  // Vue principale : lisible, avec numéro — date, personne, résumé.
+  el.innerHTML = list.slice().reverse().map((a, i) => `
+    <div class="approval-row approval-row-rich approval-row-clickable" data-save-idx="${list.length - 1 - i}">
+      <div class="approval-row-header">
+        <span class="badge-ok">✓</span>
+        <span class="revision-id">${escapeHtml(a.id || '')}</span>
+        <span class="when">${formatDateRelative(a.at)}</span>
+        <span class="who">${escapeHtml(a.nom)} <span style="color:var(--color-text-faint);font-weight:400;">· ${escapeHtml(a.role)}</span></span>
+      </div>
+      ${a.resume ? `<ul class="approval-resume">${a.resume.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : ''}
     </div>`).join('');
+  $$('[data-save-idx]', el).forEach((row) => {
+    row.addEventListener('click', () => showSaveDetailModal(Number(row.dataset.saveIdx)));
+  });
+
+  // Vue secondaire (technique) : copies de sauvegarde numérotées, repliée par
+  // défaut. Une restauration future créera toujours une copie/révision,
+  // jamais un écrasement direct du dossier actif.
+  if (techEl) {
+    techEl.innerHTML = list.slice().reverse().map((a, i) => `
+      <div class="approval-row approval-row-clickable" data-save-idx="${list.length - 1 - i}">
+        <span class="revision-id">${escapeHtml(a.id || '')}</span>
+        <span class="who">${escapeHtml(a.nom)} (${escapeHtml(a.role)})</span>
+        <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
+      </div>`).join('');
+    $$('[data-save-idx]', techEl).forEach((row) => {
+      row.addEventListener('click', () => showSaveDetailModal(Number(row.dataset.saveIdx)));
+    });
+  }
 }
+
+$('#btnToggleSauvegardesTech').addEventListener('click', () => {
+  const techEl = $('#sauvegardesTechniques');
+  const btn = $('#btnToggleSauvegardesTech');
+  const visible = !techEl.classList.contains('hidden');
+  techEl.classList.toggle('hidden', visible);
+  btn.textContent = visible ? 'Afficher les copies de sauvegarde' : 'Masquer les copies de sauvegarde';
+});
 
 // ---------- Code QR : retrouver rapidement ce dossier ----------
 function buildDossierUrl() {
