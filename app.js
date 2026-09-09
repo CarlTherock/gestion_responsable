@@ -2401,6 +2401,15 @@ function taskMatchesFilter(name, filterKey) {
   }
 }
 
+function wireChecklistFilterSelect(container, group) {
+  $$('[data-checklist-filter]', container).forEach((sel) => {
+    sel.addEventListener('change', () => {
+      state.checklistFilter = sel.value;
+      Object.keys(CHECKLISTS[state.draft.mode] || {}).forEach((g) => renderChecklist(g));
+    });
+  });
+}
+
 function renderChecklist(group) {
   const container = $(`[data-checklist="${group}"]`);
   if (!container) return;
@@ -2421,6 +2430,7 @@ function renderChecklist(group) {
   if (!items.length) {
     container.innerHTML = filterBarHtml + '<div class="empty-state">Aucune tâche ne correspond à ce filtre.</div>';
     updateChecklistProgress(group, allItems.filter(([n]) => state.draft.casesCochees[n] === true).length, allItems.length);
+    wireChecklistFilterSelect(container, group);
     return;
   }
   const canAttach = ATTACH_GROUPS.includes(group);
@@ -2466,12 +2476,7 @@ function renderChecklist(group) {
       </div>`;
   }).join('');
 
-  $$('[data-checklist-filter]', container).forEach((sel) => {
-    sel.addEventListener('change', () => {
-      state.checklistFilter = sel.value;
-      Object.keys(CHECKLISTS[state.draft.mode] || {}).forEach((g) => renderChecklist(g));
-    });
-  });
+  wireChecklistFilterSelect(container, group);
 
   $$('.ci-checkbox', container).forEach((cb) => {
     cb.addEventListener('change', () => {
