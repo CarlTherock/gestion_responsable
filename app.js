@@ -2106,11 +2106,59 @@ function slugForFolder(text, maxLen) {
   return (base || 'Sauvegarde').slice(0, maxLen || 30);
 }
 
+// Écrit les documents/photos/non-conformités d'un brouillon dans un dossier
+// cible donné, avec la même structure (02_Documents style, Photos, NC).
+// Réutilisée à la fois pour la racine du dossier ET pour chaque sauvegarde
+// dans 05_Historique — pour que chaque S-XXX soit un instantané COMPLET et
+// autonome, avec ses propres fichiers tels qu'ils étaient à ce moment, plutôt
+// que de dépendre des dossiers communs à la racine.
+async function writeDocumentsPhotosNc(destHandle, draft) {
+  const groupOfTask = {};
+  Object.entries(CHECKLISTS[draft.mode] || {}).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
+
+  const d02 = await destHandle.getDirectoryHandle('02_Documents', { create: true });
+  for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
+    for (const f of files) {
+      try {
+        const categorie = categorizeDocument(groupOfTask[name], name);
+        const catDir = await d02.getDirectoryHandle(categorie, { create: true });
+        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        await writeTextFile(catDir, `${name}__${safe}`, f.blob);
+      } catch (err) { /* best effort par fichier */ }
+    }
+  }
+
+  const d03 = await destHandle.getDirectoryHandle('03_Photos', { create: true });
+  const d03taches = await d03.getDirectoryHandle('Taches', { create: true });
+  for (const f of (draft.files['mise-a-jour'] || [])) {
+    try {
+      const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+      await writeTextFile(d03taches, safe, f.blob);
+    } catch (err) { /* best effort par fichier */ }
+  }
+
+  try {
+    const d04 = await destHandle.getDirectoryHandle('04_NonConformites', { create: true });
+    const registreLignes = [];
+    for (const [numero, files] of Object.entries(draft.ncFichiers || {})) {
+      registreLignes.push(`${numero} — ${files.length} fichier(s)`);
+      const ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true });
+      for (const f of files) {
+        try {
+          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          await writeTextFile(ncDir, safe, f.blob);
+        } catch (err) { /* best effort par fichier */ }
+      }
+    }
+    await writeTextFile(d04, 'registre.txt', registreLignes.length ? registreLignes.join('\n') : 'Aucune non-conformité avec fichier joint.');
+  } catch (err) { /* best effort */ }
+}
+
 async function writeEverythingToDisk(date) {
   if (!state.dossierDirHandle || !state.draft) return;
   const jsonContent = JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2);
   const resumeContent = buildResumeText();
-  const dashboardContent = buildDashboardHtml();
+  const dashboardContent = buildDashboardHtml({ docPrefix: '../', estInstantaneHistorique: false });
 
   // 01_Dossier_actif : les données brutes du dossier.
   const d01 = await state.dossierDirHandle.getDirectoryHandle('01_Dossier_actif', { create: true });
@@ -2131,8 +2179,15 @@ async function writeEverythingToDisk(date) {
     await writeTextFile(d06, 'Rapport_de_chantier.html', dashboardContent);
   } catch (err) { /* best effort */ }
 
-  // 05_Historique : un sous-dossier autonome par sauvegarde officielle,
-  // nommé pour rester trié et lisible dans Windows/OneDrive.
+  // 02_Documents / 03_Photos / 04_NonConformites à la racine : reflètent
+  // toujours l'état ACTUEL (pratique pour parcourir sans ouvrir une
+  // sauvegarde précise).
+  await writeDocumentsPhotosNc(state.dossierDirHandle, state.draft);
+
+  // 05_Historique : un dossier COMPLET et autonome par sauvegarde officielle
+  // — pas seulement le texte, mais une vraie copie des documents/photos/NC
+  // tels qu'ils étaient à ce moment précis, pour pouvoir ouvrir S-001 comme
+  // si S-002 n'avait jamais existé.
   try {
     const d05 = await state.dossierDirHandle.getDirectoryHandle('05_Historique', { create: true });
     const dernier = state.draft.approbations[state.draft.approbations.length - 1];
@@ -2144,51 +2199,10 @@ async function writeEverythingToDisk(date) {
       const dSave = await d05.getDirectoryHandle(nomSousDossier, { create: true });
       await writeTextFile(dSave, 'suivi.json', jsonContent);
       await writeTextFile(dSave, 'resume.txt', resumeContent);
-      await writeTextFile(dSave, 'Dashboard.html', dashboardContent);
+      await writeTextFile(dSave, 'Dashboard.html', buildDashboardHtml({ docPrefix: './', estInstantaneHistorique: true }));
       await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n'));
+      await writeDocumentsPhotosNc(dSave, state.draft);
     }
-  } catch (err) { /* best effort */ }
-
-  // 02_Documents : classés par Plans / Preuves / Autres.
-  const d02 = await state.dossierDirHandle.getDirectoryHandle('02_Documents', { create: true });
-  const groupOfTask = {};
-  Object.entries(CHECKLISTS[state.draft.mode] || {}).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
-  for (const [name, files] of Object.entries(state.draft.casesFichiers || {})) {
-    for (const f of files) {
-      try {
-        const categorie = categorizeDocument(groupOfTask[name], name);
-        const catDir = await d02.getDirectoryHandle(categorie, { create: true });
-        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        await writeTextFile(catDir, `${name}__${safe}`, f.blob);
-      } catch (err) { /* best effort par fichier */ }
-    }
-  }
-
-  // 03_Photos/Taches : photos de mise à jour générale.
-  const d03 = await state.dossierDirHandle.getDirectoryHandle('03_Photos', { create: true });
-  const d03taches = await d03.getDirectoryHandle('Taches', { create: true });
-  for (const f of (state.draft.files['mise-a-jour'] || [])) {
-    try {
-      const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-      await writeTextFile(d03taches, safe, f.blob);
-    } catch (err) { /* best effort par fichier */ }
-  }
-
-  // 04_NonConformites : un sous-dossier par NC, avec un registre à la racine.
-  try {
-    const d04 = await state.dossierDirHandle.getDirectoryHandle('04_NonConformites', { create: true });
-    const registreLignes = [];
-    for (const [numero, files] of Object.entries(state.draft.ncFichiers || {})) {
-      registreLignes.push(`${numero} — ${files.length} fichier(s)`);
-      const ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true });
-      for (const f of files) {
-        try {
-          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          await writeTextFile(ncDir, safe, f.blob);
-        } catch (err) { /* best effort par fichier */ }
-      }
-    }
-    await writeTextFile(d04, 'registre.txt', registreLignes.length ? registreLignes.join('\n') : 'Aucune non-conformité avec fichier joint.');
   } catch (err) { /* best effort */ }
 }
 
@@ -2217,7 +2231,10 @@ function ringSvg(pct, size, stroke) {
   </svg>`;
 }
 
-function buildDashboardHtml() {
+function buildDashboardHtml(options) {
+  const opts = options || {};
+  const prefix = opts.docPrefix || '../';
+  const estInstantaneHistorique = !!opts.estInstantaneHistorique;
   const d = state.draft;
   const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
   const { done, total, pct } = computeProgress();
@@ -2283,7 +2300,7 @@ function buildDashboardHtml() {
       const reason = (v === 'na' || v === 'nc') ? d.casesRaisons[name] : '';
       const files = d.casesFichiers[name] || [];
       const categorie = categorizeDocument(g.group, name);
-      const filesHtml = attachmentsHtml(files, `../02_Documents/${categorie}/${name}__`);
+      const filesHtml = attachmentsHtml(files, `${prefix}02_Documents/${categorie}/${name}__`);
       return taskRowHtml(label, v, reason, filesHtml);
     }).join('');
     return `<details class="section-card" id="sec-${g.group}">
@@ -2343,7 +2360,7 @@ function buildDashboardHtml() {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = d.files['mise-a-jour'] || [];
-  const photosHtml = photos.length ? attachmentsHtml(photos, '../03_Photos/Taches/') : '<p class="empty">Aucune image de mise à jour.</p>';
+  const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`) : '<p class="empty">Aucune image de mise à jour.</p>';
 
   // ---- Historique ----
   const histHtml = (d.approbations || []).length
@@ -2507,6 +2524,14 @@ function buildDashboardHtml() {
       </div>
     </div>
 
+    ${estInstantaneHistorique ? `
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Ceci est un instantané historique — les documents ci-dessous sont ceux de CETTE sauvegarde précisément, indépendants des changements faits depuis.</p>
+    <div class="nav-grid">
+      <a class="nav-btn" href="${prefix}02_Documents/"><span class="nav-label">Documents de cette sauvegarde</span><span class="nav-path">02_Documents/</span></a>
+      <a class="nav-btn" href="${prefix}03_Photos/"><span class="nav-label">Photos de cette sauvegarde</span><span class="nav-path">03_Photos/</span></a>
+      <a class="nav-btn" href="${prefix}04_NonConformites/"><span class="nav-label">Non-conformités de cette sauvegarde</span><span class="nav-path">04_NonConformites/</span></a>
+      <a class="nav-btn" href="../../00_Dashboard/Dashboard.html"><span class="nav-label">Retour au dossier actif</span><span class="nav-path">00_Dashboard/Dashboard.html</span></a>
+    </div>` : `
     <div class="nav-grid">
       <a class="nav-btn" href="../01_Dossier_actif/"><span class="nav-label">Ouvrir le dossier actif</span><span class="nav-path">01_Dossier_actif/</span></a>
       <a class="nav-btn" href="../02_Documents/"><span class="nav-label">Ouvrir les documents</span><span class="nav-path">02_Documents/</span></a>
@@ -2516,7 +2541,7 @@ function buildDashboardHtml() {
       <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
       <a class="nav-btn" href="${appUrl}"><span class="nav-label">Créer une révision</span><span class="nav-path">Ouvre l\u2019application</span></a>
       <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre l\u2019application' : 'Disponible à 100 % seulement'}</span></a>
-    </div>
+    </div>`}
 
     <div class="hero-ring">
       ${ringSvg(pct, 150, 14)}
