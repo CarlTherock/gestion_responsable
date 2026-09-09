@@ -1448,12 +1448,6 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     }
     // Sinon, state.dossierDirHandle pointe déjà vers le dossier importé — on réécrit dedans.
     await writeEverythingToDisk(now);
-
-    // Le nom de l'employé doit être retapé à chaque sauvegarde officielle
-    // (traçabilité : jamais réutilisé silencieusement d'une sauvegarde à l'autre).
-    state.draft.champs.employeeName = '';
-    $('#fldEmployeeName').value = '';
-
     await dbPut(state.draft);
     refreshApprovals();
     updateApprobationBadge();
