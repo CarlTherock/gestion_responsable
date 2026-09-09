@@ -2712,69 +2712,6 @@ function attachShareHistoryClicks(container, fileGetter) {
   });
 }
 
-// Dessine une petite image "carré vert" imitant la tâche cochée dans l'app,
-// pour accompagner la photo partagée — plus clair à lire qu'une ligne de
-// texte pleine de traits d'union.
-function generateTaskConfirmationCard(label, numero, bt) {
-  return new Promise((resolve) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 900; canvas.height = 280;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) { resolve(null); return; }
-    // Fond vert foncé + bordure verte, comme .checklist-item-wrap.checked
-    ctx.fillStyle = '#16321f';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#43b06b';
-    ctx.lineWidth = 6;
-    ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
-    // Case à cocher verte avec crochet
-    ctx.fillStyle = '#43b06b';
-    ctx.beginPath();
-    ctx.roundRect(48, 60, 72, 72, 12);
-    ctx.fill();
-    ctx.strokeStyle = '#0d1f13';
-    ctx.lineWidth = 8;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(68, 96);
-    ctx.lineTo(82, 112);
-    ctx.lineTo(112, 78);
-    ctx.stroke();
-    // Libellé de la tâche
-    ctx.fillStyle = '#e7ebef';
-    ctx.font = '600 34px -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
-    wrapCanvasText(ctx, label, 150, 100, canvas.width - 190, 40);
-    // Dossier / BT
-    ctx.fillStyle = '#99a6b5';
-    ctx.font = '26px -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
-    const dossierLigne = [numero, bt ? formatBt(bt) : ''].filter(Boolean).join('  ·  ');
-    ctx.fillText(dossierLigne, 150, 165);
-    // Marque de bas de carte
-    ctx.fillStyle = '#5d6b7a';
-    ctx.font = '20px -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
-    ctx.fillText('Suivi TEI — tâche complétée', 48, 240);
-    canvas.toBlob((blob) => resolve(blob), 'image/png');
-  });
-}
-
-function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
-  const words = text.split(' ');
-  let line = '';
-  let lineY = y;
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      ctx.fillText(line, x, lineY);
-      line = word;
-      lineY += lineHeight;
-    } else {
-      line = test;
-    }
-  }
-  if (line) ctx.fillText(line, x, lineY);
-}
-
 async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
   const confirmed = await showModal({
     title: 'Partager cette photo',
@@ -2795,27 +2732,18 @@ async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
   // via le partage natif de Windows, notamment) n'utilisent pas ce champ
   // pour l'objet du message même quand on le fournit — c'est une limite de
   // l'intégration de partage de l'OS, pas quelque chose qu'une page web peut
-  // forcer. On le met donc aussi en premier dans le texte, pour qu'il reste
-  // visible et copiable si l'objet ne se remplit pas tout seul.
+  // forcer.
   const numero = state.numero || '';
   const btPart = state.draft && state.draft.champs.bt ? '-' + formatBt(state.draft.champs.bt) : '';
   const sujetTexte = `${subjectLabel || contextLabel} - ${numero}${btPart}`;
 
+  // Un seul fichier joint : la photo elle-même.
   const files = [file.blob instanceof File ? file.blob : new File([file.blob], file.name, { type: file.type })];
-  // Carte verte de confirmation jointe en second fichier — seulement pour un
-  // partage de tâche (un libellé propre est fourni), pas pour un document
-  // générique où ça n'aurait pas de sens.
-  if (subjectLabel) {
-    try {
-      const cardBlob = await generateTaskConfirmationCard(subjectLabel, numero, state.draft && state.draft.champs.bt);
-      if (cardBlob) files.push(new File([cardBlob], 'confirmation-tache.png', { type: 'image/png' }));
-    } catch (err) {
-      console.error('Erreur lors de la génération de la carte de confirmation :', err);
-      // On continue sans la carte plutôt que de bloquer le partage de la photo.
-    }
-  }
 
-  const shareData = { files, title: sujetTexte, text: sujetTexte };
+  // Message texte simple et lisible, avec salutation.
+  const messageTexte = `Bonjour,\n\n${subjectLabel || contextLabel}\nDossier : ${numero}${state.draft && state.draft.champs.bt ? '\nB.T. : ' + formatBt(state.draft.champs.bt) : ''}\n\n— Suivi TEI`;
+
+  const shareData = { files, title: sujetTexte, text: messageTexte };
   let methode = 'inconnue';
   try {
     if (navigator.canShare && navigator.canShare({ files: shareData.files })) {
@@ -2829,7 +2757,7 @@ async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
     // manuellement — aucune API web ne permet de joindre un fichier à un
     // mailto: automatiquement.
     const sujet = encodeURIComponent(sujetTexte);
-    const corps = encodeURIComponent(`${sujetTexte}\n\nBonjour ${destName},\n\nPhoto à corriger ci-jointe (à ajouter manuellement, avec la carte de confirmation si générée) : « ${file.name} ».\n\n— Suivi TEI`);
+    const corps = encodeURIComponent(`${messageTexte}\n\nMerci de joindre manuellement le fichier « ${file.name} » (téléchargé séparément) à ce courriel.`);
     window.location.href = `mailto:${destEmail}?subject=${sujet}&body=${corps}`;
     methode = 'Courriel (pièce jointe à ajouter manuellement)';
     toast('Le fichier n\u2019a pas pu être joint automatiquement — un navigateur ne peut jamais le faire par courriel. Téléchargez-le puis joignez-le manuellement.', 6000);
