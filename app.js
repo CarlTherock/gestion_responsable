@@ -787,16 +787,77 @@ const REVISION_DATA_FIELDS = [
   'casesFichiers', 'casesPreuveRequise', 'casesNotes', 'ncFichiers', 'ncSeq', 'files',
   'vpoItems', 'ncExtra',
 ];
+// L'historique de sauvegarde (S-001, S-002...) appartient toujours à SA
+// révision — toujours remis à zéro pour une nouvelle révision, copiée ou
+// vide, puisqu'il s'agit d'une nouvelle phase de travail.
+const REVISION_SAVE_FIELDS = ['approbations', 'derniereSauvegardeOfficielle'];
+// Champs identitaires du dossier principal (BT, tag, type) — préservés même
+// lorsqu'une révision est créée vide, contrairement au reste de champs.
+const DOSSIER_IDENTITY_FIELDS = ['bt', 'tag', 'type'];
 
 // Archive la révision active dans un instantané complet, puis démarre une
 // nouvelle révision active — soit en copiant les données actuelles vers
 // l'avant (par défaut), soit en repartant d'une révision vide. Le dossier
 // principal (localisation, BT via champs.bt s'il est copié, mode) et
 // l'historique global (approbations, journal) ne sont jamais touchés.
+// Instantané léger (sans fichiers binaires) utilisé seulement pour comparer
+// une sauvegarde à la précédente — pas pour restaurer les données elles-mêmes.
+function buildLightSnapshot(d) {
+  const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length;
+  const ncFichiersCount = Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+  return {
+    tachesCochees: Object.entries(d.casesCochees || {}).filter(([, v]) => v === true).map(([k]) => k).sort(),
+    tachesNA: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'na').map(([k]) => k).sort(),
+    tachesNC: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'nc').map(([k]) => k).sort(),
+    docCount, ncFichiersCount,
+    vpo: (d.vpoItems || []).map((v) => ({ id: v.id, numero: v.numero, texte: v.texte, statut: v.statut, resolu: v.resolu })),
+    commentaires: (d.champs && d.champs.commentaires) || '',
+    statutGlobal: computeGlobalStatus().key,
+  };
+}
+
+// Compare deux instantanés légers et retourne un résumé texte (+ / ~ / −).
+function diffSnapshots(avant, apres) {
+  if (!avant) return ['Première sauvegarde de cette révision.'];
+  const lignes = [];
+  const nouvellesTaches = apres.tachesCochees.filter((t) => !avant.tachesCochees.includes(t));
+  const tachesRetirees = avant.tachesCochees.filter((t) => !apres.tachesCochees.includes(t));
+  if (nouvellesTaches.length) lignes.push(`+ ${nouvellesTaches.length} tâche(s) complétée(s)`);
+  if (tachesRetirees.length) lignes.push(`~ ${tachesRetirees.length} tâche(s) décochée(s)`);
+
+  const nouvellesNA = apres.tachesNA.filter((t) => !avant.tachesNA.includes(t));
+  if (nouvellesNA.length) lignes.push(`~ ${nouvellesNA.length} tâche(s) marquée(s) N/A`);
+
+  if (apres.docCount > avant.docCount) lignes.push(`+ ${apres.docCount - avant.docCount} document(s)/photo(s) ajouté(s)`);
+  else if (apres.docCount < avant.docCount) lignes.push(`\u2212 ${avant.docCount - apres.docCount} document(s)/photo(s) retiré(s)`);
+
+  if (apres.ncFichiersCount > avant.ncFichiersCount) lignes.push(`+ ${apres.ncFichiersCount - avant.ncFichiersCount} photo(s) ajoutée(s) à des non-conformités`);
+
+  const avantVpoById = Object.fromEntries(avant.vpo.map((v) => [v.id, v]));
+  apres.vpo.forEach((v) => {
+    const prev = avantVpoById[v.id];
+    if (!prev && v.texte) lignes.push(`+ VPO${v.numero ? ' ' + v.numero : ''} ajoutée`);
+    else if (prev && prev.statut !== v.statut) {
+      const label = (s) => ({ ok: 'Validée', nc: 'Non conforme', null: 'En attente' }[s] || s || 'En attente');
+      lignes.push(`~ VPO${v.numero ? ' ' + v.numero : ''} : ${label(prev.statut)} → ${label(v.statut)}`);
+    } else if (prev && prev.resolu !== v.resolu && v.resolu) {
+      lignes.push(`~ VPO${v.numero ? ' ' + v.numero : ''} : résolue`);
+    }
+  });
+
+  if (apres.commentaires !== avant.commentaires && apres.commentaires) lignes.push('~ Commentaire modifié');
+  if (apres.statutGlobal !== avant.statutGlobal) {
+    const labels = { brouillon: 'Brouillon', 'en-cours': 'En cours', 'attente-correction': 'En attente de correction', validation: 'En validation', pret: 'Prêt à fermer', termine: 'Terminé' };
+    lignes.push(`~ Statut : ${labels[avant.statutGlobal] || avant.statutGlobal} → ${labels[apres.statutGlobal] || apres.statutGlobal}`);
+  }
+
+  return lignes.length ? lignes : ['Aucun changement détecté depuis la dernière sauvegarde.'];
+}
+
 function creerRevision(nom, motif, copier) {
   if (!state.draft) return null;
   const snapshot = {};
-  REVISION_DATA_FIELDS.forEach((f) => { snapshot[f] = deepCloneKeepingBlobs(state.draft[f]); });
+  [...REVISION_DATA_FIELDS, ...REVISION_SAVE_FIELDS].forEach((f) => { snapshot[f] = deepCloneKeepingBlobs(state.draft[f]); });
   state.draft.revisions.push({
     ...state.draft.activeRevision,
     statut: computeGlobalStatus().key,
@@ -805,10 +866,18 @@ function creerRevision(nom, motif, copier) {
   });
 
   if (!copier) {
+    const identiteConservee = {};
+    DOSSIER_IDENTITY_FIELDS.forEach((f) => { identiteConservee[f] = state.draft.champs[f]; });
     const vierge = newDraft(state.draft.localisation, state.draft.mode);
     REVISION_DATA_FIELDS.forEach((f) => { state.draft[f] = vierge[f]; });
+    Object.assign(state.draft.champs, identiteConservee);
   }
   // Si copier === true, les champs actifs restent tels quels (c'est déjà la copie).
+
+  // L'historique de sauvegarde (S-001, S-002...) repart toujours à zéro pour
+  // la nouvelle révision, qu'elle soit copiée ou vide.
+  state.draft.approbations = [];
+  state.draft.derniereSauvegardeOfficielle = null;
 
   const nums = state.draft.revisions.map((r) => parseInt((r.id || 'R00').replace('R', ''), 10) || 0);
   const prochainNum = Math.max(...nums, -1) + 1;
@@ -1639,12 +1708,24 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   }
 
   const now = new Date();
-  const record = { nom, role, at: now.toISOString() };
+  const derniereSauv = state.draft.approbations[state.draft.approbations.length - 1];
+  const snapshotAvant = derniereSauv ? derniereSauv.snapshot : null;
+  const snapshotApres = buildLightSnapshot(state.draft);
+  const resume = diffSnapshots(snapshotAvant, snapshotApres);
+  const idSauvegarde = 'S-' + String(state.draft.approbations.length + 1).padStart(3, '0');
+  const record = {
+    id: idSauvegarde,
+    revisionId: state.draft.activeRevision.id,
+    nom, role, at: now.toISOString(),
+    statut: snapshotApres.statutGlobal,
+    resume,
+    snapshot: snapshotApres,
+  };
   state.draft.approbations.push(record);
   state.draft.derniereSauvegardeOfficielle = record;
   state.draft.champs.employeeName = nom;
   state.draft.champs.employeeRole = role;
-  logActivity(`Dossier sauvegardé officiellement par ${nom} (${role})`);
+  logActivity(`Sauvegarde ${idSauvegarde} (${state.draft.activeRevision.id}) par ${nom} (${role})`);
 
   try {
     if (state.rootDirHandle) {
@@ -3523,12 +3604,16 @@ $('#btnSaveAnnotated').addEventListener('click', () => {
 function refreshApprovals() {
   const el = $('#approvalHistory');
   const list = state.draft ? state.draft.approbations : [];
-  if (!list || !list.length) { el.innerHTML = '<div class="empty-state">Aucune sauvegarde officielle enregistrée pour ce dossier.</div>'; return; }
+  if (!list || !list.length) { el.innerHTML = '<div class="empty-state">Aucune sauvegarde officielle enregistrée pour cette révision.</div>'; return; }
   el.innerHTML = list.slice().reverse().map((a) => `
-    <div class="approval-row">
-      <span class="badge-ok">✓</span>
-      <span class="who">${a.nom} <span style="color:var(--color-text-faint);font-weight:400;">(${a.role})</span></span>
-      <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
+    <div class="approval-row approval-row-rich">
+      <div class="approval-row-header">
+        <span class="badge-ok">✓</span>
+        <span class="revision-id">${escapeHtml(a.id || '')}</span>
+        <span class="who">${escapeHtml(a.nom)} <span style="color:var(--color-text-faint);font-weight:400;">(${escapeHtml(a.role)})</span></span>
+        <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
+      </div>
+      ${a.resume ? `<ul class="approval-resume">${a.resume.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : ''}
     </div>`).join('');
 }
 
