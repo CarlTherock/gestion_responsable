@@ -1433,7 +1433,10 @@ function renderApercu() {
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Rapport de chantier et outils</div>
     <div class="stat-row" style="margin-bottom: var(--space-4);">
       <div class="stat-card"><div class="num">${docCount}</div><div class="lbl">Documents / photos</div></div>
-      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes</div></div>
+    </div>
+    <div class="tools-row" style="margin-bottom:var(--space-4);">
+      <button type="button" class="btn btn-tertiary" id="btnVoirHistoriqueApercu">Voir l\u2019historique des modifications</button>
     </div>
     <div class="tools-row">
       <button type="button" class="btn btn-outline" id="btnExportApercu">Exporter le rapport de chantier</button>
@@ -1486,6 +1489,9 @@ function renderApercu() {
 
   const closureCheckBtn = $('#btnClosureCheckMobile', container);
   if (closureCheckBtn) closureCheckBtn.addEventListener('click', showClosureCheckModal);
+
+  const voirHistoriqueBtn = $('#btnVoirHistoriqueApercu', container);
+  if (voirHistoriqueBtn) voirHistoriqueBtn.addEventListener('click', () => selectTab('approbation'));
 
   const exportBtn = $('#btnExportApercu', container);
   if (exportBtn) exportBtn.addEventListener('click', exportDashboardFile);
@@ -3601,21 +3607,58 @@ $('#btnSaveAnnotated').addEventListener('click', () => {
 
 // ---------- Approbation : le nom/rôle sont persistés comme champs généraux
 // (voir GENERAL_FIELD_MAP) et lus au moment de la sauvegarde officielle ----------
+// Formate une date en "Aujourd'hui, 14:32" / "Hier, ..." / date complète.
+function formatDateRelative(iso) {
+  const d = new Date(iso);
+  const maintenant = new Date();
+  const heure = d.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
+  const memeJour = d.toDateString() === maintenant.toDateString();
+  const hier = new Date(maintenant); hier.setDate(hier.getDate() - 1);
+  if (memeJour) return `Aujourd\u2019hui, ${heure}`;
+  if (d.toDateString() === hier.toDateString()) return `Hier, ${heure}`;
+  return `${d.toLocaleDateString('fr-CA')}, ${heure}`;
+}
+
 function refreshApprovals() {
   const el = $('#approvalHistory');
+  const techEl = $('#sauvegardesTechniques');
   const list = state.draft ? state.draft.approbations : [];
-  if (!list || !list.length) { el.innerHTML = '<div class="empty-state">Aucune sauvegarde officielle enregistrée pour cette révision.</div>'; return; }
+  if (!list || !list.length) {
+    el.innerHTML = '<div class="empty-state">Aucune sauvegarde enregistrée pour cette révision.</div>';
+    if (techEl) techEl.innerHTML = '<div class="empty-state">Aucune copie de sauvegarde pour cette révision.</div>';
+    return;
+  }
+  // Vue principale : lisible, sans numéro technique — date, personne, résumé.
   el.innerHTML = list.slice().reverse().map((a) => `
     <div class="approval-row approval-row-rich">
       <div class="approval-row-header">
         <span class="badge-ok">✓</span>
-        <span class="revision-id">${escapeHtml(a.id || '')}</span>
-        <span class="who">${escapeHtml(a.nom)} <span style="color:var(--color-text-faint);font-weight:400;">(${escapeHtml(a.role)})</span></span>
-        <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
+        <span class="when">${formatDateRelative(a.at)}</span>
+        <span class="who">${escapeHtml(a.nom)} <span style="color:var(--color-text-faint);font-weight:400;">· ${escapeHtml(a.role)}</span></span>
       </div>
       ${a.resume ? `<ul class="approval-resume">${a.resume.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : ''}
     </div>`).join('');
+
+  // Vue secondaire (technique) : copies de sauvegarde numérotées, repliée par
+  // défaut. Une restauration future créera toujours une copie/révision,
+  // jamais un écrasement direct du dossier actif.
+  if (techEl) {
+    techEl.innerHTML = list.slice().reverse().map((a) => `
+      <div class="approval-row">
+        <span class="revision-id">${escapeHtml(a.id || '')}</span>
+        <span class="who">${escapeHtml(a.nom)} (${escapeHtml(a.role)})</span>
+        <span class="when">${new Date(a.at).toLocaleString('fr-CA')}</span>
+      </div>`).join('');
+  }
 }
+
+$('#btnToggleSauvegardesTech').addEventListener('click', () => {
+  const techEl = $('#sauvegardesTechniques');
+  const btn = $('#btnToggleSauvegardesTech');
+  const visible = !techEl.classList.contains('hidden');
+  techEl.classList.toggle('hidden', visible);
+  btn.textContent = visible ? 'Afficher les copies de sauvegarde' : 'Masquer les copies de sauvegarde';
+});
 
 // ---------- Code QR : retrouver rapidement ce dossier ----------
 function buildDossierUrl() {
