@@ -534,7 +534,6 @@ $$('.choice-card').forEach((card) => {
   });
 });
 
-$('#homeBtn').addEventListener('click', () => location.reload());
 
 $('#topbarMenuBtn').addEventListener('click', async () => {
   const dossierOuvert = !$('#homeBtn').classList.contains('hidden');
@@ -1165,6 +1164,80 @@ function showCreerRevisionModal() {
     }
   });
 }
+
+function getDernierDossierActif() {
+  try {
+    const raw = localStorage.getItem('dernierDossierActif');
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) { return null; }
+}
+
+async function showDashboard() {
+  $('#screenChoice').classList.add('hidden');
+  $('#screenDossier').classList.add('hidden');
+  $('#screenWorkspace').classList.add('hidden');
+  $('#screenDashboard').classList.remove('hidden');
+  $('#homeBtn').classList.add('hidden');
+  $('#modeBadge').classList.add('hidden');
+  $('#brandSub').textContent = "Usine — module de terrain";
+
+  const dernier = getDernierDossierActif();
+  const reprendreBtn = $('#dashBtnReprendre');
+  const zone = $('#dashDossierActif');
+  if (!dernier) {
+    reprendreBtn.classList.add('hidden');
+    zone.innerHTML = '';
+    return;
+  }
+  reprendreBtn.classList.remove('hidden');
+  const existing = await dbGet(dernier.numero);
+  if (!existing) {
+    reprendreBtn.classList.add('hidden');
+    zone.innerHTML = '';
+    return;
+  }
+  const d = normalizeDraft(existing);
+  const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
+  zone.innerHTML = `
+    <div class="panel-title" style="font-size:var(--text-base);">Dossier actif</div>
+    <div class="revision-row revision-active" style="margin-top:var(--space-2);margin-bottom:var(--space-4);">
+      <span class="revision-id">${escapeHtml(dernier.numero)}${d.champs.bt ? ' · ' + escapeHtml(formatBt(d.champs.bt)) : ''}</span>
+      <span class="revision-nom">${escapeHtml(d.champs.desc || '')} · ${modeLabel}</span>
+      <span class="revision-statut">Révision ${escapeHtml(d.activeRevision.id)} · ${new Date(d.modifieLe || d.creeLe).toLocaleString('fr-CA')}</span>
+    </div>
+    ${(d.revisions && d.revisions.length) ? `
+    <div class="panel-title" style="font-size:var(--text-base);">Révisions du dossier</div>
+    <div class="revision-list" style="margin-top:var(--space-2);">
+      ${d.revisions.slice().reverse().map((r) => `
+      <div class="revision-row">
+        <span class="revision-id">${escapeHtml(r.id)}</span>
+        <span class="revision-nom">${escapeHtml(r.nom)}${r.motif ? ' — ' + escapeHtml(r.motif) : ''}</span>
+        <span class="revision-statut">Archivée</span>
+      </div>`).join('')}
+    </div>` : ''}
+  `;
+}
+
+$('#dashBtnNouveau').addEventListener('click', () => {
+  $('#screenDashboard').classList.add('hidden');
+  $('#screenChoice').classList.remove('hidden');
+});
+$('#dashBtnOuvrir').addEventListener('click', () => {
+  $('#screenDashboard').classList.add('hidden');
+  $('#screenChoice').classList.remove('hidden');
+});
+$('#dashBtnReprendre').addEventListener('click', async () => {
+  const dernier = getDernierDossierActif();
+  if (!dernier) return;
+  const existing = await dbGet(dernier.numero);
+  if (!existing) { toast('Ce dossier n\u2019est plus disponible localement.'); return; }
+  selectMode(dernier.mode);
+  state.draft = normalizeDraft(existing);
+  state.numero = dernier.numero;
+  state.isNewDraft = false;
+  openWorkspace();
+});
+$('#homeBtn').addEventListener('click', showDashboard);
 
 function renderApercu() {
   const container = $('#apercuContent');
@@ -2395,7 +2468,11 @@ async function ouvrirDossier() {
 // ---------- Étape 3 : espace de travail ----------
 function openWorkspace() {
   const d = state.draft;
+  try {
+    localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
+  } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
   $('#screenDossier').classList.add('hidden');
+  $('#screenDashboard').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'auto' });
 
@@ -4091,3 +4168,6 @@ function renderTaskPanelBody() {
     renderTaskPanelBody();
   });
 }
+
+// Affiche le Dashboard au chargement initial de la page.
+showDashboard();
