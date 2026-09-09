@@ -1135,3 +1135,6 @@ select.ncextra-gravite {
 .approval-row-rich { flex-direction: column; align-items: stretch; gap: var(--space-2); }
 .approval-row-header { display: flex; align-items: center; gap: var(--space-3); }
 .approval-resume { margin: 0; padding-left: 1.4em; font-size: var(--text-xs); color: var(--color-text-muted); display: flex; flex-direction: column; gap: 2px; }
+
+.approval-row-clickable { cursor: pointer; transition: border-color 120ms ease; }
+.approval-row-clickable:hover { border-color: var(--color-primary); }
