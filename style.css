@@ -209,12 +209,19 @@ main { flex: 1; }
 .field-row { display: flex; gap: var(--space-3); align-items: flex-end; flex-wrap: wrap; }
 .field { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: var(--space-1); }
 .field label { font-size: var(--text-xs); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-input[type="text"], input[type="number"], textarea, select {
+input[type="text"], input[type="number"], input[type="email"], textarea, select {
   background: var(--color-surface-2); border: 1px solid var(--color-border);
   border-radius: var(--radius-md); padding: var(--space-3); font-size: var(--text-base);
   color: var(--color-text); font-family: var(--font-mono);
 }
-input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:focus { border-color: var(--mode-accent); }
+input[type="text"]:focus, input[type="number"]:focus, input[type="email"]:focus, textarea:focus, select:focus { border-color: var(--mode-accent); }
+/* Empêche l'auto-remplissage du navigateur (Chrome/Edge) de forcer un fond
+   blanc sur les champs, peu importe le style qu'on leur donne autrement. */
+input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface-2) inset;
+  transition: background-color 9999s ease-in-out 0s;
+}
 .btn {
   display: inline-flex; align-items: center; gap: var(--space-2); justify-content: center;
   padding: var(--space-3) var(--space-5); border-radius: var(--radius-md);
@@ -1100,3 +1107,13 @@ select.ncextra-gravite {
 .thumb-lg:hover { transform: scale(1.04); }
 .file-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .file-row-info .file-name { white-space: normal; word-break: break-word; }
+
+/* ---------- Champ courriel dans la fenêtre de partage : texte bleu type lien ---------- */
+#shareDestEmail { color: #5eb8ff; }
+#shareDestEmail::placeholder { color: #5eb8ff; opacity: 0.55; }
+#shareDestEmail:-webkit-autofill, #shareDestEmail:-webkit-autofill:hover, #shareDestEmail:-webkit-autofill:focus {
+  -webkit-text-fill-color: #5eb8ff;
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface-2) inset;
+}
+
+.share-history-more { color: #5eb8ff; cursor: pointer; text-decoration: underline; }
