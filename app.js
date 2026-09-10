@@ -112,6 +112,10 @@ const state = {
   draft: null,              // objet de suivi complet, persistant en IndexedDB
   showOnlyIncomplete: false, // préférence d'affichage, non sauvegardée dans le dossier
   checklistFilter: 'toutes', // préférence d'affichage, non sauvegardée dans le dossier
+  // Masqué par défaut : le journal technique (Activité récente) n'a pas
+  // besoin d'être visible pour un collègue qui ouvre le dossier — un bouton
+  // permet de l'afficher au besoin. Préférence de session, non persistée.
+  activiteRecenteVisible: false,
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1683,8 +1687,11 @@ function renderApercu() {
     </div>
 
     <div id="timelineSection">
-      <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Activité récente</div>
-      <div class="timeline">${journalHtml}</div>
+      <div class="panel-title-row" style="display:flex;align-items:center;justify-content:space-between;margin:var(--space-6) 0 var(--space-3);">
+        <div class="panel-title" style="margin:0;">Activité récente</div>
+        <button type="button" class="btn btn-tertiary" id="btnToggleActiviteRecente">${state.activiteRecenteVisible ? 'Masquer' : 'Afficher'} l'activité récente</button>
+      </div>
+      <div class="timeline ${state.activiteRecenteVisible ? '' : 'hidden'}" id="timelineActiviteRecente">${journalHtml}</div>
     </div>
 
     <div class="panel-title" style="font-size: var(--text-base); margin: var(--space-6) 0 var(--space-3);">Remise du dossier</div>
@@ -1748,6 +1755,14 @@ function renderApercu() {
     toggle.addEventListener('change', () => {
       state.checklistFilter = toggle.checked ? 'reste-a-faire' : 'toutes';
       renderAllChecklists();
+    });
+  }
+
+  const btnToggleActivite = $('#btnToggleActiviteRecente', container);
+  if (btnToggleActivite) {
+    btnToggleActivite.addEventListener('click', () => {
+      state.activiteRecenteVisible = !state.activiteRecenteVisible;
+      renderApercu();
     });
   }
 
