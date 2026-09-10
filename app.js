@@ -447,7 +447,9 @@ function newDraft(numero, mode) {
     // (champs, casesCochees, vpoItems, etc.) représentent toujours la
     // révision ACTIVE — aucun changement au schéma IndexedDB existant.
     revisions: [],
-    activeRevision: { id: 'R00', nom: 'Installation initiale', motif: '', creeLe: now },
+    // demandeApprobationLe / approbation : voir Phase 4-6 (statuts et
+    // approbation finale) plus bas — décision humaine, jamais calculée.
+    activeRevision: { id: 'R00', nom: 'Installation initiale', motif: '', creeLe: now, demandeApprobationLe: null, approbation: null },
   };
 }
 
@@ -465,6 +467,10 @@ function normalizeDraft(d) {
     // devient la révision active R00 — aucune perte, juste une étiquette.
     d.activeRevision = { id: 'R00', nom: 'Installation initiale', motif: '', creeLe: d.creeLe || new Date().toISOString() };
   }
+  // Compatibilité : anciennes révisions actives créées avant la Phase 4-6
+  // (statuts et approbation finale) n'ont pas encore ces deux champs.
+  if (d.activeRevision.demandeApprobationLe === undefined) d.activeRevision.demandeApprobationLe = null;
+  if (d.activeRevision.approbation === undefined) d.activeRevision.approbation = null;
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
   if (!d.casesCochees) d.casesCochees = {};
@@ -940,8 +946,7 @@ function diffSnapshots(avant, apres, mode) {
 
   if (apres.commentaires !== avant.commentaires && apres.commentaires) lignes.push('~ Commentaire modifié');
   if (apres.statutGlobal !== avant.statutGlobal) {
-    const labels = { brouillon: 'Brouillon', 'en-cours': 'En cours', 'attente-correction': 'En attente de correction', validation: 'En validation', pret: 'Prêt à fermer', termine: 'Terminé' };
-    lignes.push(`~ Statut : ${labels[avant.statutGlobal] || avant.statutGlobal} → ${labels[apres.statutGlobal] || apres.statutGlobal}`);
+    lignes.push(`~ Statut : ${GLOBAL_STATUS_LABELS[avant.statutGlobal] || avant.statutGlobal} → ${GLOBAL_STATUS_LABELS[apres.statutGlobal] || apres.statutGlobal}`);
   }
 
   return lignes.length ? lignes : ['Aucun changement détecté depuis la dernière sauvegarde.'];
@@ -984,7 +989,7 @@ function creerRevision(nom, motif, copier) {
   state.draft.derniereSauvegardeOfficielle = null;
 
   const nouvelId = nextRevisionId();
-  state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: motif || '', creeLe: new Date().toISOString() };
+  state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: motif || '', creeLe: new Date().toISOString(), demandeApprobationLe: null, approbation: null };
   logActivity(`Révision ${nouvelId} créée (${nom || nouvelId})${motif ? ' — ' + motif : ''}`);
   schedulePersist();
   return nouvelId;
@@ -1010,14 +1015,47 @@ function creerRevisionDepuisSauvegarde(saveRecord, sourceRevisionId, nom) {
   state.draft.derniereSauvegardeOfficielle = null;
 
   const nouvelId = nextRevisionId();
-  state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: 'Reprise depuis sauvegarde', creeLe: new Date().toISOString() };
+  state.draft.activeRevision = { id: nouvelId, nom: nom || nouvelId, motif: 'Reprise depuis sauvegarde', creeLe: new Date().toISOString(), demandeApprobationLe: null, approbation: null };
   logActivity(`Révision ${nouvelId} créée depuis la sauvegarde ${saveRecord.id} de ${sourceRevisionId}`);
   schedulePersist();
   return nouvelId;
 }
 
+// Rôles autorisés à rendre une décision d'approbation finale (Phase 5-6) et
+// libellés d'affichage pour tous les rôles du sélecteur #fldRole.
+const ROLE_LABELS = {
+  technicien: 'TEI', contremaitre: 'Contremaître', ingenieur: "Ingénieur(e) responsable",
+  qualite: 'Planificateur', surintendant: 'Surintendant secteur',
+};
+const APPROBATEUR_ROLES = ['contremaitre', 'qualite'];
+// Libellés des 9 statuts globaux (calculés + décision d'approbation),
+// partagés entre le résumé de sauvegarde (diffSnapshots) et l'affichage
+// des révisions archivées dans le Dashboard/Aperçu.
+const GLOBAL_STATUS_LABELS = {
+  brouillon: 'Brouillon', 'en-cours': 'En cours', 'attente-correction': 'En attente de correction',
+  validation: 'En validation', pret: 'Prêt à fermer', termine: 'Terminé',
+  'attente-approbation': "En attente d'approbation", approuve: 'Approuvé', 'retourne-correction': 'Retourné pour correction',
+};
+
+function isRevisionLocked() {
+  const appr = state.draft && state.draft.activeRevision && state.draft.activeRevision.approbation;
+  return !!(appr && appr.decision === 'approuve');
+}
+
 function computeGlobalStatus() {
   if (!state.draft) return { key: 'brouillon', label: 'Brouillon' };
+  // Une décision d'approbation est une action humaine, jamais déduite des
+  // données : elle prend toujours le dessus sur le calcul automatique.
+  const rev = state.draft.activeRevision || {};
+  if (rev.approbation && rev.approbation.decision === 'approuve') {
+    return { key: 'approuve', label: 'Approuvé' };
+  }
+  if (rev.approbation && rev.approbation.decision === 'retourne') {
+    return { key: 'retourne-correction', label: 'Retourné pour correction' };
+  }
+  if (rev.demandeApprobationLe) {
+    return { key: 'attente-approbation', label: "En attente d'approbation" };
+  }
   const { done, total } = computeProgress();
   const nc = computeNcStats();
   const vpo = computeVpoStats();
@@ -1046,6 +1084,7 @@ function updateProgressPill() {
   renderApercu();
   updateMobileSummary();
   renderMobileResumeBody();
+  updateLockUI();
   if (!$('#checklistContextBar')?.classList.contains('hidden')) updateChecklistContextBar(true);
 }
 
@@ -1414,7 +1453,7 @@ async function showDashboard() {
       <div class="revision-row">
         <span class="revision-id">${escapeHtml(r.id)}</span>
         <span class="revision-nom">${escapeHtml(r.nom)}${r.motif ? ' — ' + escapeHtml(r.motif) : ''}</span>
-        <span class="revision-statut">Archivée</span>
+        <span class="revision-statut">${escapeHtml(GLOBAL_STATUS_LABELS[r.statut] || 'Archivée')}</span>
       </div>`).join('')}
     </div>` : ''}
   `;
@@ -1592,7 +1631,7 @@ function renderApercu() {
       <div class="revision-row">
         <span class="revision-id">${escapeHtml(r.id)}</span>
         <span class="revision-nom">${escapeHtml(r.nom)}${r.motif ? ' — ' + escapeHtml(r.motif) : ''}</span>
-        <span class="revision-statut">Archivée</span>
+        <span class="revision-statut">${escapeHtml(GLOBAL_STATUS_LABELS[r.statut] || 'Archivée')}</span>
       </div>`).join('')}
     </div>
 
@@ -2429,6 +2468,30 @@ function buildDashboardHtml(options) {
   const closureVerdict = computeClosureVerdict();
   const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}</div>`;
 
+  // ---- Stamp d'approbation (Phase 7) : uniquement si une décision est réellement enregistrée ----
+  const revForStamp = d.activeRevision || {};
+  const apprForStamp = revForStamp.approbation;
+  const stampHtml = !apprForStamp ? '' : (apprForStamp.decision === 'approuve'
+    ? `<div class="approbation-stamp approbation-stamp-ok">
+        <div class="approbation-stamp-title">\u2713 APPROUVÉ — DOSSIER TERMINÉ</div>
+        <div class="approbation-stamp-body">
+          Révision : ${escapeHtml(revForStamp.id)} — ${escapeHtml(revForStamp.nom)}<br>
+          Approuvé par : ${escapeHtml(apprForStamp.nom)}<br>
+          Rôle : ${escapeHtml(ROLE_LABELS[apprForStamp.role] || apprForStamp.role)}<br>
+          Le : ${new Date(apprForStamp.date).toLocaleString('fr-CA')}
+        </div>
+      </div>`
+    : `<div class="approbation-stamp approbation-stamp-retour">
+        <div class="approbation-stamp-title">RETOURNÉ POUR CORRECTION</div>
+        <div class="approbation-stamp-body">
+          Révision : ${escapeHtml(revForStamp.id)} — ${escapeHtml(revForStamp.nom)}<br>
+          Par : ${escapeHtml(apprForStamp.nom)}<br>
+          Rôle : ${escapeHtml(ROLE_LABELS[apprForStamp.role] || apprForStamp.role)}<br>
+          Le : ${new Date(apprForStamp.date).toLocaleString('fr-CA')}<br>
+          Motif : ${escapeHtml(apprForStamp.commentaire || '')}
+        </div>
+      </div>`);
+
   // ---- Documents / photos ----
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
@@ -2576,6 +2639,14 @@ function buildDashboardHtml(options) {
   .comment-box { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
   .footer-note { text-align: center; color: var(--text-muted); font-size: 12px; margin-top: 48px; padding-bottom: 8px; }
   .footer-note b { color: rgba(255,255,255,0.75); }
+
+  .approbation-stamp { border-radius: 12px; padding: 20px 24px; margin-bottom: 28px; border: 1px solid; }
+  .approbation-stamp-ok { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.45); }
+  .approbation-stamp-retour { background: rgba(234,179,8,0.08); border-color: rgba(234,179,8,0.45); }
+  .approbation-stamp-title { font-weight: 700; font-size: 15px; margin-bottom: 8px; }
+  .approbation-stamp-ok .approbation-stamp-title { color: #22a35a; }
+  .approbation-stamp-retour .approbation-stamp-title { color: #b8860b; }
+  .approbation-stamp-body { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 </style></head>
 <body>
   <div class="wrap">
@@ -2596,6 +2667,8 @@ function buildDashboardHtml(options) {
         <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
       </div>
     </div>
+
+    ${stampHtml}
 
     ${estInstantaneHistorique ? `
     <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Ceci est un instantané historique — les documents ci-dessous sont ceux de CETTE sauvegarde précisément, indépendants des changements faits depuis.</p>
@@ -4056,6 +4129,7 @@ function showSaveDetailModal(idx) {
 }
 
 function refreshApprovals() {
+  renderApprobationFinaleCard();
   const el = $('#approvalHistory');
   const techEl = $('#sauvegardesTechniques');
   const list = state.draft ? state.draft.approbations : [];
@@ -4093,6 +4167,217 @@ function refreshApprovals() {
       row.addEventListener('click', () => showSaveDetailModal(Number(row.dataset.saveIdx)));
     });
   }
+}
+
+// ---------- Phase 4-6 : approbation finale unique ----------
+// Une seule décision (Approuver / Retourner) par révision, prise par un
+// Contremaître ou un Planificateur, une fois le dossier complété à 100 %.
+// Sans backend : la « demande » ne fait que préparer un message
+// professionnel (mailto) — elle n'envoie rien automatiquement.
+function renderApprobationFinaleCard() {
+  const container = $('#approbationFinaleCard');
+  if (!container || !state.draft) return;
+  const rev = state.draft.activeRevision;
+  const appr = rev.approbation;
+  const closure = computeClosureVerdict();
+  const { done, total } = computeProgress();
+  const vpo = computeVpoStats();
+  const nc = computeNcStats();
+  const preuve = computeProofStats();
+
+  let html;
+  if (appr && appr.decision === 'approuve') {
+    html = `
+      <div class="approbation-finale-card state-approuve">
+        <div class="approbation-finale-title">${iconSvg('checkCircle')} Approuvé — dossier verrouillé</div>
+        <div class="approbation-finale-meta">
+          Révision ${escapeHtml(rev.id)} approuvée par <strong>${escapeHtml(appr.nom)}</strong> (${escapeHtml(ROLE_LABELS[appr.role] || appr.role)}) le ${new Date(appr.date).toLocaleString('fr-CA')}.
+          ${appr.commentaire ? `<br>Commentaire : ${escapeHtml(appr.commentaire)}` : ''}
+        </div>
+        <div class="approbation-finale-meta">Ce dossier est en lecture seule. Pour continuer le travail, créez une nouvelle révision (onglet Aperçu).</div>
+      </div>`;
+  } else if (appr && appr.decision === 'retourne') {
+    html = `
+      <div class="approbation-finale-card state-retourne">
+        <div class="approbation-finale-title">Retourné pour correction</div>
+        <div class="approbation-finale-meta">
+          Par <strong>${escapeHtml(appr.nom)}</strong> (${escapeHtml(ROLE_LABELS[appr.role] || appr.role)}) le ${new Date(appr.date).toLocaleString('fr-CA')}.<br>
+          Motif : ${escapeHtml(appr.commentaire || '')}
+        </div>
+        <div class="approbation-finale-actions">
+          <button type="button" class="btn btn-outline" id="btnVoirElementsCorriger">Voir les éléments à corriger</button>
+          ${closure.ready ? `<button type="button" class="btn btn-primary" id="btnRedemanderApprobation">Redemander l'approbation finale</button>` : ''}
+        </div>
+      </div>`;
+  } else if (rev.demandeApprobationLe) {
+    html = `
+      <div class="approbation-finale-card state-attente">
+        <div class="approbation-finale-title">En attente d'approbation</div>
+        <div class="approbation-finale-meta">Demande préparée le ${new Date(rev.demandeApprobationLe).toLocaleString('fr-CA')}. Enregistrez la décision du contremaître ou du planificateur dès qu'elle est connue.</div>
+        <div class="approbation-finale-actions">
+          <button type="button" class="btn btn-primary" id="btnEnregistrerDecision">Enregistrer la décision</button>
+          <button type="button" class="btn btn-tertiary" id="btnAnnulerDemandeApprobation">Annuler la demande</button>
+        </div>
+      </div>`;
+  } else if (closure.ready) {
+    html = `
+      <div class="approbation-finale-card state-pret">
+        <div class="approbation-finale-title">Prêt pour approbation</div>
+        <div class="approbation-finale-meta">
+          Checklist : ${done} / ${total} tâches terminées<br>
+          Preuves requises manquantes : ${preuve.manquantes}<br>
+          VPO ouvertes : ${vpo.pending}<br>
+          Non-conformités ouvertes : ${nc.total}
+        </div>
+        <div class="approbation-finale-actions">
+          <button type="button" class="btn btn-primary" id="btnDemanderApprobation">Demander l'approbation finale</button>
+        </div>
+      </div>`;
+  } else {
+    html = `
+      <div class="approbation-finale-card">
+        <div class="approbation-finale-title">Approbation finale</div>
+        <div class="approbation-finale-meta">Le dossier doit être complété à 100 % (tâches, VPO obligatoires, non-conformités et preuves requises) avant de pouvoir demander une approbation. Voir la Vérification avant fermeture dans l'onglet Aperçu.</div>
+      </div>`;
+  }
+  container.innerHTML = html;
+
+  const btnDemander = $('#btnDemanderApprobation', container);
+  if (btnDemander) btnDemander.addEventListener('click', demanderApprobationFinale);
+  const btnRedemander = $('#btnRedemanderApprobation', container);
+  if (btnRedemander) btnRedemander.addEventListener('click', demanderApprobationFinale);
+  const btnEnregistrer = $('#btnEnregistrerDecision', container);
+  if (btnEnregistrer) btnEnregistrer.addEventListener('click', showApprobationDecisionModal);
+  const btnAnnuler = $('#btnAnnulerDemandeApprobation', container);
+  if (btnAnnuler) btnAnnuler.addEventListener('click', annulerDemandeApprobation);
+  const btnVoirCorriger = $('#btnVoirElementsCorriger', container);
+  if (btnVoirCorriger) btnVoirCorriger.addEventListener('click', () => { selectTab('apercu'); showClosureCheckModal(); });
+}
+
+async function demanderApprobationFinale() {
+  if (!state.draft) return;
+  const closure = computeClosureVerdict();
+  if (!closure.ready) {
+    toast('Le dossier doit être complété à 100 % avant de demander une approbation.', 4500);
+    return;
+  }
+  state.draft.activeRevision.demandeApprobationLe = new Date().toISOString();
+  state.draft.activeRevision.approbation = null;
+  logActivity(`Demande d'approbation finale préparée pour la révision ${state.draft.activeRevision.id}`);
+  schedulePersist();
+  await dbPut(state.draft);
+  refreshApprovals();
+  updateProgressPill();
+
+  const d = state.draft;
+  const { done, total } = computeProgress();
+  const vpo = computeVpoStats();
+  const nc = computeNcStats();
+  const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
+  const sujet = `Demande d'approbation — ${bt} — ${state.draft.activeRevision.id} ${state.draft.activeRevision.nom}`;
+  const corps = [
+    'Bonjour,', '',
+    `La révision ${state.draft.activeRevision.id} — ${state.draft.activeRevision.nom} du dossier ${bt} est complétée et prête pour approbation.`, '',
+    `Localisation : ${d.localisation || ''}`,
+    `Équipement / tag : ${d.champs.tag || ''}`,
+    `Checklist : ${done} / ${total} tâches complétées`,
+    `VPO ouvertes : ${vpo.pending}`,
+    `Non-conformités ouvertes : ${nc.total}`, '',
+    'Le Rapport de chantier peut être exporté ou partagé depuis l\u2019onglet Aperçu.', '',
+    'Merci de vérifier le dossier et de choisir :',
+    '- Approuver le dossier',
+    'ou',
+    '- Retourner pour correction avec un commentaire.', '',
+    'Cordialement,',
+  ].join('\n');
+
+  const confirmed = await showModal({
+    title: "Demande d'approbation préparée",
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucune synchronisation serveur n'existe dans cette application : voici un message professionnel prêt à envoyer par courriel au contremaître ou au planificateur.</p>
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Sujet</label>
+      <input type="text" id="modalApprSubject" readonly value="${escapeHtml(sujet)}">
+      <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Message</label>
+      <textarea id="modalApprBody" rows="10" readonly>${escapeHtml(corps)}</textarea>`,
+    confirmLabel: 'Ouvrir dans le courriel',
+  });
+  if (confirmed) {
+    window.location.href = `mailto:?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+  }
+  toast("Statut : en attente d'approbation. Enregistrez la décision une fois reçue.", 4500);
+}
+
+function annulerDemandeApprobation() {
+  if (!state.draft) return;
+  state.draft.activeRevision.demandeApprobationLe = null;
+  logActivity(`Demande d'approbation annulée pour la révision ${state.draft.activeRevision.id}`);
+  schedulePersist();
+  refreshApprovals();
+  updateProgressPill();
+  toast("Demande d'approbation annulée.");
+}
+
+// Formulaire d'approbation finale : redemande les champs tant qu'ils sont
+// invalides (nom obligatoire; commentaire obligatoire si retourné), sans
+// fermer la fenêtre sur une saisie incomplète.
+async function showApprobationDecisionModal() {
+  if (!state.draft) return null;
+  let nomVal = '', roleVal = 'contremaitre', decisionVal = 'approuve', commentVal = '';
+  for (;;) {
+    const confirmed = await showModal({
+      title: 'Approbation finale',
+      bodyHtml: `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Révision ${escapeHtml(state.draft.activeRevision.id)} — ${escapeHtml(state.draft.activeRevision.nom)}</p>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;">Décision</label>
+        <select id="modalApprDecision" style="width:100%;margin-top:4px;margin-bottom:var(--space-3);">
+          <option value="approuve" ${decisionVal === 'approuve' ? 'selected' : ''}>Approuver le dossier</option>
+          <option value="retourne" ${decisionVal === 'retourne' ? 'selected' : ''}>Retourner pour correction</option>
+        </select>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;">Nom de l'approbateur</label>
+        <input type="text" id="modalApprNom" placeholder="ex. Carl Tremblay" value="${escapeHtml(nomVal)}">
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Rôle</label>
+        <select id="modalApprRole" style="width:100%;margin-top:4px;">
+          <option value="contremaitre" ${roleVal === 'contremaitre' ? 'selected' : ''}>Contremaître</option>
+          <option value="qualite" ${roleVal === 'qualite' ? 'selected' : ''}>Planificateur</option>
+        </select>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Commentaire (obligatoire si retourné pour correction)</label>
+        <textarea id="modalApprCommentaire" rows="3" placeholder="ex. Plan de boucle manquant">${escapeHtml(commentVal)}</textarea>`,
+      confirmLabel: 'Confirmer la décision',
+    });
+    if (!confirmed) return null;
+    decisionVal = $('#modalApprDecision').value;
+    nomVal = $('#modalApprNom').value.trim();
+    roleVal = $('#modalApprRole').value;
+    commentVal = $('#modalApprCommentaire').value.trim();
+    if (!nomVal) { toast("Le nom de l'approbateur est obligatoire.", 4000); continue; }
+    if (!APPROBATEUR_ROLES.includes(roleVal)) { toast('Le rôle doit être Contremaître ou Planificateur.', 4000); continue; }
+    if (decisionVal === 'retourne' && !commentVal) { toast('Un commentaire est obligatoire pour un retour pour correction.', 4500); continue; }
+    break;
+  }
+  const record = { decision: decisionVal, nom: nomVal, role: roleVal, commentaire: commentVal, date: new Date().toISOString() };
+  state.draft.activeRevision.approbation = record;
+  logActivity(`${decisionVal === 'approuve' ? 'Approbation finale' : 'Retour pour correction'} de la révision ${state.draft.activeRevision.id} par ${nomVal} (${ROLE_LABELS[roleVal] || roleVal})`);
+  schedulePersist();
+  await dbPut(state.draft);
+  refreshApprovals();
+  updateProgressPill();
+  toast(decisionVal === 'approuve' ? 'Dossier approuvé et verrouillé.' : 'Dossier retourné pour correction.', 4500);
+  return record;
+}
+
+// Verrouille visuellement les onglets de saisie une fois le dossier
+// approuvé (Aperçu et Approbation restent accessibles : consultation,
+// export, impression et création d'une nouvelle révision).
+function updateLockUI() {
+  const workspace = $('#screenWorkspace');
+  if (!workspace) return;
+  const locked = isRevisionLocked();
+  workspace.classList.toggle('workspace-locked', locked);
+  const banner = $('#wsLockedBanner');
+  if (banner) banner.classList.toggle('hidden', !locked);
+  ['#btnSaveFolder', '#btnSaveFolderMobile', '#btnAddNote'].forEach((sel) => {
+    const b = $(sel);
+    if (b) b.disabled = locked;
+  });
 }
 
 $('#btnToggleSauvegardesTech').addEventListener('click', () => {
