@@ -415,6 +415,16 @@ function newVpoItem() {
   return { id: generateId(), texte: '', statut: null, raison: '', gravite: '', obligatoire: false, resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: '', dateValidation: '', validePar: '', numero: '' };
 }
 
+// VPD — Vérification Post-Démarrage : même mécanique que VPO (liste libre,
+// obligatoire/conforme/non conforme), mais complètement séparée : sa propre
+// liste, son propre onglet, sa propre section dans l'historique et le
+// rapport. Sert aux vérifications faites APRÈS le démarrage de l'équipement
+// (ex. contrôle de boucle en fonctionnement), alors que VPO reste la
+// vérification AVANT la remise en service.
+function newVpdItem() {
+  return { id: generateId(), texte: '', statut: null, raison: '', gravite: '', obligatoire: false, resolu: false, zone: '', actionCorrective: '', responsable: '', dateCreation: '', dateValidation: '', validePar: '', numero: '' };
+}
+
 function newDraft(numero, mode) {
   const now = new Date().toISOString();
   return {
@@ -437,6 +447,7 @@ function newDraft(numero, mode) {
     ncSeq: 0,
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     vpoItems: [newVpoItem()],
+    vpdItems: [newVpdItem()],
     ncExtra: [],
     approbations: [],
     journal: [],
@@ -492,6 +503,19 @@ function normalizeDraft(d) {
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
   if (!d.vpoItems || !d.vpoItems.length) d.vpoItems = [newVpoItem()];
   d.vpoItems.forEach((it) => {
+    if (it.obligatoire === undefined) it.obligatoire = false;
+    if (it.resolu === undefined) it.resolu = false;
+    if (it.zone === undefined) it.zone = '';
+    if (it.actionCorrective === undefined) it.actionCorrective = '';
+    if (it.responsable === undefined) it.responsable = '';
+    if (it.dateCreation === undefined) it.dateCreation = '';
+    if (it.numero === undefined) it.numero = '';
+    if (it.dateValidation === undefined) it.dateValidation = '';
+    if (it.validePar === undefined) it.validePar = '';
+  });
+  // VPD — même normalisation que VPO, pour un ancien dossier créé avant cette fonctionnalité.
+  if (!d.vpdItems || !d.vpdItems.length) d.vpdItems = [newVpdItem()];
+  d.vpdItems.forEach((it) => {
     if (it.obligatoire === undefined) it.obligatoire = false;
     if (it.resolu === undefined) it.resolu = false;
     if (it.zone === undefined) it.zone = '';
@@ -651,6 +675,7 @@ function computeHandoffSummary() {
   const checklistProg = computeChecklistOnlyProgress();
   const proof = computeProofSummary();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const nc = computeNcStats();
   const docCountTotal = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0)
     + (d.files['mise-a-jour'] || []).length
@@ -664,6 +689,7 @@ function computeHandoffSummary() {
     documentsRemis: docCountTotal,
     preuvesSatisfaites: `${proof.satisfied} / ${proof.total}`,
     vpoFermees: `${vpo.evalues} / ${vpo.total}`,
+    vpdFermees: `${vpd.evalues} / ${vpd.total}`,
     ncResolues: `${nc.resolues} / ${nc.resolues + nc.total}`,
     rapportExporte: d.derniereExportRapport ? `Oui — ${new Date(d.derniereExportRapport).toLocaleString('fr-CA')}` : 'Non',
     derniereSauvegarde: d.derniereSauvegardeOfficielle
@@ -679,6 +705,7 @@ async function showClosureCheckModal() {
   const checklistProg = computeChecklistOnlyProgress();
   const proofSummary = computeProofSummary();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const nc = computeNcStats();
   const docCountTotal = Object.values(state.draft.casesFichiers || {}).reduce((s, a) => s + a.length, 0)
     + (state.draft.files['mise-a-jour'] || []).length
@@ -690,6 +717,7 @@ async function showClosureCheckModal() {
       <div>Checklist obligatoire<br><strong>${checklistProg.done} / ${checklistProg.total}</strong></div>
       <div>Preuves requises<br><strong>${proofSummary.satisfied} / ${proofSummary.total}</strong></div>
       <div>VPO<br><strong>${vpo.evalues} / ${vpo.total}</strong></div>
+      <div>VPD<br><strong>${vpd.evalues} / ${vpd.total}</strong></div>
       <div>Non-conformités ouvertes<br><strong>${nc.total}</strong></div>
       <div>Documentation<br><strong>${docCountTotal} document${docCountTotal > 1 ? 's' : ''}</strong></div>
       <div>Validation de fermeture<br><strong>${items.length === 0 ? 'Prête' : 'En attente'}</strong></div>
@@ -893,7 +921,7 @@ function deepCloneKeepingBlobs(value) {
 const REVISION_DATA_FIELDS = [
   'champs', 'liens', 'casesCochees', 'casesRaisons', 'casesGravites', 'casesNcDetails',
   'casesFichiers', 'casesPreuveRequise', 'casesNotes', 'ncFichiers', 'ncSeq', 'files',
-  'vpoItems', 'ncExtra',
+  'vpoItems', 'vpdItems', 'ncExtra',
 ];
 // L'historique de sauvegarde (S-001, S-002...) appartient toujours à SA
 // révision — toujours remis à zéro pour une nouvelle révision, copiée ou
@@ -920,6 +948,7 @@ function buildLightSnapshot(d) {
     tachesNC: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'nc').map(([k]) => k).sort(),
     docCount, ncFichiersCount,
     vpo: (d.vpoItems || []).map((v) => ({ id: v.id, numero: v.numero, texte: v.texte, statut: v.statut, resolu: v.resolu })),
+    vpd: (d.vpdItems || []).map((v) => ({ id: v.id, numero: v.numero, texte: v.texte, statut: v.statut, resolu: v.resolu })),
     // Non-conformités ajoutées manuellement (onglet Non-conformité), identifiées
     // par leur numéro NC-xx (ou leur date de création si le numéro manque).
     ncExtra: toArray(d.ncExtra).map((n) => ({ id: n.numero || n.dateCreation, resolu: !!n.resolu, statut: n.statut || '' })),
@@ -1006,6 +1035,21 @@ function diffSnapshots(avant, apres, mode) {
       lignes.push(`~ ${nomVpo} : ${label(prev.statut)} → ${label(v.statut)}`);
     } else if (prev && prev.resolu !== v.resolu && v.resolu) {
       lignes.push(`~ ${nomVpo} : résolue`);
+    }
+  });
+
+  // VPD — même comparaison que VPO. toArray() protège contre une ancienne
+  // sauvegarde faite avant l'ajout de VPD (pas de champ .vpd du tout).
+  const avantVpdById = Object.fromEntries(toArray(avant.vpd).map((v) => [v.id, v]));
+  toArray(apres.vpd).forEach((v) => {
+    const prev = avantVpdById[v.id];
+    const nomVpd = v.numero ? `VPD ${v.numero}` : (v.texte ? `VPD « ${v.texte} »` : 'VPD');
+    if (!prev && v.texte) lignes.push(`+ ${nomVpd} ajoutée`);
+    else if (prev && prev.statut !== v.statut) {
+      const label = (s) => ({ ok: 'Validée', nc: 'Non conforme', null: 'En attente' }[s] || s || 'En attente');
+      lignes.push(`~ ${nomVpd} : ${label(prev.statut)} → ${label(v.statut)}`);
+    } else if (prev && prev.resolu !== v.resolu && v.resolu) {
+      lignes.push(`~ ${nomVpd} : résolue`);
     }
   });
 
@@ -1150,6 +1194,7 @@ function computeGlobalStatus() {
   const { done, total } = computeProgress();
   const nc = computeNcStats();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const preuve = computeProofStats();
   const closure = computeClosureVerdict();
 
@@ -1160,7 +1205,7 @@ function computeGlobalStatus() {
       ? { key: 'termine', label: 'Terminé' }
       : { key: 'pret', label: 'Prêt à fermer' };
   }
-  if (total > 0 && done === total && vpo.pendingObligatoire > 0) return { key: 'validation', label: 'En validation' };
+  if (total > 0 && done === total && (vpo.pendingObligatoire > 0 || vpd.pendingObligatoire > 0)) return { key: 'validation', label: 'En validation' };
   return { key: 'en-cours', label: 'En cours' };
 }
 
@@ -1198,6 +1243,13 @@ function computeNcStats() {
       if (it.gravite === 'critique') critique++; else if (it.gravite === 'majeure') majeure++; else mineure++;
     }
   });
+  (state.draft.vpdItems || []).forEach((it) => {
+    if (it.statut === 'nc') {
+      if (it.resolu) { resolues++; return; }
+      total++;
+      if (it.gravite === 'critique') critique++; else if (it.gravite === 'majeure') majeure++; else mineure++;
+    }
+  });
   (state.draft.ncExtra || []).forEach((it) => {
     if (it.texte && it.texte.trim()) {
       if (it.resolu) { resolues++; return; }
@@ -1210,6 +1262,15 @@ function computeNcStats() {
 
 function computeVpoStats() {
   const filled = (state.draft.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  const evalues = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+  const pendingAll = filled.filter((it) => !it.statut);
+  const pendingObligatoire = pendingAll.filter((it) => it.obligatoire).length;
+  const pendingOptionnel = pendingAll.length - pendingObligatoire;
+  return { total: filled.length, evalues, pending: pendingAll.length, pendingObligatoire, pendingOptionnel };
+}
+
+function computeVpdStats() {
+  const filled = (state.draft.vpdItems || []).filter((it) => it.texte && it.texte.trim());
   const evalues = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
   const pendingAll = filled.filter((it) => !it.statut);
   const pendingObligatoire = pendingAll.filter((it) => it.obligatoire).length;
@@ -1250,6 +1311,8 @@ function computeNextAction() {
   }
   const vpoPendingObligatoire = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut && it.obligatoire);
   if (vpoPendingObligatoire) return { text: `Évaluer le VPO obligatoire : ${vpoPendingObligatoire.texte}`, tab: 'vpo' };
+  const vpdPendingObligatoire = (state.draft.vpdItems || []).find((it) => it.texte && it.texte.trim() && !it.statut && it.obligatoire);
+  if (vpdPendingObligatoire) return { text: `Évaluer le VPD obligatoire : ${vpdPendingObligatoire.texte}`, tab: 'vpd' };
   for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
       if (!isTaskDone(name)) return { text: `Compléter : ${label}`, tab: group };
@@ -1257,6 +1320,8 @@ function computeNextAction() {
   }
   const vpoPending = (state.draft.vpoItems || []).find((it) => it.texte && it.texte.trim() && !it.statut);
   if (vpoPending) return { text: `Évaluer le VPO : ${vpoPending.texte}`, tab: 'vpo' };
+  const vpdPending = (state.draft.vpdItems || []).find((it) => it.texte && it.texte.trim() && !it.statut);
+  if (vpdPending) return { text: `Évaluer le VPD : ${vpdPending.texte}`, tab: 'vpd' };
   for (const [group, items] of Object.entries(groups)) {
     if (!ATTACH_GROUPS.includes(group)) continue;
     for (const [name, label] of items) {
@@ -1297,15 +1362,18 @@ function computeClosureVerdict() {
   const incomplete = total - done;
   const nc = computeNcStats();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const preuve = computeProofStats();
   const problems = [];
   if (incomplete > 0) problems.push(`${incomplete} tâche${incomplete > 1 ? 's' : ''} incomplète${incomplete > 1 ? 's' : ''}`);
   if (vpo.pendingObligatoire > 0) problems.push(`${vpo.pendingObligatoire} VPO obligatoire${vpo.pendingObligatoire > 1 ? 's' : ''} non évalué${vpo.pendingObligatoire > 1 ? 's' : ''}`);
+  if (vpd.pendingObligatoire > 0) problems.push(`${vpd.pendingObligatoire} VPD obligatoire${vpd.pendingObligatoire > 1 ? 's' : ''} non évalué${vpd.pendingObligatoire > 1 ? 's' : ''}`);
   if (nc.total > 0) problems.push(`${nc.total} non-conformité${nc.total > 1 ? 's' : ''} ouverte${nc.total > 1 ? 's' : ''}`);
   if (preuve.manquantes > 0) problems.push(`${preuve.manquantes} preuve${preuve.manquantes > 1 ? 's' : ''} manquante${preuve.manquantes > 1 ? 's' : ''}`);
   if (!problems.length) {
-    let text = 'Dossier prêt pour révision : toutes les tâches sont complétées, les VPO obligatoires sont évalués et aucune non-conformité n\u2019est ouverte.';
+    let text = 'Dossier prêt pour révision : toutes les tâches sont complétées, les VPO/VPD obligatoires sont évalués et aucune non-conformité n\u2019est ouverte.';
     if (vpo.pendingOptionnel > 0) text += ` (Note : ${vpo.pendingOptionnel} VPO non obligatoire${vpo.pendingOptionnel > 1 ? 's' : ''} encore non évalué${vpo.pendingOptionnel > 1 ? 's' : ''}.)`;
+    if (vpd.pendingOptionnel > 0) text += ` (Note : ${vpd.pendingOptionnel} VPD non obligatoire${vpd.pendingOptionnel > 1 ? 's' : ''} encore non évalué${vpd.pendingOptionnel > 1 ? 's' : ''}.)`;
     return { ready: true, text };
   }
   return { ready: false, text: `Dossier non prêt à fermer : ${problems.join(', ')}.`, problems };
@@ -1338,6 +1406,14 @@ function computeClosureItems() {
       items.push({ label: it.texte, detail: 'validation requise', tab: 'vpo', buttonLabel: 'Ouvrir la VPO' });
     }
   });
+  (state.draft.vpdItems || []).forEach((it) => {
+    if (!it.texte || !it.texte.trim()) return;
+    if (it.statut === 'nc' && !it.resolu) {
+      items.push({ label: `${it.numero ? it.numero + ' — ' : ''}${it.texte}`, detail: 'non-conformité ouverte', tab: 'vpd', buttonLabel: 'Ouvrir la VPD' });
+    } else if (it.obligatoire && !it.statut) {
+      items.push({ label: it.texte, detail: 'validation requise', tab: 'vpd', buttonLabel: 'Ouvrir la VPD' });
+    }
+  });
   (state.draft.ncExtra || []).forEach((it) => {
     if (it.texte && it.texte.trim() && !it.resolu) {
       items.push({ label: `${it.numero ? it.numero + ' — ' : ''}${it.texte}`, detail: 'non-conformité ouverte', tab: 'non-conformite', buttonLabel: 'Ouvrir la non-conformité' });
@@ -1350,7 +1426,7 @@ const PRIORITE_LABEL = { basse: 'Basse', normale: 'Normale', haute: 'Haute', urg
 
 const DOCUMENTS_FILTER_LABELS = {
   toutes: 'Toutes', plans: 'Plans', photos: 'Photos', 'preuve-requise': 'Preuves requises',
-  vpo: 'VPO', nc: 'Non-conformités', 'non-classe': 'Non classés',
+  vpo: 'VPO', vpd: 'VPD', nc: 'Non-conformités', 'non-classe': 'Non classés',
 };
 function renderDocuments() {
   const container = $('#documentsContent');
@@ -1381,9 +1457,11 @@ function renderDocuments() {
   });
 
   const vpoNumeros = new Set((d.vpoItems || []).filter((it) => it.numero).map((it) => it.numero));
+  const vpdNumeros = new Set((d.vpdItems || []).filter((it) => it.numero).map((it) => it.numero));
   Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
-    const category = vpoNumeros.has(numero) ? 'vpo' : 'nc';
-    files.forEach((f) => allDocs.push({ file: f, category, tab: category === 'vpo' ? 'vpo' : 'non-conformite', link: numero, date: f.uploadedAt, arrRef: files, preuveStatus: 'non-requise' }));
+    const category = vpoNumeros.has(numero) ? 'vpo' : vpdNumeros.has(numero) ? 'vpd' : 'nc';
+    const tab = category === 'vpo' ? 'vpo' : category === 'vpd' ? 'vpd' : 'non-conformite';
+    files.forEach((f) => allDocs.push({ file: f, category, tab, link: numero, date: f.uploadedAt, arrRef: files, preuveStatus: 'non-requise' }));
   });
 
   if (!allDocs.length) {
@@ -1597,6 +1675,7 @@ function renderApercu() {
   const closure = computeClosureVerdict();
   const nc = computeNcStats();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const preuve = computeProofStats();
 
   const titre = [d.champs.type, d.champs.tag].filter(Boolean).join(' — ')
@@ -1647,6 +1726,7 @@ function renderApercu() {
       ${!closure.ready ? `<div class="closure-actions">
         ${(total - done) > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="${groupStats.find((g) => g.pct < 100)?.group || 'identification'}">Voir les tâches incomplètes</button>` : ''}
         ${vpo.pendingObligatoire > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="vpo">Voir les VPO</button>` : ''}
+        ${vpd.pendingObligatoire > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="vpd">Voir les VPD</button>` : ''}
         ${nc.total > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="non-conformite">Voir les non-conformités</button>` : ''}
         ${preuve.manquantes > 0 ? `<button type="button" class="btn btn-outline" data-apercu-jump="documents">Voir les preuves manquantes</button>` : ''}
       </div>` : ''}
@@ -1665,6 +1745,9 @@ function renderApercu() {
     <div class="vpo-nc-summary-row">
       <div class="vpo-nc-summary-item" data-apercu-jump="vpo">
         <div class="num">${vpo.pending}</div><div class="lbl">VPO ouvertes</div>
+      </div>
+      <div class="vpo-nc-summary-item" data-apercu-jump="vpd">
+        <div class="num">${vpd.pending}</div><div class="lbl">VPD ouvertes</div>
       </div>
       <div class="vpo-nc-summary-item" data-apercu-jump="non-conformite">
         <div class="num" style="color:${nc.total ? 'var(--color-error)' : 'var(--color-success)'};">${nc.total}</div><div class="lbl">Non-conformités</div>
@@ -1704,6 +1787,7 @@ function renderApercu() {
       <div>Documents remis<br><strong>${handoff.documentsRemis}</strong></div>
       <div>Preuves satisfaites<br><strong>${handoff.preuvesSatisfaites}</strong></div>
       <div>VPO fermées<br><strong>${handoff.vpoFermees}</strong></div>
+      <div>VPD fermées<br><strong>${handoff.vpdFermees}</strong></div>
       <div>Non-conformités résolues<br><strong>${handoff.ncResolues}</strong></div>
       <div>Rapport exporté<br><strong>${escapeHtml(handoff.rapportExporte)}</strong></div>
       <div>Dernière sauvegarde<br><strong>${escapeHtml(handoff.derniereSauvegarde)}</strong></div>
@@ -1871,6 +1955,16 @@ function renderNonConformites() {
       });
     }
   });
+  (state.draft.vpdItems || []).forEach((item) => {
+    if (item.statut === 'nc') {
+      rows.push({
+        kind: 'vpd', key: item.id, numero: item.numero || '', section: 'VPD', label: item.texte || '(sans description)',
+        reason: item.raison || '', gravite: item.gravite || '', zone: item.zone || '',
+        actionCorrective: item.actionCorrective || '', responsable: item.responsable || '',
+        dateCreation: item.dateCreation || '', resolu: !!item.resolu,
+      });
+    }
+  });
   (state.draft.ncExtra || []).forEach((item) => {
     if (item.texte && item.texte.trim()) {
       rows.push({
@@ -1956,6 +2050,9 @@ function renderNonConformites() {
         state.draft.casesNcDetails[key].resolu = !state.draft.casesNcDetails[key].resolu;
       } else if (kind === 'vpo') {
         const item = findVpoItem(key);
+        if (item) item.resolu = !item.resolu;
+      } else if (kind === 'vpd') {
+        const item = findVpdItem(key);
         if (item) item.resolu = !item.resolu;
       } else if (kind === 'ncextra') {
         const item = (state.draft.ncExtra || []).find((it) => it.id === key);
@@ -2154,6 +2251,7 @@ function renderMobileResumeBody() {
   const idx = list.findIndex((t) => state.draft.casesCochees[t.name] !== true);
   const nc = computeNcStats();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
 
   const nextTaskHtml = idx !== -1 ? `
     <div class="mobile-next-task">
@@ -2166,6 +2264,7 @@ function renderMobileResumeBody() {
     ${nextTaskHtml}
     <div class="mobile-control-lines">
       <div>VPO ouvertes : ${vpo.pending}</div>
+      <div>VPD ouvertes : ${vpd.pending}</div>
       <div>Non-conformités : ${nc.total}</div>
     </div>
   `;
@@ -2176,7 +2275,7 @@ const TAB_CATEGORIES = {
   apercu: 'resume',
   identification: 'checklist', plans: 'checklist', programmation: 'checklist',
   systeme: 'checklist', information: 'checklist', securite: 'checklist',
-  vpo: 'ecarts', 'non-conformite': 'ecarts',
+  vpo: 'ecarts', vpd: 'ecarts', 'non-conformite': 'ecarts',
   'mise-a-jour': 'plus', documents: 'plus', commentaire: 'plus', approbation: 'plus',
 };
 
@@ -2243,6 +2342,7 @@ function updateChecklistContextBar(visible) {
   const { done, total } = computeProgress();
   const nc = computeNcStats();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const parts = [
     d.champs.desc,
     d.mode === 'installation' ? 'Installation' : 'Démantèlement',
@@ -2250,6 +2350,7 @@ function updateChecklistContextBar(visible) {
   const statsParts = [
     `${done}/${total} tâches`,
     vpo.pending > 0 ? `${vpo.pending} VPO ouverte${vpo.pending > 1 ? 's' : ''}` : null,
+    vpd.pending > 0 ? `${vpd.pending} VPD ouverte${vpd.pending > 1 ? 's' : ''}` : null,
     nc.total > 0 ? `${nc.total} NC ouverte${nc.total > 1 ? 's' : ''}` : null,
     computeGlobalStatus().label,
   ].filter(Boolean);
@@ -2530,6 +2631,13 @@ function buildDashboardHtml(options) {
     groupStats.push({ group: 'vpo', label: 'VPO', pct: (vpoDone / vpoFilled.length) * 100, count: `${vpoDone}/${vpoFilled.length}` });
   }
 
+  const vpdFilled = toArray(d.vpdItems).filter((it) => it.texte && it.texte.trim());
+  const hasVpd = vpdFilled.length > 0;
+  if (hasVpd) {
+    const vpdDone = vpdFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    groupStats.push({ group: 'vpd', label: 'VPD', pct: (vpdDone / vpdFilled.length) * 100, count: `${vpdDone}/${vpdFilled.length}` });
+  }
+
   const ringsHtml = groupStats.map((g) => `
     <div class="ring-card" onclick="jumpToSection('sec-${g.group}')" role="button" tabindex="0">
       ${ringSvg(g.pct, 104, 9)}
@@ -2583,6 +2691,19 @@ function buildDashboardHtml(options) {
     </details>`;
   })() : '';
 
+  const vpdHtml = hasVpd ? (() => {
+    const vpdDone = vpdFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    const vpdPct = (vpdDone / vpdFilled.length) * 100;
+    const rows = vpdFilled.map((it) => {
+      const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
+      return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '');
+    }).join('');
+    return `<details class="section-card" id="sec-vpd">
+      <summary><span>VPD — Vérification post-démarrage</span><span class="section-pct">${Math.round(vpdPct)} %</span></summary>
+      <div class="task-list">${rows}</div>
+    </details>`;
+  })() : '';
+
   // ---- Non-conformités ----
   const GRAVITE_TAG = { critique: 'Critique', majeure: 'Majeure', mineure: 'Mineure' };
   const ncItems = [];
@@ -2598,6 +2719,12 @@ function buildDashboardHtml(options) {
     if (it.statut === 'nc') {
       if (it.resolu) { ncResoluesCount++; return; }
       ncItems.push({ numero: it.numero || '', section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
+    }
+  });
+  toArray(d.vpdItems).forEach((it) => {
+    if (it.statut === 'nc') {
+      if (it.resolu) { ncResoluesCount++; return; }
+      ncItems.push({ numero: it.numero || '', section: 'VPD', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
     }
   });
   toArray(d.ncExtra).forEach((it) => {
@@ -2864,6 +2991,7 @@ function buildDashboardHtml(options) {
     <h2 class="section-title">Détail des tâches</h2>
     ${sectionsHtml}
     ${vpoHtml}
+    ${vpdHtml}
 
     <h2 class="section-title">Images et documents de mise à jour</h2>
     ${photosHtml}
@@ -3887,6 +4015,134 @@ $('#btnAddVpo').addEventListener('click', () => {
   renderVpoList();
 });
 
+// ---------- Onglet VPD : liste dynamique (miroir exact de VPO, séparé) ----------
+function findVpdItem(id) {
+  return (state.draft.vpdItems || []).find((it) => it.id === id);
+}
+
+function renderVpdList() {
+  const container = $('#vpdList');
+  if (!container || !state.draft) return;
+  const items = state.draft.vpdItems || [];
+
+  container.innerHTML = items.map((item) => {
+    const pending = item.texte && item.texte.trim() && !item.statut;
+    let impact = '';
+    if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block"><span class="icon-inline" data-icon="alertTriangle" style="margin-right:4px;"></span>Ce VPD empêche la fermeture du dossier</div>';
+    else if (pending) impact = '<div class="vpo-impact vpo-impact-soft">Validation recommandée avant l\u2019étape suivante</div>';
+    const validationInfo = item.statut && item.dateValidation
+      ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${item.numero}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
+      : '';
+    return `
+    <div class="vpo-row" data-vpd-id="${item.id}">
+      <div class="vpo-status">
+        <button type="button" class="btn-obligatoire${item.obligatoire ? ' active' : ''}" data-vpd-obligatoire="${item.id}" title="Marquer ce VPD comme obligatoire">Obligatoire</button>
+        <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpd-conforme="${item.id}">Conforme</button>
+        <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpd-nc="${item.id}">Non conforme</button>
+      </div>
+      <input type="text" class="vpo-input" data-vpd-text="${item.id}" placeholder="Décrire le point vérifié après démarrage…" value="${escapeHtml(item.texte || '')}">
+      <button type="button" class="btn-vpo-remove" data-vpd-remove="${item.id}" title="Retirer cette ligne">✕</button>
+    </div>
+    ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
+    ${validationInfo}
+    ${impact}
+  `; }).join('');
+
+  $$('[data-vpd-obligatoire]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const item = findVpdItem(btn.dataset.vpdObligatoire);
+      if (!item) return;
+      item.obligatoire = !item.obligatoire;
+      schedulePersist();
+      renderVpdList();
+      updateProgressPill();
+    });
+  });
+
+  $$('[data-vpd-text]', container).forEach((input) => {
+    input.addEventListener('input', () => {
+      const item = findVpdItem(input.dataset.vpdText);
+      if (!item) return;
+      item.texte = input.value;
+      schedulePersist();
+      updateProgressPill();
+    });
+  });
+
+  $$('[data-vpd-conforme]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const item = findVpdItem(btn.dataset.vpdConforme);
+      if (!item) return;
+      if (item.statut === 'conforme') {
+        item.statut = null;
+        item.dateValidation = '';
+        item.validePar = '';
+      } else {
+        item.statut = 'conforme';
+        item.raison = '';
+        item.dateValidation = new Date().toISOString();
+        item.validePar = (state.draft.champs.employeeName || '').trim();
+        logActivity(`VPD validé conforme : ${item.texte || '(sans description)'}`);
+      }
+      schedulePersist();
+      renderVpdList();
+      updateProgressPill();
+      renderNonConformites();
+    });
+  });
+
+  $$('[data-vpd-nc]', container).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const item = findVpdItem(btn.dataset.vpdNc);
+      if (!item) return;
+      if (item.statut === 'nc') {
+        item.statut = null;
+        item.raison = '';
+        item.gravite = '';
+        item.dateValidation = '';
+        item.validePar = '';
+      } else {
+        const result = await askNcReason();
+        if (result === null) return;
+        item.statut = 'nc';
+        item.raison = result.reason;
+        item.gravite = result.gravite;
+        item.zone = result.zone;
+        item.actionCorrective = result.actionCorrective;
+        item.responsable = result.responsable;
+        item.dateCreation = result.dateCreation;
+        item.numero = nextNcId();
+        item.resolu = false;
+        item.dateValidation = new Date().toISOString();
+        item.validePar = (state.draft.champs.employeeName || '').trim();
+        logActivity(`Non-conformité VPD (${result.gravite}) relevée : ${item.texte || '(sans description)'}`);
+      }
+      schedulePersist();
+      renderVpdList();
+      updateProgressPill();
+      renderNonConformites();
+    });
+  });
+
+  $$('[data-vpd-remove]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.draft.vpdItems = state.draft.vpdItems.filter((it) => it.id !== btn.dataset.vpdRemove);
+      if (!state.draft.vpdItems.length) state.draft.vpdItems.push(newVpdItem());
+      schedulePersist();
+      renderVpdList();
+      updateProgressPill();
+      renderNonConformites();
+    });
+  });
+}
+
+$('#btnAddVpd').addEventListener('click', () => {
+  if (!state.draft) return;
+  state.draft.vpdItems.push(newVpdItem());
+  schedulePersist();
+  renderVpdList();
+});
+
 // ---------- Onglet Non-conformité : ajout manuel de lignes ----------
 function findNcExtraItem(id) {
   return (state.draft.ncExtra || []).find((it) => it.id === id);
@@ -4381,6 +4637,7 @@ function renderApprobationFinaleCard() {
   const closure = computeClosureVerdict();
   const { done, total } = computeProgress();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const nc = computeNcStats();
   const preuve = computeProofStats();
 
@@ -4426,6 +4683,7 @@ function renderApprobationFinaleCard() {
           Checklist : ${done} / ${total} tâches terminées<br>
           Preuves requises manquantes : ${preuve.manquantes}<br>
           VPO ouvertes : ${vpo.pending}<br>
+          VPD ouvertes : ${vpd.pending}<br>
           Non-conformités ouvertes : ${nc.total}
         </div>
         <div class="approbation-finale-actions">
@@ -4512,6 +4770,7 @@ async function demanderApprobationFinale() {
   const d = state.draft;
   const { done, total } = computeProgress();
   const vpo = computeVpoStats();
+  const vpd = computeVpdStats();
   const nc = computeNcStats();
   const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
   const lienDossier = buildDossierUrl();
@@ -4524,6 +4783,7 @@ async function demanderApprobationFinale() {
     `Équipement / tag : ${d.champs.tag || ''}`,
     `Checklist : ${done} / ${total} tâches complétées`,
     `VPO ouvertes : ${vpo.pending}`,
+    `VPD ouvertes : ${vpd.pending}`,
     `Non-conformités ouvertes : ${nc.total}`, '',
     ...(lienPartage ? [`Tu peux consulter les fichiers du dossier ici : ${lienPartage}`, ''] : []),
     `Tu peux aussi ouvrir le dossier directement dans l'application ici : ${lienDossier}`, '',
@@ -5021,16 +5281,18 @@ async function reportEcartForTask(name, label) {
     <div style="display:flex;flex-direction:column;gap:var(--space-2);">
       <button type="button" class="btn btn-outline" id="ecartChoixNc" style="width:100%;">Non-conformité sur cette tâche</button>
       <button type="button" class="btn btn-outline" id="ecartChoixVpo" style="width:100%;">Nouveau point VPO lié</button>
+      <button type="button" class="btn btn-outline" id="ecartChoixVpd" style="width:100%;">Nouveau point VPD lié</button>
     </div>
-  `, ['ecartChoixNc', 'ecartChoixVpo']);
+  `, ['ecartChoixNc', 'ecartChoixVpo', 'ecartChoixVpd']);
 
   if (choice === 'ecartChoixNc') {
     await taskToggleNC(name, label);
     renderNonConformites();
-  } else if (choice === 'ecartChoixVpo') {
+  } else if (choice === 'ecartChoixVpo' || choice === 'ecartChoixVpd') {
+    const estVpd = choice === 'ecartChoixVpd';
     const result = await askNcReason();
     if (result === null) return;
-    const item = newVpoItem();
+    const item = estVpd ? newVpdItem() : newVpoItem();
     item.texte = `Écart lié à : ${label}`;
     item.statut = 'nc';
     item.raison = result.reason;
@@ -5043,10 +5305,10 @@ async function reportEcartForTask(name, label) {
     item.resolu = false;
     item.dateValidation = new Date().toISOString();
     item.validePar = (state.draft.champs.employeeName || '').trim();
-    state.draft.vpoItems.push(item);
-    logActivity(`Non-conformité VPO (${result.gravite}) relevée depuis le mode intervention : ${item.texte}`);
+    state.draft[estVpd ? 'vpdItems' : 'vpoItems'].push(item);
+    logActivity(`Non-conformité ${estVpd ? 'VPD' : 'VPO'} (${result.gravite}) relevée depuis le mode intervention : ${item.texte}`);
     schedulePersist();
-    renderVpoList();
+    if (estVpd) renderVpdList(); else renderVpoList();
     renderNonConformites();
   }
   updateProgressPill();
@@ -5143,6 +5405,12 @@ function buildSearchIndex() {
     if (!it.texte || !it.texte.trim()) return;
     index.push({ type: it.numero || 'VPO', text: it.texte, sub: it.statut === 'nc' ? 'VPO — non-conformité' : 'VPO', tab: 'vpo' });
     if (it.raison) index.push({ type: 'Note', text: it.raison, sub: `Raison — ${it.numero || 'VPO'}`, tab: 'vpo' });
+  });
+
+  (d.vpdItems || []).forEach((it) => {
+    if (!it.texte || !it.texte.trim()) return;
+    index.push({ type: it.numero || 'VPD', text: it.texte, sub: it.statut === 'nc' ? 'VPD — non-conformité' : 'VPD', tab: 'vpd' });
+    if (it.raison) index.push({ type: 'Note', text: it.raison, sub: `Raison — ${it.numero || 'VPD'}`, tab: 'vpd' });
   });
 
   (d.ncExtra || []).forEach((it) => {
