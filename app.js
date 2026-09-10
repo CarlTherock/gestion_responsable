@@ -436,6 +436,7 @@ function newDraft(numero, mode) {
     ncExtra: [],
     approbations: [],
     journal: [],
+    customTasks: {},
     derniereSauvegardeOfficielle: null,
     meta: { source: 'pwa', modeSauvegarde: 'brouillon-local' },
     // ---- Dossier principal / révisions ----
@@ -457,6 +458,8 @@ function nextNcId() {
 
 function normalizeDraft(d) {
   if (!d.revisions) d.revisions = [];
+  if (!d.customTasks) d.customTasks = {};
+  if (!d.customTasks) d.customTasks = {};
   if (!d.activeRevision) {
     // Ancien dossier créé avant le système de révisions : sa donnée actuelle
     // devient la révision active R00 — aucune perte, juste une étiquette.
@@ -503,7 +506,7 @@ function normalizeDraft(d) {
   if (d.derniereExportRapport === undefined) d.derniereExportRapport = null;
 
   // Attribution rétroactive des identifiants NC-xx manquants (compatibilité anciens dossiers)
-  const groupsForId = CHECKLISTS[d.mode] || {};
+  const groupsForId = getEffectiveChecklists(d.mode, d.customTasks);
   Object.entries(groupsForId).forEach(([group, items]) => items.forEach(([name]) => {
     if (d.casesCochees[name] === 'nc') {
       if (!d.casesNcDetails[name]) d.casesNcDetails[name] = {};
@@ -607,7 +610,7 @@ $('#topbarMenuBtn').addEventListener('click', async () => {
 // Vérification avant fermeture : partagée entre le bouton PC et le bouton mobile.
 // Recalcule toujours à la demande — jamais de donnée figée d'un rendu précédent.
 function computeChecklistOnlyProgress() {
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   let total = 0, done = 0;
   Object.values(groups).forEach((items) => items.forEach(([name]) => {
     total += 1;
@@ -618,7 +621,7 @@ function computeChecklistOnlyProgress() {
 }
 
 function computeProofSummary() {
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   let total = 0, satisfied = 0;
   Object.entries(groups).forEach(([, items]) => items.forEach(([name]) => {
     if (state.draft.casesPreuveRequise[name]) {
@@ -800,7 +803,7 @@ function isTaskDone(name) {
 
 function computeProgress() {
   if (!state.draft) return { done: 0, total: 0, pct: 100 };
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   let total = 0, done = 0;
   Object.values(groups).forEach((items) => {
     items.forEach(([name]) => { total += 1; if (isTaskDone(name)) done += 1; });
@@ -871,6 +874,19 @@ function buildLightSnapshot(d) {
     commentaires: (d.champs && d.champs.commentaires) || '',
     statutGlobal: computeGlobalStatus().key,
   };
+}
+
+// Fusionne les tâches prédéfinies d'un mode avec les lignes ajoutées
+// manuellement par l'utilisateur (« + Ajouter une ligne »), pour que tout le
+// reste du code (rendu, progression, export) les traite de façon identique.
+function getEffectiveChecklists(mode, customTasksOverride) {
+  const base = CHECKLISTS[mode] || {};
+  const custom = customTasksOverride || (state.draft && state.draft.customTasks) || {};
+  const merged = {};
+  Object.keys(base).forEach((g) => {
+    merged[g] = (custom[g] && custom[g].length) ? [...base[g], ...custom[g]] : base[g];
+  });
+  return merged;
 }
 
 // Trouve le libellé humain d'une tâche à partir de son nom interne.
@@ -1034,7 +1050,7 @@ function updateProgressPill() {
 }
 
 function computeNcStats() {
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   let total = 0, critique = 0, majeure = 0, mineure = 0, resolues = 0;
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name]) => {
     if (state.draft.casesCochees[name] === 'nc') {
@@ -1093,7 +1109,7 @@ function computeDossierStatus() {
 }
 
 function computeNextAction() {
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
       if (state.draft.casesCochees[name] === 'nc' && state.draft.casesGravites[name] === 'critique'
@@ -1132,7 +1148,7 @@ function computeNextAction() {
 }
 
 function computeProofStats() {
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   let manquantes = 0;
   Object.entries(groups).forEach(([group, items]) => {
     if (!ATTACH_GROUPS.includes(group)) return;
@@ -1170,7 +1186,7 @@ function computeClosureVerdict() {
 function computeClosureItems() {
   if (!state.draft) return [];
   const items = [];
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   Object.entries(groups).forEach(([group, tasks]) => {
     tasks.forEach(([name, label]) => {
       const val = state.draft.casesCochees[name];
@@ -1210,7 +1226,7 @@ function renderDocuments() {
   const container = $('#documentsContent');
   if (!container || !state.draft) return;
   const d = state.draft;
-  const groups = CHECKLISTS[d.mode] || {};
+  const groups = getEffectiveChecklists(d.mode, d.customTasks);
   const allDocs = [];
 
   Object.entries(groups).forEach(([group, items]) => {
@@ -1269,8 +1285,10 @@ function renderDocuments() {
         <div class="doc-row-name">${escapeHtml(doc.file.name)}</div>
         <div class="doc-row-meta">${escapeHtml(doc.link)} · ${fmtSize(doc.file.size)}${doc.date ? ' · ' + new Date(doc.date).toLocaleDateString('fr-CA') : ''}${doc.file.partages && doc.file.partages.length ? ` · ${formatShareSummary(doc.file.partages)}` : ''}</div>
         <div class="doc-row-proof proof-${doc.preuveStatus}">${PROOF_LABEL[doc.preuveStatus]}</div>
+        ${doc.file.commentaire ? `<div class="file-comment-text">${escapeHtml(doc.file.commentaire)}</div>` : ''}
       </div>
       ${isImageFile(doc.file.name) ? `<button type="button" class="btn btn-tertiary" data-doc-share="${i}">Partager</button>` : ''}
+      <button type="button" class="btn btn-tertiary" data-doc-comment="${i}">${doc.file.commentaire ? 'Modifier' : 'Commentaire'}</button>
       <button type="button" class="btn btn-tertiary doc-dl-btn" data-doc-name="${escapeHtml(doc.file.name)}">Télécharger</button>
       <button type="button" class="btn btn-tertiary" data-doc-jump="${doc.tab}">Ouvrir</button>
     </div>`).join('')}</div>` : '<div class="empty-state">Aucun document pour ce filtre.</div>');
@@ -1278,6 +1296,9 @@ function renderDocuments() {
   attachShareHistoryClicks(container, (row) => filtered[Number(row.dataset.shareFileIdx)]?.file);
   $$('[data-doc-enlarge]', container).forEach((img) => {
     img.addEventListener('click', () => openImageLightbox(filtered[Number(img.dataset.docEnlarge)].file));
+  });
+  $$('[data-doc-comment]', container).forEach((btn) => {
+    btn.addEventListener('click', () => commentFile(filtered[Number(btn.dataset.docComment)].file, renderDocuments));
   });
   $$('[data-doc-share]', container).forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1425,7 +1446,7 @@ function renderApercu() {
   if (!container || !state.draft) return;
   const d = state.draft;
   const { done, total, pct } = computeProgress();
-  const groups = CHECKLISTS[d.mode] || {};
+  const groups = getEffectiveChecklists(d.mode, d.customTasks);
   const status = computeDossierStatus();
   const globalStatus = computeGlobalStatus();
   const handoff = computeHandoffSummary();
@@ -1662,7 +1683,7 @@ async function shareDossierLink() {
 function renderNonConformites() {
   const el = $('#ncSummary');
   if (!el || !state.draft) return;
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   const rows = [];
   Object.entries(groups).forEach(([group, items]) => {
     items.forEach(([name, label]) => {
@@ -2090,10 +2111,17 @@ function folderName(date) {
 // (02_Documents/Plans, Preuves ou Autres) — utilisé à la fois pour écrire les
 // fichiers sur disque et pour construire les liens du Dashboard, afin que les
 // deux restent toujours d'accord sur l'emplacement exact.
-function categorizeDocument(group, name) {
-  if (group === 'plans') return 'Plans';
-  if (state.draft && state.draft.casesPreuveRequise && state.draft.casesPreuveRequise[name]) return 'Preuves';
-  return 'Autres';
+// Noms de dossiers correspondant exactement aux onglets de l'app, pour que
+// le dossier exporté reflète ce qu'on voit dans l'application : une image
+// mise dans l'onglet Plans se retrouve dans un dossier Plans, une mise dans
+// Programmation se retrouve dans un dossier Programmation, etc.
+const GROUP_FOLDER_NAMES = {
+  identification: 'Identification', plans: 'Plans', programmation: 'Programmation',
+  systeme: 'Systeme', information: 'Information', securite: 'Securite-et-general',
+};
+
+function categorizeDocument(group) {
+  return GROUP_FOLDER_NAMES[group] || 'Autres';
 }
 
 async function ensureLocalDossierFolder(date) {
@@ -2166,7 +2194,7 @@ function slugForFolder(text, maxLen) {
 // étaient à ce moment, sans dépendre d'aucun dossier commun partagé.
 async function writeDocumentsPhotosNc(destHandle, draft) {
   const groupOfTask = {};
-  Object.entries(CHECKLISTS[draft.mode] || {}).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
+  Object.entries(getEffectiveChecklists(draft.mode, draft.customTasks)).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
 
   const d02 = await destHandle.getDirectoryHandle('02_Documents', { create: true });
   for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
@@ -2283,7 +2311,7 @@ function buildDashboardHtml(options) {
   const d = state.draft;
   const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
   const { done, total, pct } = computeProgress();
-  const groups = CHECKLISTS[d.mode];
+  const groups = getEffectiveChecklists(d.mode, d.customTasks);
 
   const statusDotFor = (v) => {
     if (v === true) return { cls: 'st-done', icon: '\u2713' };
@@ -2645,7 +2673,7 @@ function buildDashboardHtml(options) {
 function buildResumeText() {
   const d = state.draft;
   const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
-  const groups = CHECKLISTS[d.mode];
+  const groups = getEffectiveChecklists(d.mode, d.customTasks);
   const { done, total } = computeProgress();
 
   const lines = [];
@@ -2970,19 +2998,57 @@ function taskMatchesFilter(name, filterKey) {
   }
 }
 
+// Ajoute ou modifie un commentaire sur un fichier précis (pas la tâche
+// entière) — réutilisée partout où un fichier est affiché avec un bouton
+// Partager.
+async function commentFile(file, onUpdate) {
+  const confirmed = await showModal({
+    title: `Commentaire — ${file.name}`,
+    bodyHtml: `<div class="field"><textarea id="fileCommentText" rows="4" style="width:100%;resize:vertical;">${escapeHtml(file.commentaire || '')}</textarea></div>`,
+    confirmLabel: 'Enregistrer',
+  });
+  if (!confirmed) return;
+  file.commentaire = $('#fileCommentText').value.trim();
+  schedulePersist();
+  if (onUpdate) onUpdate();
+}
+
 function wireChecklistFilterSelect(container, group) {
   $$('[data-checklist-filter]', container).forEach((sel) => {
     sel.addEventListener('change', () => {
       state.checklistFilter = sel.value;
-      Object.keys(CHECKLISTS[state.draft.mode] || {}).forEach((g) => renderChecklist(g));
+      Object.keys(getEffectiveChecklists(state.draft.mode)).forEach((g) => renderChecklist(g));
     });
   });
+  $$('[data-ajouter-ligne]', container).forEach((btn) => {
+    btn.addEventListener('click', () => ajouterLigneChecklist(btn.dataset.ajouterLigne));
+  });
+}
+
+// Ajoute une ligne (tâche) supplémentaire dans une section, avec la même
+// disposition et les mêmes actions qu'une tâche prédéfinie (case à cocher,
+// N/A, Non conforme, zone de document).
+async function ajouterLigneChecklist(group) {
+  const confirmed = await showModal({
+    title: 'Ajouter une ligne',
+    bodyHtml: `<div class="field"><label>Description de la tâche</label><input type="text" id="nouvelleLigneLabel" placeholder="Ex. : Vérification supplémentaire"></div>`,
+    confirmLabel: 'Ajouter',
+  });
+  if (!confirmed) return;
+  const label = $('#nouvelleLigneLabel').value.trim();
+  if (!label) return;
+  const name = `custom.${group}.${generateId()}`;
+  if (!state.draft.customTasks[group]) state.draft.customTasks[group] = [];
+  state.draft.customTasks[group].push([name, label]);
+  logActivity(`Ligne ajoutée dans ${GROUP_LABELS[group] || group} : ${label}`);
+  schedulePersist();
+  renderChecklist(group);
 }
 
 function renderChecklist(group) {
   const container = $(`[data-checklist="${group}"]`);
   if (!container) return;
-  const allItems = (CHECKLISTS[state.draft.mode] && CHECKLISTS[state.draft.mode][group]) || [];
+  const allItems = getEffectiveChecklists(state.draft.mode)[group] || [];
   if (!allItems.length) {
     container.innerHTML = '<div class="empty-state">Aucune tâche prévue pour ce type d\u2019intervention dans cette section.</div>';
     updateChecklistProgress(group, 0, 0);
@@ -2994,6 +3060,7 @@ function renderChecklist(group) {
       <select id="checklistFilterSelect-${group}" data-checklist-filter="${group}">
         ${Object.entries(CHECKLIST_FILTER_LABELS).map(([k, l]) => `<option value="${k}"${state.checklistFilter === k ? ' selected' : ''}>${l}</option>`).join('')}
       </select>
+      <button type="button" class="btn btn-outline" data-ajouter-ligne="${group}" style="margin-left:auto;">+ Ajouter une ligne</button>
     </div>`;
   const items = allItems.filter(([name]) => taskMatchesFilter(name, state.checklistFilter));
   if (!items.length) {
@@ -3213,8 +3280,12 @@ function renderItemFileList(group, name) {
       <div class="file-row-info">
         <span class="file-name">${escapeHtml(f.name)}</span>
         <span class="file-meta">${fmtSize(f.size)}${f.partages && f.partages.length ? ` · ${formatShareSummary(f.partages)}` : ''}</span>
+        ${f.commentaire ? `<span class="file-comment-text">${escapeHtml(f.commentaire)}</span>` : ''}
       </div>
-      ${isImageFile(f.name) ? `<button type="button" class="btn btn-tertiary" data-file-share="${name}::${i}">Partager</button>` : ''}
+      <div class="file-row-actions">
+        ${isImageFile(f.name) ? `<button type="button" class="btn btn-tertiary" data-file-share="${name}::${i}">Partager</button>` : ''}
+        <button type="button" class="btn btn-tertiary" data-file-comment="${name}::${i}">${f.commentaire ? 'Modifier' : 'Commentaire'}</button>
+      </div>
     </div>`).join('') : '';
 
   attachShareHistoryClicks(listEl, (row) => files[Number(row.dataset.shareFileIdx)]);
@@ -3224,10 +3295,16 @@ function renderItemFileList(group, name) {
       openImageLightbox(files[Number(idx)]);
     });
   });
+  $$('[data-file-comment]', listEl).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [, idx] = btn.dataset.fileComment.split('::');
+      commentFile(files[Number(idx)], () => renderItemFileList(group, name));
+    });
+  });
   $$('[data-file-share]', listEl).forEach((btn) => {
     btn.addEventListener('click', () => {
       const [, idx] = btn.dataset.fileShare.split('::');
-      const label = (CHECKLISTS[state.draft.mode][group] || []).find(([n]) => n === name)?.[1] || name;
+      const label = (getEffectiveChecklists(state.draft.mode)[group] || []).find(([n]) => n === name)?.[1] || name;
       sharePhoto(files[Number(idx)], `Tâche : ${label}`, () => renderItemFileList(group, name), label);
     });
   });
@@ -3416,7 +3493,7 @@ async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
 }
 
 function refreshChecklistProgressFor(group) {
-  const items = (CHECKLISTS[state.draft.mode] && CHECKLISTS[state.draft.mode][group]) || [];
+  const items = getEffectiveChecklists(state.draft.mode)[group] || [];
   const done = items.filter(([n]) => isTaskDone(n)).length;
   updateChecklistProgress(group, done, items.length);
 }
@@ -4109,7 +4186,7 @@ async function importDossierFromPickedFolder(expectedNumero) {
     const draft = normalizeDraft(JSON.parse(await jsonFile.text()));
 
     // ---- Aperçu avant import : montrer l'essentiel avant de toucher aux données locales ----
-    const groupsPreview = CHECKLISTS[draft.mode] || {};
+    const groupsPreview = getEffectiveChecklists(draft.mode, draft.customTasks);
     let taskTotal = 0, taskDone = 0;
     Object.values(groupsPreview).forEach((items) => items.forEach(([name]) => {
       taskTotal += 1;
@@ -4142,12 +4219,14 @@ async function importDossierFromPickedFolder(expectedNumero) {
     });
     if (!confirmed) return false;
 
-    // Documents : nouveau format réparti en 3 sous-dossiers, ancien format
-    // à plat dans Documents/. On cherche dans tous les emplacements possibles.
+    // Documents : nouveau format réparti par onglet (Identification, Plans,
+    // Programmation, Systeme, Information, Securite-et-general, Autres),
+    // ancien format à plat dans Documents/. On cherche dans tous les
+    // emplacements possibles.
     const docCandidateDirs = [];
     const d02 = await folder.getDirectoryHandle('02_Documents', { create: false }).catch(() => null);
     if (d02) {
-      for (const sub of ['Plans', 'Preuves', 'Autres']) {
+      for (const sub of [...Object.values(GROUP_FOLDER_NAMES), 'Autres']) {
         const sd = await d02.getDirectoryHandle(sub, { create: false }).catch(() => null);
         if (sd) docCandidateDirs.push(sd);
       }
@@ -4300,7 +4379,7 @@ let ivTaskList = [];
 let ivIndex = 0;
 
 function buildInterventionTaskList() {
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   const list = [];
   Object.entries(groups).forEach(([group, items]) => {
     items.forEach(([name, label]) => list.push({ group, name, label }));
@@ -4322,7 +4401,7 @@ function exitInterventionMode() {
   $('#interventionMode').classList.add('hidden');
   $('#ivPhotoConfirm').classList.add('hidden');
   // Rafraîchit toutes les vues qui pourraient avoir changé pendant l'intervention.
-  const groups = CHECKLISTS[state.draft.mode] || {};
+  const groups = getEffectiveChecklists(state.draft.mode);
   Object.keys(groups).forEach((g) => renderChecklist(g));
   renderApercu();
   renderNonConformites();
@@ -4501,7 +4580,7 @@ $('#btnIvAddNoteAfterPhoto').addEventListener('click', async () => {
 function buildSearchIndex() {
   if (!state.draft) return [];
   const d = state.draft;
-  const groups = CHECKLISTS[d.mode] || {};
+  const groups = getEffectiveChecklists(d.mode, d.customTasks);
   const index = [];
 
   Object.entries(groups).forEach(([group, tasks]) => {
@@ -4608,7 +4687,7 @@ function renderTaskPanelBody() {
   if (!taskPanelCurrent || !state.draft) return;
   const { group, name } = taskPanelCurrent;
   const d = state.draft;
-  const groups = CHECKLISTS[d.mode] || {};
+  const groups = getEffectiveChecklists(d.mode, d.customTasks);
   const items = groups[group] || [];
   const found = items.find(([n]) => n === name);
   const label = found ? found[1] : name;
