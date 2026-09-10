@@ -907,13 +907,23 @@ const DOSSIER_IDENTITY_FIELDS = ['bt', 'tag', 'type'];
 function buildLightSnapshot(d) {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length;
   const ncFichiersCount = Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+  const CHAMPS_SUIVIS = ['tag', 'type', 'desc', 'employe', 'chargeProjet', 'contracteur', 'dateDebut', 'dateFin', 'etatGeneral'];
   return {
     tachesCochees: Object.entries(d.casesCochees || {}).filter(([, v]) => v === true).map(([k]) => k).sort(),
     tachesNA: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'na').map(([k]) => k).sort(),
     tachesNC: Object.entries(d.casesCochees || {}).filter(([, v]) => v === 'nc').map(([k]) => k).sort(),
     docCount, ncFichiersCount,
     vpo: (d.vpoItems || []).map((v) => ({ id: v.id, numero: v.numero, texte: v.texte, statut: v.statut, resolu: v.resolu })),
+    // Non-conformités ajoutées manuellement (onglet Non-conformité), identifiées
+    // par leur numéro NC-xx (ou leur date de création si le numéro manque).
+    ncExtra: toArray(d.ncExtra).map((n) => ({ id: n.numero || n.dateCreation, resolu: !!n.resolu, statut: n.statut || '' })),
+    customTasksCount: Object.values(d.customTasks || {}).reduce((s, arr) => s + (arr ? arr.length : 0), 0),
     commentaires: (d.champs && d.champs.commentaires) || '',
+    priorite: (d.champs && d.champs.priorite) || '',
+    // Diff agrégé (pas de champ par champ) pour les informations générales du
+    // dossier : évite de multiplier les lignes tout en détectant tout de même
+    // qu'un changement a eu lieu ailleurs que dans la checklist/VPO/NC.
+    champsCles: JSON.stringify(CHAMPS_SUIVIS.map((k) => (d.champs && d.champs[k]) || '')),
     statutGlobal: computeGlobalStatus().key,
   };
 }
@@ -962,6 +972,19 @@ function diffSnapshots(avant, apres, mode) {
   if (mode) nouvellesNA.forEach((t) => lignes.push(`~ Marquée N/A : ${findTaskLabel(mode, t)}`));
   else if (nouvellesNA.length) lignes.push(`~ ${nouvellesNA.length} tâche(s) marquée(s) N/A`);
 
+  // Tâches marquées non conforme / redevenues conformes (n'était pas comparé
+  // auparavant : une tâche marquée « Non conforme » entre deux sauvegardes
+  // pouvait passer inaperçue dans le résumé).
+  const nouvellesNC = apres.tachesNC.filter((t) => !avant.tachesNC.includes(t));
+  const resoluesNC = avant.tachesNC.filter((t) => !apres.tachesNC.includes(t));
+  if (mode) {
+    nouvellesNC.forEach((t) => lignes.push(`~ Marquée non conforme : ${findTaskLabel(mode, t)}`));
+    resoluesNC.forEach((t) => lignes.push(`~ Non-conformité résolue : ${findTaskLabel(mode, t)}`));
+  } else {
+    if (nouvellesNC.length) lignes.push(`~ ${nouvellesNC.length} tâche(s) marquée(s) non conforme`);
+    if (resoluesNC.length) lignes.push(`~ ${resoluesNC.length} non-conformité(s) de tâche résolue(s)`);
+  }
+
   if (apres.docCount > avant.docCount) lignes.push(`+ ${apres.docCount - avant.docCount} document(s)/photo(s) ajouté(s)`);
   else if (apres.docCount < avant.docCount) lignes.push(`\u2212 ${avant.docCount - apres.docCount} document(s)/photo(s) retiré(s)`);
 
@@ -979,6 +1002,32 @@ function diffSnapshots(avant, apres, mode) {
       lignes.push(`~ ${nomVpo} : résolue`);
     }
   });
+
+  // Non-conformités ajoutées manuellement (onglet Non-conformité) — n'étaient
+  // pas comparées du tout auparavant.
+  if (apres.ncExtra.length > avant.ncExtra.length) {
+    lignes.push(`+ ${apres.ncExtra.length - avant.ncExtra.length} non-conformité(s) ajoutée(s) manuellement`);
+  } else if (apres.ncExtra.length < avant.ncExtra.length) {
+    lignes.push(`\u2212 ${avant.ncExtra.length - apres.ncExtra.length} non-conformité(s) manuelle(s) retirée(s)`);
+  }
+  const avantNcExtraById = Object.fromEntries(avant.ncExtra.map((n) => [n.id, n]));
+  apres.ncExtra.forEach((n) => {
+    const prev = avantNcExtraById[n.id];
+    if (prev && !prev.resolu && n.resolu) lignes.push(`~ Non-conformité ${n.id || ''} : résolue`.trim());
+    else if (prev && prev.statut !== n.statut && n.statut) lignes.push(`~ Non-conformité ${n.id || ''} : ${prev.statut || 'en attente'} → ${n.statut}`.trim());
+  });
+
+  if (apres.customTasksCount > avant.customTasksCount) {
+    lignes.push(`+ ${apres.customTasksCount - avant.customTasksCount} ligne(s) personnalisée(s) ajoutée(s) à la checklist`);
+  }
+
+  if (apres.priorite !== avant.priorite && apres.priorite) {
+    lignes.push(`~ Priorité modifiée`);
+  }
+
+  if (apres.champsCles !== avant.champsCles) {
+    lignes.push('~ Informations générales du dossier modifiées (identification, dates, responsable...)');
+  }
 
   if (apres.commentaires !== avant.commentaires && apres.commentaires) lignes.push('~ Commentaire modifié');
   if (apres.statutGlobal !== avant.statutGlobal) {
@@ -1314,7 +1363,7 @@ function renderDocuments() {
         else if (group === 'plans') category = 'plans';
         allDocs.push({
           file: f, category, tab: group, link: `${GROUP_LABELS[group] || group} — ${label}`,
-          date: f.uploadedAt,
+          date: f.uploadedAt, arrRef: files,
           preuveStatus: preuveReq ? (d.casesCochees[name] === true ? 'satisfaite' : 'manquante') : 'non-requise',
         });
       });
@@ -1322,13 +1371,13 @@ function renderDocuments() {
   });
 
   (d.files['mise-a-jour'] || []).forEach((f) => {
-    allDocs.push({ file: f, category: 'photos', tab: 'mise-a-jour', link: 'Mise à jour', date: f.uploadedAt, preuveStatus: 'non-requise' });
+    allDocs.push({ file: f, category: 'photos', tab: 'mise-a-jour', link: 'Mise à jour', date: f.uploadedAt, arrRef: d.files['mise-a-jour'], preuveStatus: 'non-requise' });
   });
 
   const vpoNumeros = new Set((d.vpoItems || []).filter((it) => it.numero).map((it) => it.numero));
   Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
     const category = vpoNumeros.has(numero) ? 'vpo' : 'nc';
-    files.forEach((f) => allDocs.push({ file: f, category, tab: category === 'vpo' ? 'vpo' : 'non-conformite', link: numero, date: f.uploadedAt, preuveStatus: 'non-requise' }));
+    files.forEach((f) => allDocs.push({ file: f, category, tab: category === 'vpo' ? 'vpo' : 'non-conformite', link: numero, date: f.uploadedAt, arrRef: files, preuveStatus: 'non-requise' }));
   });
 
   if (!allDocs.length) {
@@ -1366,6 +1415,7 @@ function renderDocuments() {
       <button type="button" class="btn btn-tertiary" data-doc-comment="${i}">${doc.file.commentaire ? 'Modifier' : 'Commentaire'}</button>
       <button type="button" class="btn btn-tertiary doc-dl-btn" data-doc-name="${escapeHtml(doc.file.name)}">Télécharger</button>
       <button type="button" class="btn btn-tertiary" data-doc-jump="${doc.tab}">Ouvrir</button>
+      <button type="button" class="btn btn-tertiary" data-doc-delete="${i}">Supprimer</button>
     </div>`).join('')}</div>` : '<div class="empty-state">Aucun document pour ce filtre.</div>');
 
   attachShareHistoryClicks(container, (row) => filtered[Number(row.dataset.shareFileIdx)]?.file);
@@ -1386,6 +1436,18 @@ function renderDocuments() {
     renderDocuments();
   });
   $$('[data-doc-jump]', container).forEach((btn) => btn.addEventListener('click', () => selectTab(btn.dataset.docJump)));
+  $$('[data-doc-delete]', container).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const doc = filtered[Number(btn.dataset.docDelete)];
+      supprimerFichier(doc.arrRef, doc.file, () => {
+        renderDocuments();
+        updateFilesCount();
+        refreshAllFileLists();
+        renderAllChecklists();
+        renderNonConformites();
+      });
+    });
+  });
   $$('.doc-dl-btn', container).forEach((btn, i) => {
     btn.addEventListener('click', () => {
       const doc = filtered[i];
@@ -3155,6 +3217,28 @@ async function commentFile(file, onUpdate) {
   if (onUpdate) onUpdate();
 }
 
+// Supprime un document/photo déjà ajouté (tâche, Mise à jour, Documents,
+// VPO/NC). `arr` est le tableau exact qui contient `file` (casesFichiers[nom],
+// files['mise-a-jour'] ou ncFichiers[numero]) — on retire par référence, pas
+// par index, pour rester correct même si la liste affichée est filtrée/triée.
+// Demande toujours une confirmation avant de retirer définitivement le fichier.
+async function supprimerFichier(arr, file, onUpdate) {
+  if (!Array.isArray(arr)) return;
+  const confirmed = await showModal({
+    title: 'Supprimer ce fichier',
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Voulez-vous vraiment supprimer <strong>${escapeHtml(file.name)}</strong> ? Cette action ne peut pas être annulée une fois la sauvegarde faite.</p>`,
+    confirmLabel: 'Supprimer',
+  });
+  if (!confirmed) return;
+  const idx = arr.indexOf(file);
+  if (idx === -1) return;
+  arr.splice(idx, 1);
+  logActivity(`Fichier supprimé : ${file.name}`);
+  schedulePersist();
+  toast(`${file.name} supprimé.`);
+  if (onUpdate) onUpdate();
+}
+
 function wireChecklistFilterSelect(container, group) {
   $$('[data-checklist-filter]', container).forEach((sel) => {
     sel.addEventListener('change', () => {
@@ -3427,6 +3511,7 @@ function renderItemFileList(group, name) {
       <div class="file-row-actions">
         ${isImageFile(f.name) ? `<button type="button" class="btn btn-tertiary" data-file-share="${name}::${i}">Partager</button>` : ''}
         <button type="button" class="btn btn-tertiary" data-file-comment="${name}::${i}">${f.commentaire ? 'Modifier' : 'Commentaire'}</button>
+        <button type="button" class="btn btn-tertiary" data-file-delete="${name}::${i}">Supprimer</button>
       </div>
     </div>`).join('') : '';
 
@@ -3448,6 +3533,12 @@ function renderItemFileList(group, name) {
       const [, idx] = btn.dataset.fileShare.split('::');
       const label = (getEffectiveChecklists(state.draft.mode)[group] || []).find(([n]) => n === name)?.[1] || name;
       sharePhoto(files[Number(idx)], `Tâche : ${label}`, () => renderItemFileList(group, name), label);
+    });
+  });
+  $$('[data-file-delete]', listEl).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [, idx] = btn.dataset.fileDelete.split('::');
+      supprimerFichier(state.draft.casesFichiers[name], files[Number(idx)], () => { renderItemFileList(group, name); updateFilesCount(); renderDocuments(); });
     });
   });
 }
@@ -3912,12 +4003,19 @@ function refreshFileList(onglet) {
   if (!listEl || !state.draft) return;
   const files = state.draft.files[onglet] || [];
   if (!files.length) { listEl.innerHTML = '<div class="empty-state">Aucun document déposé pour l\'instant.</div>'; return; }
-  listEl.innerHTML = files.map((f) => `
+  listEl.innerHTML = files.map((f, i) => `
     <div class="file-row">
       <span class="ext-badge">${extBadge(f.name)}</span>
       <span class="file-name">${f.name}</span>
       <span class="file-meta">${fmtSize(f.size)} · ${new Date(f.uploadedAt).toLocaleDateString('fr-CA')}</span>
+      <button type="button" class="btn btn-tertiary" data-file-delete-upload="${i}">Supprimer</button>
     </div>`).join('');
+  $$('[data-file-delete-upload]', listEl).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.fileDeleteUpload);
+      supprimerFichier(state.draft.files[onglet], files[idx], () => { refreshFileList(onglet); updateFilesCount(); renderDocuments(); });
+    });
+  });
 }
 
 function refreshAllFileLists() {
