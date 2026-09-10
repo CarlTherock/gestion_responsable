@@ -333,14 +333,18 @@
 
         <div class="dossier-panel" style="margin-top: var(--space-4); margin-bottom: var(--space-4);">
           <h3>Lien du dossier partagé (réseau / OneDrive)</h3>
-          <p class="panel-desc" style="margin-top:0;">Le Dashboard et les sauvegardes de ce dossier restent toujours au même emplacement partagé — colle ici ton lien (ex. lien de partage OneDrive/SharePoint) une seule fois. Un code QR est généré automatiquement, réutilisé pour les demandes d'approbation.</p>
+          <p class="panel-desc" style="margin-top:0;">Le Dashboard et les sauvegardes de ce dossier restent toujours au même emplacement partagé — colle ici ton lien (ex. lien de partage OneDrive/SharePoint) une seule fois.</p>
           <div class="field">
             <label>Lien du dossier partagé</label>
             <input type="text" id="fldLienDossierPartage" placeholder="https://...">
           </div>
-          <div id="qrLienPartageWrap" class="hidden" style="margin-top:var(--space-3);display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
-            <div id="qrLienPartage" style="background:#fff;padding:8px;border-radius:8px;line-height:0;"></div>
-            <button type="button" class="btn btn-outline" id="btnCopierLienPartage">Copier le lien</button>
+          <div id="qrLienPartageWrap" class="hidden" style="margin-top:var(--space-3);">
+            <p class="panel-desc" style="margin-top:0;font-size:12px;">Code QR et lien direct vers le Dashboard (toujours à jour) — fonctionne seulement si ton lien de partage permet d'ajouter un nom de fichier à la fin. Teste-le une fois : si la page ne s'ouvre pas, utilise plutôt le lien de dossier tel quel.</p>
+            <div style="display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
+              <div id="qrLienPartage" style="background:#fff;padding:8px;border-radius:8px;line-height:0;"></div>
+              <a href="#" id="lienDashboardPartage" class="btn btn-primary hidden" target="_blank" rel="noopener noreferrer">Ouvrir le Dashboard ↗</a>
+              <button type="button" class="btn btn-outline" id="btnCopierLienPartage">Copier le lien du dossier</button>
+            </div>
           </div>
         </div>
 

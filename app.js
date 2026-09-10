@@ -4773,6 +4773,7 @@ async function demanderApprobationFinale() {
   const vpd = computeVpdStats();
   const nc = computeNcStats();
   const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
+  const lienDashboard = buildLienDashboardPartage(lienPartage);
   const sujet = `Demande d'approbation — ${bt} — ${state.draft.activeRevision.id} ${state.draft.activeRevision.nom}`;
   const prenomDest = destNom.split(' ')[0] || destNom;
   const corps = [
@@ -4784,12 +4785,12 @@ async function demanderApprobationFinale() {
     `VPO ouvertes : ${vpo.pending}`,
     `VPD ouvertes : ${vpd.pending}`,
     `Non-conformités ouvertes : ${nc.total}`, '',
-    ...(lienPartage ? [`Tu peux consulter les fichiers du dossier ici : ${lienPartage}`, ''] : []),
+    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard du dossier ici : ${lienDashboard}`, ''] : []),
     "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
     'Merci beaucoup et bonne journée !',
   ].join('\n');
 
-  const qrPartageSvg = lienPartage ? generateQrSvg(lienPartage) : '';
+  const qrPartageSvg = lienDashboard ? generateQrSvg(lienDashboard) : '';
   const confirmed = await showModal({
     title: "Demande d'approbation préparée",
     bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucune synchronisation serveur n'existe dans cette application : voici un message prêt à envoyer par courriel à ${escapeHtml(destNom)} (${escapeHtml(ROLE_LABELS[destRole] || destRole)}). Le lien apparaît en texte brut — la plupart des courriels le rendent cliquable automatiquement une fois ouvert.</p>
@@ -4922,6 +4923,18 @@ function renderQrThumb() {
   btn.innerHTML = generateQrSvg(buildDossierUrl());
 }
 
+// Construit le lien direct vers OUVRIR_DASHBOARD.html — le fichier qui vit
+// toujours à la racine du dossier de sauvegarde et pointe automatiquement vers
+// la sauvegarde la plus récente. Ne fonctionne que si le lien de partage
+// fourni permet d'ajouter un nom de fichier à la fin (ex. lien de dossier
+// SharePoint/serveur web) — un lien-jeton opaque (certains liens OneDrive
+// personnels) ne le permettra pas ; à tester une fois par l'utilisateur.
+function buildLienDashboardPartage(lienPartage) {
+  const lien = (lienPartage || '').trim();
+  if (!lien) return '';
+  return lien.replace(/\/+$/, '') + '/OUVRIR_DASHBOARD.html';
+}
+
 // Code QR généré à partir du lien de dossier partagé fourni par l'utilisateur
 // (ex. lien OneDrive/SharePoint) — contrairement au QR de l'application, ce
 // lien fonctionne pour n'importe qui, peu importe l'appareil, puisque le
@@ -4929,11 +4942,22 @@ function renderQrThumb() {
 function renderLienPartageQr() {
   const wrap = $('#qrLienPartageWrap');
   const zone = $('#qrLienPartage');
+  const lienDashboardEl = $('#lienDashboardPartage');
   if (!wrap || !zone || !state.draft) return;
   const lien = (state.draft.champs.lienDossierPartage || '').trim();
-  if (!lien) { wrap.classList.add('hidden'); zone.innerHTML = ''; return; }
-  zone.innerHTML = generateQrSvg(lien) || '<span style="color:#900;font-size:12px;">Erreur de génération du code QR.</span>';
+  if (!lien) {
+    wrap.classList.add('hidden');
+    zone.innerHTML = '';
+    if (lienDashboardEl) lienDashboardEl.classList.add('hidden');
+    return;
+  }
+  const lienDashboard = buildLienDashboardPartage(lien);
+  zone.innerHTML = generateQrSvg(lienDashboard) || '<span style="color:#900;font-size:12px;">Erreur de génération du code QR.</span>';
   wrap.classList.remove('hidden');
+  if (lienDashboardEl) {
+    lienDashboardEl.href = lienDashboard;
+    lienDashboardEl.classList.remove('hidden');
+  }
 }
 
 function showQrModal() {
