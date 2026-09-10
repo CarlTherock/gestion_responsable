@@ -4446,10 +4446,14 @@ async function demanderApprobationFinale() {
     return;
   }
 
-  // Étape 1 : à qui s'adresse la demande (nom + rôle) — redemandé tant que le
-  // nom est vide. La date est affichée automatiquement (non modifiable).
+  // Étape 1 : à qui s'adresse la demande (nom + rôle) et, au besoin, un lien
+  // vers le dossier partagé (ex. lien de partage OneDrive/SharePoint que la
+  // personne copie elle-même) — redemandé tant que le nom est vide. La date
+  // est affichée automatiquement (non modifiable). Le lien partagé est
+  // mémorisé sur le dossier (souvent le même d'une demande à l'autre).
   let destNom = '';
   let destRole = 'contremaitre';
+  let lienPartage = state.draft.champs.lienDossierPartage || '';
   const maintenant = new Date();
   for (;;) {
     const confirmeDest = await showModal({
@@ -4466,12 +4470,15 @@ async function demanderApprobationFinale() {
           </select>
           <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Date de la demande</label>
           <input type="text" readonly value="${maintenant.toLocaleString('fr-CA')}">
-        </div>`,
+        </div>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Lien vers le dossier partagé (optionnel — ex. lien OneDrive/SharePoint)</label>
+        <input type="text" id="modalLienPartage" placeholder="https://..." value="${escapeHtml(lienPartage)}">`,
       confirmLabel: 'Continuer',
     });
     if (!confirmeDest) return;
     destNom = $('#modalDestNom').value.trim();
     destRole = $('#modalDestRole').value;
+    lienPartage = $('#modalLienPartage').value.trim();
     if (!destNom) { toast("Le nom de l'approbateur est requis.", 4000); continue; }
     break;
   }
@@ -4480,6 +4487,7 @@ async function demanderApprobationFinale() {
   state.draft.activeRevision.demandeDestinataireNom = destNom;
   state.draft.activeRevision.demandeDestinataireRole = destRole;
   state.draft.activeRevision.approbation = null;
+  state.draft.champs.lienDossierPartage = lienPartage;
   logActivity(`Demande d'approbation finale préparée pour la révision ${state.draft.activeRevision.id} — destinataire : ${destNom} (${ROLE_LABELS[destRole] || destRole})`);
   schedulePersist();
   await dbPut(state.draft);
@@ -4502,7 +4510,8 @@ async function demanderApprobationFinale() {
     `Checklist : ${done} / ${total} tâches complétées`,
     `VPO ouvertes : ${vpo.pending}`,
     `Non-conformités ouvertes : ${nc.total}`, '',
-    `Tu peux ouvrir le dossier complet directement ici : ${lienDossier}`, '',
+    ...(lienPartage ? [`Tu peux consulter les fichiers du dossier ici : ${lienPartage}`, ''] : []),
+    `Tu peux aussi ouvrir le dossier directement dans l'application ici : ${lienDossier}`, '',
     "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
     'Merci beaucoup et bonne journée !',
   ].join('\n');
