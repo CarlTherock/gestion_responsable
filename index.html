@@ -329,6 +329,20 @@
           <button type="button" class="btn btn-outline" id="btnExportPlus">Exporter le rapport</button>
           <button type="button" class="btn btn-outline" id="btnSharePlus">Partager le dossier</button>
         </div>
+
+        <div class="dossier-panel" style="margin-top: var(--space-4); margin-bottom: var(--space-4);">
+          <h3>Lien du dossier partagé (réseau / OneDrive)</h3>
+          <p class="panel-desc" style="margin-top:0;">Le Dashboard et les sauvegardes de ce dossier restent toujours au même emplacement partagé — colle ici ton lien (ex. lien de partage OneDrive/SharePoint) une seule fois. Un code QR est généré automatiquement, réutilisé pour les demandes d'approbation.</p>
+          <div class="field">
+            <label>Lien du dossier partagé</label>
+            <input type="text" id="fldLienDossierPartage" placeholder="https://...">
+          </div>
+          <div id="qrLienPartageWrap" class="hidden" style="margin-top:var(--space-3);display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
+            <div id="qrLienPartage" style="background:#fff;padding:8px;border-radius:8px;line-height:0;"></div>
+            <button type="button" class="btn btn-outline" id="btnCopierLienPartage">Copier le lien</button>
+          </div>
+        </div>
+
         <div id="documentsContent"></div>
       </div>
 

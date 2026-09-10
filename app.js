@@ -3110,6 +3110,7 @@ function openWorkspace() {
   $('#fldDateFin').value = d.champs.dateFin || '';
   $('#fldEtatGeneral').value = d.champs.etatGeneral || '';
   $('#fldPriorite').value = d.champs.priorite || 'normale';
+  $('#fldLienDossierPartage').value = d.champs.lienDossierPartage || '';
   $('#fldCommentaires').value = d.champs.commentaires || '';
   $('#fldEmployeeName').value = d.champs.employeeName || '';
   $('#fldRole').value = d.champs.employeeRole || '';
@@ -3124,6 +3125,7 @@ function openWorkspace() {
   renderNonConformites();
   updateApprobationBadge();
   renderQrThumb();
+  renderLienPartageQr();
   updateOfflineIndicator();
   selectTab('apercu');
 }
@@ -3973,6 +3975,7 @@ const GENERAL_FIELD_MAP = {
   fldEmploye: 'employe', fldChargeProjet: 'chargeProjet', fldContracteur: 'contracteur',
   fldDateDebut: 'dateDebut', fldDateFin: 'dateFin', fldEtatGeneral: 'etatGeneral', fldCommentaires: 'commentaires',
   fldEmployeeName: 'employeeName', fldRole: 'employeeRole', fldPriorite: 'priorite',
+  fldLienDossierPartage: 'lienDossierPartage',
 };
 Object.keys(GENERAL_FIELD_MAP).forEach((id) => {
   const el = document.getElementById(id);
@@ -3982,7 +3985,19 @@ Object.keys(GENERAL_FIELD_MAP).forEach((id) => {
     state.draft.champs[GENERAL_FIELD_MAP[id]] = el.value;
     schedulePersist();
     if (id === 'fldEmployeeName') updateApprobationBadge();
+    if (id === 'fldLienDossierPartage') renderLienPartageQr();
   });
+});
+
+$('#btnCopierLienPartage').addEventListener('click', async () => {
+  const lien = ((state.draft && state.draft.champs.lienDossierPartage) || '').trim();
+  if (!lien) return;
+  try {
+    await navigator.clipboard.writeText(lien);
+    toast('Lien copié dans le presse-papiers.');
+  } catch (err) {
+    toast('Impossible de copier le lien automatiquement.', 4000);
+  }
 });
 
 // ---------- Dropzones génériques (Plans / Programmation / Mise à jour / Information) ----------
@@ -4645,6 +4660,20 @@ function renderQrThumb() {
   const btn = $('#btnShowQrPlus');
   if (!btn || !state.numero || !state.draft) return;
   btn.innerHTML = generateQrSvg(buildDossierUrl());
+}
+
+// Code QR généré à partir du lien de dossier partagé fourni par l'utilisateur
+// (ex. lien OneDrive/SharePoint) — contrairement au QR de l'application, ce
+// lien fonctionne pour n'importe qui, peu importe l'appareil, puisque le
+// Dashboard et les sauvegardes restent toujours à cet emplacement partagé.
+function renderLienPartageQr() {
+  const wrap = $('#qrLienPartageWrap');
+  const zone = $('#qrLienPartage');
+  if (!wrap || !zone || !state.draft) return;
+  const lien = (state.draft.champs.lienDossierPartage || '').trim();
+  if (!lien) { wrap.classList.add('hidden'); zone.innerHTML = ''; return; }
+  zone.innerHTML = generateQrSvg(lien) || '<span style="color:#900;font-size:12px;">Erreur de génération du code QR.</span>';
+  wrap.classList.remove('hidden');
 }
 
 function showQrModal() {
