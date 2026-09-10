@@ -1138,3 +1138,7 @@ select.ncextra-gravite {
 
 .approval-row-clickable { cursor: pointer; transition: border-color 120ms ease; }
 .approval-row-clickable:hover { border-color: var(--color-primary); }
+
+/* ---------- Actions de fichier (Partager/Commentaire) et commentaire affiché ---------- */
+.file-row-actions { display: flex; flex-direction: column; gap: var(--space-1); }
+.file-comment-text { font-size: var(--text-xs); color: var(--color-text-muted); font-style: italic; margin-top: 2px; }
