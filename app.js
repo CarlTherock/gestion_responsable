@@ -474,6 +474,8 @@ function normalizeDraft(d) {
   // Compatibilité : anciennes révisions actives créées avant la Phase 4-6
   // (statuts et approbation finale) n'ont pas encore ces deux champs.
   if (d.activeRevision.demandeApprobationLe === undefined) d.activeRevision.demandeApprobationLe = null;
+  if (d.activeRevision.demandeDestinataireNom === undefined) d.activeRevision.demandeDestinataireNom = null;
+  if (d.activeRevision.demandeDestinataireRole === undefined) d.activeRevision.demandeDestinataireRole = null;
   if (d.activeRevision.approbation === undefined) d.activeRevision.approbation = null;
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
@@ -4395,7 +4397,7 @@ function renderApprobationFinaleCard() {
     html = `
       <div class="approbation-finale-card state-attente">
         <div class="approbation-finale-title">En attente d'approbation</div>
-        <div class="approbation-finale-meta">Demande préparée le ${new Date(rev.demandeApprobationLe).toLocaleString('fr-CA')}. Enregistrez la décision du contremaître ou du planificateur dès qu'elle est connue.</div>
+        <div class="approbation-finale-meta">Demande préparée le ${new Date(rev.demandeApprobationLe).toLocaleString('fr-CA')}${rev.demandeDestinataireNom ? ` pour <strong>${escapeHtml(rev.demandeDestinataireNom)}</strong> (${escapeHtml(ROLE_LABELS[rev.demandeDestinataireRole] || rev.demandeDestinataireRole || '')})` : ''}. Enregistrez la décision dès qu'elle est connue.</div>
         <div class="approbation-finale-actions">
           <button type="button" class="btn btn-primary" id="btnEnregistrerDecision">Enregistrer la décision</button>
           <button type="button" class="btn btn-tertiary" id="btnAnnulerDemandeApprobation">Annuler la demande</button>
@@ -4443,9 +4445,42 @@ async function demanderApprobationFinale() {
     toast('Le dossier doit être complété à 100 % avant de demander une approbation.', 4500);
     return;
   }
-  state.draft.activeRevision.demandeApprobationLe = new Date().toISOString();
+
+  // Étape 1 : à qui s'adresse la demande (nom + rôle) — redemandé tant que le
+  // nom est vide. La date est affichée automatiquement (non modifiable).
+  let destNom = '';
+  let destRole = 'contremaitre';
+  const maintenant = new Date();
+  for (;;) {
+    const confirmeDest = await showModal({
+      title: "Demander l'approbation finale",
+      bodyHtml: `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);">À qui adresses-tu cette demande d'approbation ?</p>
+        <div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-4);margin-top:var(--space-2);">
+          <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;">Nom de l'approbateur</label>
+          <input type="text" id="modalDestNom" placeholder="ex. Carl Tremblay" value="${escapeHtml(destNom)}">
+          <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Rôle</label>
+          <select id="modalDestRole" style="width:100%;margin-top:4px;">
+            <option value="contremaitre" ${destRole === 'contremaitre' ? 'selected' : ''}>Contremaître</option>
+            <option value="qualite" ${destRole === 'qualite' ? 'selected' : ''}>Planificateur</option>
+          </select>
+          <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Date de la demande</label>
+          <input type="text" readonly value="${maintenant.toLocaleString('fr-CA')}">
+        </div>`,
+      confirmLabel: 'Continuer',
+    });
+    if (!confirmeDest) return;
+    destNom = $('#modalDestNom').value.trim();
+    destRole = $('#modalDestRole').value;
+    if (!destNom) { toast("Le nom de l'approbateur est requis.", 4000); continue; }
+    break;
+  }
+
+  state.draft.activeRevision.demandeApprobationLe = maintenant.toISOString();
+  state.draft.activeRevision.demandeDestinataireNom = destNom;
+  state.draft.activeRevision.demandeDestinataireRole = destRole;
   state.draft.activeRevision.approbation = null;
-  logActivity(`Demande d'approbation finale préparée pour la révision ${state.draft.activeRevision.id}`);
+  logActivity(`Demande d'approbation finale préparée pour la révision ${state.draft.activeRevision.id} — destinataire : ${destNom} (${ROLE_LABELS[destRole] || destRole})`);
   schedulePersist();
   await dbPut(state.draft);
   refreshApprovals();
@@ -4456,30 +4491,29 @@ async function demanderApprobationFinale() {
   const vpo = computeVpoStats();
   const nc = computeNcStats();
   const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
+  const lienDossier = buildDossierUrl();
   const sujet = `Demande d'approbation — ${bt} — ${state.draft.activeRevision.id} ${state.draft.activeRevision.nom}`;
+  const prenomDest = destNom.split(' ')[0] || destNom;
   const corps = [
-    'Bonjour,', '',
-    `La révision ${state.draft.activeRevision.id} — ${state.draft.activeRevision.nom} du dossier ${bt} est complétée et prête pour approbation.`, '',
+    `Bonjour ${prenomDest},`, '',
+    `J'espère que tout va bien de ton côté. Je te confirme que la révision ${state.draft.activeRevision.id} — ${state.draft.activeRevision.nom} du dossier ${bt} est maintenant complétée et prête pour ton approbation.`, '',
     `Localisation : ${d.localisation || ''}`,
     `Équipement / tag : ${d.champs.tag || ''}`,
     `Checklist : ${done} / ${total} tâches complétées`,
     `VPO ouvertes : ${vpo.pending}`,
     `Non-conformités ouvertes : ${nc.total}`, '',
-    'Le Rapport de chantier peut être exporté ou partagé depuis l\u2019onglet Aperçu.', '',
-    'Merci de vérifier le dossier et de choisir :',
-    '- Approuver le dossier',
-    'ou',
-    '- Retourner pour correction avec un commentaire.', '',
-    'Cordialement,',
+    `Tu peux ouvrir le dossier complet directement ici : ${lienDossier}`, '',
+    "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
+    'Merci beaucoup et bonne journée !',
   ].join('\n');
 
   const confirmed = await showModal({
     title: "Demande d'approbation préparée",
-    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucune synchronisation serveur n'existe dans cette application : voici un message professionnel prêt à envoyer par courriel au contremaître ou au planificateur.</p>
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucune synchronisation serveur n'existe dans cette application : voici un message prêt à envoyer par courriel à ${escapeHtml(destNom)} (${escapeHtml(ROLE_LABELS[destRole] || destRole)}).</p>
       <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Sujet</label>
       <input type="text" id="modalApprSubject" readonly value="${escapeHtml(sujet)}">
       <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Message</label>
-      <textarea id="modalApprBody" rows="10" readonly>${escapeHtml(corps)}</textarea>`,
+      <textarea id="modalApprBody" rows="12" readonly>${escapeHtml(corps)}</textarea>`,
     confirmLabel: 'Ouvrir dans le courriel',
   });
   if (confirmed) {
@@ -4491,6 +4525,8 @@ async function demanderApprobationFinale() {
 function annulerDemandeApprobation() {
   if (!state.draft) return;
   state.draft.activeRevision.demandeApprobationLe = null;
+  state.draft.activeRevision.demandeDestinataireNom = null;
+  state.draft.activeRevision.demandeDestinataireRole = null;
   logActivity(`Demande d'approbation annulée pour la révision ${state.draft.activeRevision.id}`);
   schedulePersist();
   refreshApprovals();
