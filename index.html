@@ -182,6 +182,7 @@
         <button class="tab-btn" role="tab" data-tab="information" aria-selected="false"><span class="tab-icon" data-icon="info"></span><span class="tab-label">Information</span></button>
         <button class="tab-btn" role="tab" data-tab="securite" aria-selected="false"><span class="tab-icon" data-icon="shield"></span><span class="tab-label">Sécurité et général</span></button>
         <button class="tab-btn" role="tab" data-tab="vpo" aria-selected="false"><span class="tab-icon" data-icon="clipboard"></span><span class="tab-label">VPO</span></button>
+        <button class="tab-btn" role="tab" data-tab="vpd" aria-selected="false"><span class="tab-icon" data-icon="clipboard"></span><span class="tab-label">VPD</span></button>
         <button class="tab-btn" role="tab" data-tab="non-conformite" aria-selected="false"><span class="tab-icon" data-icon="alertTriangle"></span><span class="tab-label">Non-conformité</span></button>
         <button class="tab-btn" role="tab" data-tab="commentaire" aria-selected="false"><span class="tab-icon" data-icon="messageCircle"></span><span class="tab-label">Commentaire</span></button>
         <button class="tab-btn" role="tab" data-tab="approbation" aria-selected="false"><span class="tab-icon" data-icon="edit"></span><span class="tab-label">Approbation</span></button>
@@ -329,6 +330,20 @@
           <button type="button" class="btn btn-outline" id="btnExportPlus">Exporter le rapport</button>
           <button type="button" class="btn btn-outline" id="btnSharePlus">Partager le dossier</button>
         </div>
+
+        <div class="dossier-panel" style="margin-top: var(--space-4); margin-bottom: var(--space-4);">
+          <h3>Lien du dossier partagé (réseau / OneDrive)</h3>
+          <p class="panel-desc" style="margin-top:0;">Le Dashboard et les sauvegardes de ce dossier restent toujours au même emplacement partagé — colle ici ton lien (ex. lien de partage OneDrive/SharePoint) une seule fois. Un code QR est généré automatiquement, réutilisé pour les demandes d'approbation.</p>
+          <div class="field">
+            <label>Lien du dossier partagé</label>
+            <input type="text" id="fldLienDossierPartage" placeholder="https://...">
+          </div>
+          <div id="qrLienPartageWrap" class="hidden" style="margin-top:var(--space-3);display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;">
+            <div id="qrLienPartage" style="background:#fff;padding:8px;border-radius:8px;line-height:0;"></div>
+            <button type="button" class="btn btn-outline" id="btnCopierLienPartage">Copier le lien</button>
+          </div>
+        </div>
+
         <div id="documentsContent"></div>
       </div>
 
@@ -381,6 +396,14 @@
         <p class="panel-desc">Ajoutez une ligne par point à vérifier avant la remise en service, puis indiquez s'il est conforme ou non conforme.</p>
         <div id="vpoList"></div>
         <button type="button" class="btn btn-outline" id="btnAddVpo" style="margin-top: var(--space-3);">+ Ajouter une ligne</button>
+      </div>
+
+      <!-- ---- Onglet : VPD ---- -->
+      <div class="tab-panel hidden" data-panel="vpd">
+        <div class="panel-title">VPD — Vérification post-démarrage</div>
+        <p class="panel-desc">Ajoutez une ligne par point à vérifier une fois l'équipement démarré et en fonctionnement (ex. contrôle de boucle), puis indiquez s'il est conforme ou non conforme.</p>
+        <div id="vpdList"></div>
+        <button type="button" class="btn btn-outline" id="btnAddVpd" style="margin-top: var(--space-3);">+ Ajouter une ligne</button>
       </div>
 
       <!-- ---- Onglet : Non-conformité ---- -->
