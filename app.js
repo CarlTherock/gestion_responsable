@@ -780,6 +780,42 @@ if (!FS_ACCESS_SUPPORTED) {
   $('#folderStatus').textContent = 'La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.';
 }
 
+// Vérifie (et demande si nécessaire) la permission d'écriture readwrite sur
+// un handle de dossier. À appeler avant toute écriture disque (getFileHandle
+// create:true, createWritable, écriture de snapshots dans l'historique).
+async function ensureWritePermission(directoryHandle) {
+  if (!directoryHandle) return false;
+  const options = { mode: 'readwrite' };
+  try {
+    let result = await directoryHandle.queryPermission(options);
+    if (result !== 'granted') {
+      result = await directoryHandle.requestPermission(options);
+    }
+    return result === 'granted';
+  } catch (err) {
+    console.error('Échec vérification de permission d\u2019écriture', err);
+    return false;
+  }
+}
+
+// Traduit une erreur d'écriture disque en message clair pour l'utilisateur.
+// Toujours enregistrer l'erreur détaillée dans la console au préalable.
+function describeWriteError(err, hasHandle) {
+  console.error('Échec export/sauvegarde', err);
+  if (!hasHandle) return "Aucun dossier de travail n\u2019est sélectionné. Cliquez sur Enregistrer pour en choisir un.";
+  const name = err && err.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return "Autorisation d\u2019écriture requise. Cliquez sur Enregistrer et sélectionnez de nouveau le dossier de travail.";
+  }
+  if (name === 'NotFoundError') {
+    return "Dossier introuvable — vérifiez qu\u2019il est bien disponible localement (dans OneDrive : \u00ab Toujours conserver sur cet appareil \u00bb).";
+  }
+  if (name === 'NoModificationAllowedError' || name === 'InvalidStateError') {
+    return "Fichier bloqué, probablement par la synchronisation OneDrive. Réessayez dans un instant.";
+  }
+  return "Échec pendant la génération ou l\u2019écriture du dossier. Vos données restent conservées dans l\u2019application — voir la console pour le détail technique.";
+}
+
 async function pickSaveFolder() {
   if (!FS_ACCESS_SUPPORTED) {
     toast('Cette fonction est disponible dans Chrome ou Edge sur ordinateur.', 4000);
@@ -1689,7 +1725,15 @@ function sanitizeFilename(str) {
 function exportDashboardFile() {
   if (!state.draft) return;
   const filename = `Dashboard - ${sanitizeFilename(state.numero || 'dossier')}${state.draft.champs.bt ? ' (' + sanitizeFilename(formatBt(state.draft.champs.bt)) + ')' : ''}.html`;
-  const blob = new Blob([buildDashboardHtml()], { type: 'text/html' });
+  let html;
+  try {
+    html = buildDashboardHtml();
+  } catch (err) {
+    console.error('Échec export/sauvegarde', err);
+    toast("Échec pendant la génération du Dashboard. Vos données restent conservées dans l\u2019application — voir la console pour le détail technique.", 5500);
+    return;
+  }
+  const blob = new Blob([html], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1902,6 +1946,15 @@ $('#btnSaveFolder').addEventListener('click', async () => {
       if (!chosen) return;
     }
   }
+
+  // Vérifie la permission readwrite AVANT de construire quoi que ce soit
+  // (évite de calculer un résumé/snapshot pour rien si l'écriture est refusée).
+  const handlePourPermission = state.rootDirHandle || state.dossierDirHandle;
+  const permissionOk = await ensureWritePermission(handlePourPermission);
+  if (!permissionOk) {
+    toast(describeWriteError({ name: 'NotAllowedError' }, !!handlePourPermission), 5500);
+    return;
+  }
   const { done, total, pct } = computeProgress();
   if (pct < 100) {
     const confirmed = await showModal({
@@ -1967,7 +2020,13 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     const label = state.rootDirHandle ? folderName(now) : (state.dossierDirHandle.name || state.numero);
     toast(`Dossier ${label} sauvegardé avec succès.`);
   } catch (err) {
-    toast('Impossible d\u2019écrire dans ce dossier. Vérifiez l\u2019autorisation et réessayez.', 4500);
+    // Même en cas d'échec d'écriture sur disque, la sauvegarde officielle
+    // (S-XXX, résumé, statut) reste conservée localement : rien n'est perdu,
+    // il suffit de réessayer l'écriture disque plus tard (bouton Enregistrer).
+    try { await dbPut(state.draft); } catch (dbErr) { console.error('Échec persistance locale (IndexedDB)', dbErr); }
+    refreshApprovals();
+    updateApprobationBadge();
+    toast(describeWriteError(err, !!(state.rootDirHandle || state.dossierDirHandle)), 5500);
   }
 });
 
@@ -2322,6 +2381,14 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Normalise une valeur potentiellement absente/corrompue (ancien suivi.json,
+// dossier importé, champ jamais initialisé) en tableau sûr pour .map/.filter/
+// .forEach/.reduce/.length — à utiliser avant toute opération de liste sur une
+// donnée qui pourrait provenir d'un ancien format.
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function isImageFile(filename) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename);
 }
@@ -2377,7 +2444,7 @@ function buildDashboardHtml(options) {
     return { group, label: GROUP_LABELS[group] || group, pct: (doneCount / items.length) * 100, count: `${doneCount}/${items.length}` };
   }).filter(Boolean);
 
-  const vpoFilled = (d.vpoItems || []).filter((it) => it.texte && it.texte.trim());
+  const vpoFilled = toArray(d.vpoItems).filter((it) => it.texte && it.texte.trim());
   const hasVpo = vpoFilled.length > 0;
   if (hasVpo) {
     const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
@@ -2405,7 +2472,9 @@ function buildDashboardHtml(options) {
     </div>`;
   };
 
-  const sectionsHtml = groupStats.map((g) => {
+  const sectionsHtml = groupStats
+    .filter((g) => Array.isArray(groups[g.group])) // 'vpo' n'a pas d'entrée dans `groups` : sa section est construite séparément plus bas (vpoHtml)
+    .map((g) => {
     const items = groups[g.group];
     const rows = items.map(([name, label]) => {
       const v = d.casesCochees[name];
@@ -2446,13 +2515,13 @@ function buildDashboardHtml(options) {
       ncItems.push({ numero: det.numero || '', section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
     }
   }));
-  (d.vpoItems || []).forEach((it) => {
+  toArray(d.vpoItems).forEach((it) => {
     if (it.statut === 'nc') {
       if (it.resolu) { ncResoluesCount++; return; }
       ncItems.push({ numero: it.numero || '', section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
     }
   });
-  (d.ncExtra || []).forEach((it) => {
+  toArray(d.ncExtra).forEach((it) => {
     if (it.texte && it.texte.trim()) {
       if (it.resolu) { ncResoluesCount++; return; }
       ncItems.push({ numero: it.numero || '', section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '' });
@@ -2495,12 +2564,12 @@ function buildDashboardHtml(options) {
   // ---- Documents / photos ----
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
-  const photos = d.files['mise-a-jour'] || [];
+  const photos = toArray(d.files && d.files['mise-a-jour']);
   const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`) : '<p class="empty">Aucune image de mise à jour.</p>';
 
   // ---- Historique ----
-  const histHtml = (d.approbations || []).length
-    ? `<div class="timeline">${d.approbations.slice().reverse().map((a) => `
+  const histHtml = toArray(d.approbations).length
+    ? `<div class="timeline">${toArray(d.approbations).slice().reverse().map((a) => `
         <div class="timeline-item">
           <div class="timeline-dot"></div>
           <div class="timeline-body">
@@ -2701,7 +2770,7 @@ function buildDashboardHtml(options) {
       <div class="stat-card"><div class="num">${done}/${total}</div><div class="lbl">Tâches complétées</div></div>
       <div class="stat-card"><div class="num">${docCount + photos.length}</div><div class="lbl">Documents / photos</div></div>
       <div class="stat-card"><div class="num" style="color:${ncItems.length ? '#f87171' : '#4ade80'};">${ncItems.length}</div><div class="lbl">Non-conformités</div></div>
-      <div class="stat-card"><div class="num">${(d.approbations || []).length}</div><div class="lbl">Sauvegardes officielles</div></div>
+      <div class="stat-card"><div class="num">${toArray(d.approbations).length}</div><div class="lbl">Sauvegardes officielles</div></div>
     </div>
 
     <h2 class="section-title">Progression par section — cliquez pour voir le détail</h2>
