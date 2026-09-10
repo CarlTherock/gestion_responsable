@@ -1139,6 +1139,19 @@ select.ncextra-gravite {
 .approval-row-clickable { cursor: pointer; transition: border-color 120ms ease; }
 .approval-row-clickable:hover { border-color: var(--color-primary); }
 
+/* ---- Phase 4-6 : statuts et approbation finale ---- */
+.approbation-finale-card { border-radius: var(--radius-md); padding: var(--space-4) var(--space-5); border: 1px solid var(--color-border); margin-bottom: var(--space-5); background: var(--color-surface-2); }
+.approbation-finale-card.state-pret { background: rgba(56,189,248,0.08); border-color: rgba(56,189,248,0.35); }
+.approbation-finale-card.state-attente { background: rgba(234,179,8,0.08); border-color: rgba(234,179,8,0.35); }
+.approbation-finale-card.state-approuve { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.35); }
+.approbation-finale-card.state-retourne { background: rgba(214,69,69,0.08); border-color: rgba(214,69,69,0.4); }
+.approbation-finale-title { font-weight: 700; font-size: var(--text-base); margin-bottom: var(--space-2); }
+.approbation-finale-meta { font-size: var(--text-sm); color: var(--color-text-muted); line-height: 1.6; margin-bottom: var(--space-2); }
+.approbation-finale-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+
+.workspace-locked-banner { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); background: rgba(74,222,128,0.12); border-bottom: 1px solid rgba(74,222,128,0.35); color: #4ade80; font-weight: 600; font-size: var(--text-sm); }
+.workspace-locked .tab-panel:not([data-panel="approbation"]):not([data-panel="apercu"]) { pointer-events: none; opacity: 0.55; }
+
 /* ---------- Actions de fichier (Partager/Commentaire) et commentaire affiché ---------- */
 .file-row-actions { display: flex; flex-direction: column; gap: var(--space-1); }
 .file-comment-text { font-size: var(--text-xs); color: var(--color-text-muted); font-style: italic; margin-top: 2px; }

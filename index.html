@@ -160,6 +160,11 @@
         <span class="tag-pill offline-pill hidden" id="wsOfflinePill" title="Aucune connexion réseau">Hors ligne — modifications conservées localement</span>
       </div>
 
+      <div class="workspace-locked-banner hidden" id="wsLockedBanner">
+        <span class="icon-inline" data-icon="checkCircle"></span>
+        <span>Dossier approuvé — verrouillé. Créez une nouvelle révision (onglet Aperçu) pour continuer.</span>
+      </div>
+
       <div class="ws-summary-mobile" id="wsSummaryMobile">—</div>
       <div class="ws-actions-mobile">
         <button class="btn btn-primary" id="btnStartInterventionHeader">Démarrer l'intervention</button>
@@ -422,6 +427,9 @@
             </div>
           </div>
         </div>
+
+        <div class="panel-title" style="font-size: var(--text-base);">Approbation finale</div>
+        <div id="approbationFinaleCard"></div>
 
         <div class="panel-title" style="font-size: var(--text-base);">Historique des modifications</div>
         <div class="approval-history" id="approvalHistory">
