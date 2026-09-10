@@ -4773,7 +4773,6 @@ async function demanderApprobationFinale() {
   const vpd = computeVpdStats();
   const nc = computeNcStats();
   const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
-  const lienDossier = buildDossierUrl();
   const sujet = `Demande d'approbation — ${bt} — ${state.draft.activeRevision.id} ${state.draft.activeRevision.nom}`;
   const prenomDest = destNom.split(' ')[0] || destNom;
   const corps = [
@@ -4786,14 +4785,15 @@ async function demanderApprobationFinale() {
     `VPD ouvertes : ${vpd.pending}`,
     `Non-conformités ouvertes : ${nc.total}`, '',
     ...(lienPartage ? [`Tu peux consulter les fichiers du dossier ici : ${lienPartage}`, ''] : []),
-    `Tu peux aussi ouvrir le dossier directement dans l'application ici : ${lienDossier}`, '',
     "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
     'Merci beaucoup et bonne journée !',
   ].join('\n');
 
+  const qrPartageSvg = lienPartage ? generateQrSvg(lienPartage) : '';
   const confirmed = await showModal({
     title: "Demande d'approbation préparée",
-    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucune synchronisation serveur n'existe dans cette application : voici un message prêt à envoyer par courriel à ${escapeHtml(destNom)} (${escapeHtml(ROLE_LABELS[destRole] || destRole)}).</p>
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Aucune synchronisation serveur n'existe dans cette application : voici un message prêt à envoyer par courriel à ${escapeHtml(destNom)} (${escapeHtml(ROLE_LABELS[destRole] || destRole)}). Le lien apparaît en texte brut — la plupart des courriels le rendent cliquable automatiquement une fois ouvert.</p>
+      ${qrPartageSvg ? `<div style="background:#fff;padding:12px;border-radius:8px;display:flex;justify-content:center;margin:var(--space-3) 0;">${qrPartageSvg}</div>` : ''}
       <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Sujet</label>
       <input type="text" id="modalApprSubject" readonly value="${escapeHtml(sujet)}">
       <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Message</label>
