@@ -1321,6 +1321,13 @@ function computeDossierStatus() {
 }
 
 function computeNextAction() {
+  const rev = state.draft.activeRevision || {};
+  if (rev.approbation && rev.approbation.decision === 'approuve') {
+    return { text: 'Dossier approuvé et verrouillé — exportez le Rapport de chantier final ou créez une nouvelle révision pour continuer', tab: 'apercu' };
+  }
+  if (rev.approbation && rev.approbation.decision === 'retourne') {
+    return { text: 'Dossier retourné pour correction — voir le motif dans l\u2019onglet Approbation', tab: 'approbation' };
+  }
   const groups = getEffectiveChecklists(state.draft.mode);
   for (const [group, items] of Object.entries(groups)) {
     for (const [name, label] of items) {
@@ -4674,6 +4681,9 @@ function renderApprobationFinaleCard() {
           ${appr.commentaire ? `<br>Commentaire : ${escapeHtml(appr.commentaire)}` : ''}
         </div>
         <div class="approbation-finale-meta">Ce dossier est en lecture seule. Pour continuer le travail, créez une nouvelle révision (onglet Aperçu).</div>
+        <div class="approbation-finale-actions">
+          <button type="button" class="btn btn-primary" id="btnExporterRapportApprouve">Exporter le Rapport de chantier final</button>
+        </div>
       </div>`;
   } else if (appr && appr.decision === 'retourne') {
     html = `
@@ -4732,6 +4742,8 @@ function renderApprobationFinaleCard() {
   if (btnAnnuler) btnAnnuler.addEventListener('click', annulerDemandeApprobation);
   const btnVoirCorriger = $('#btnVoirElementsCorriger', container);
   if (btnVoirCorriger) btnVoirCorriger.addEventListener('click', () => { selectTab('apercu'); showClosureCheckModal(); });
+  const btnExporterApprouve = $('#btnExporterRapportApprouve', container);
+  if (btnExporterApprouve) btnExporterApprouve.addEventListener('click', exportDashboardFile);
 }
 
 async function demanderApprobationFinale() {
@@ -4904,6 +4916,12 @@ function updateLockUI() {
     const b = $(sel);
     if (b) b.disabled = locked;
   });
+  // L'onglet Documents reste utilisable une fois verrouillé (Exporter,
+  // Partager, QR sont de la consultation), mais les actions qui modifient
+  // le dossier y restent bloquées : supprimer un fichier, changer le lien partagé.
+  const fldLien = $('#fldLienDossierPartage');
+  if (fldLien) fldLien.disabled = locked;
+  $$('[data-doc-delete]').forEach((btn) => { btn.disabled = locked; });
 }
 
 $('#btnToggleSauvegardesTech').addEventListener('click', () => {
