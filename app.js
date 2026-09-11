@@ -191,6 +191,27 @@ function updateOfflineIndicator() {
 window.addEventListener('online', () => { updateOfflineIndicator(); toast('Connexion rétablie.'); });
 window.addEventListener('offline', () => { updateOfflineIndicator(); toast('Hors ligne — vos modifications restent conservées sur cet appareil.', 4500); });
 
+// ---------- Impression : rendre tous les onglets visibles sans dépendre du CSS ----------
+// Le CSS d'impression (.tab-panel.hidden { display: block !important; })
+// devrait suffire, mais certains navigateurs évaluent mal les media queries
+// de largeur pendant l'impression (comportement connu, déjà documenté
+// ailleurs dans ce fichier) et seul l'onglet actif finit par s'imprimer.
+// Solution plus robuste, indépendante de toute bataille de spécificité CSS :
+// retirer physiquement la classe .hidden de tous les onglets juste avant
+// d'imprimer (via l'événement beforeprint, qui se déclenche autant pour le
+// bouton Imprimer que pour Ctrl+P), puis la remettre après (afterprint) pour
+// ne pas perturber la navigation normale une fois l'impression terminée.
+let printHiddenPanelsRestore = null;
+window.addEventListener('beforeprint', () => {
+  printHiddenPanelsRestore = $$('.tab-panel.hidden').map((p) => p);
+  printHiddenPanelsRestore.forEach((p) => p.classList.remove('hidden'));
+});
+window.addEventListener('afterprint', () => {
+  if (!printHiddenPanelsRestore) return;
+  printHiddenPanelsRestore.forEach((p) => p.classList.add('hidden'));
+  printHiddenPanelsRestore = null;
+});
+
 // ---------- Service worker ----------
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
