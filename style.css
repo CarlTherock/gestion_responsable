@@ -1150,7 +1150,11 @@ select.ncextra-gravite {
 .approbation-finale-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
 
 .workspace-locked-banner { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); background: rgba(74,222,128,0.12); border-bottom: 1px solid rgba(74,222,128,0.35); color: #4ade80; font-weight: 600; font-size: var(--text-sm); }
-.workspace-locked .tab-panel:not([data-panel="approbation"]):not([data-panel="apercu"]) { pointer-events: none; opacity: 0.55; }
+.workspace-locked .tab-panel:not([data-panel="approbation"]):not([data-panel="apercu"]):not([data-panel="documents"]) { pointer-events: none; opacity: 0.55; }
+/* Documents reste utilisable une fois verrouillé (Exporter, Partager, QR, lien
+   partagé sont des actions de consultation, pas de modification du dossier) --
+   seuls les boutons qui modifient réellement les données sont désactivés
+   individuellement via JS (voir updateLockUI). */
 
 /* ---------- Actions de fichier (Partager/Commentaire) et commentaire affiché ---------- */
 .file-row-actions { display: flex; flex-direction: column; gap: var(--space-1); }
