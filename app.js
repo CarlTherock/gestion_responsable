@@ -1323,7 +1323,7 @@ function computeDossierStatus() {
 function computeNextAction() {
   const rev = state.draft.activeRevision || {};
   if (rev.approbation && rev.approbation.decision === 'approuve') {
-    return { text: 'Dossier approuvé et verrouillé — exportez le Rapport de chantier final ou créez une nouvelle révision pour continuer', tab: 'apercu' };
+    return { text: 'Dossier approuvé et verrouillé — exportez le Rapport de chantier final ou créez une nouvelle révision pour continuer', tab: 'apercu', special: 'approuve' };
   }
   if (rev.approbation && rev.approbation.decision === 'retourne') {
     return { text: 'Dossier retourné pour correction — voir le motif dans l\u2019onglet Approbation', tab: 'approbation' };
@@ -1767,7 +1767,9 @@ function renderApercu() {
         <div class="next-action-kicker">Prochaine action</div>
         <div class="next-action-text">${escapeHtml(nextAction.text)}</div>
       </div>
-      <button type="button" class="btn btn-primary" data-apercu-jump="${nextAction.tab}">Ouvrir la tâche</button>
+      ${nextAction.special === 'approuve'
+        ? `<button type="button" class="btn btn-primary" id="btnNextActionApprouve">Choisir une action</button>`
+        : `<button type="button" class="btn btn-primary" data-apercu-jump="${nextAction.tab}">Ouvrir la tâche</button>`}
     </div>
 
     <div class="vpo-nc-summary-row">
@@ -1863,6 +1865,21 @@ function renderApercu() {
   $$('[data-apercu-jump]', container).forEach((card) => {
     card.addEventListener('click', () => selectTab(card.dataset.apercuJump));
   });
+
+  const btnNextActionApprouve = $('#btnNextActionApprouve', container);
+  if (btnNextActionApprouve) {
+    btnNextActionApprouve.addEventListener('click', async () => {
+      const choice = await showChoiceModal('Dossier approuvé — que veux-tu faire ?', `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Ce dossier est verrouillé. Choisis une action :</p>
+        <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+          <button type="button" class="btn btn-outline" id="naChoixExporter" style="width:100%;">Exporter le Rapport de chantier final</button>
+          <button type="button" class="btn btn-outline" id="naChoixRevision" style="width:100%;">Créer une nouvelle révision</button>
+        </div>
+      `, ['naChoixExporter', 'naChoixRevision']);
+      if (choice === 'naChoixExporter') exportDashboardFile();
+      else if (choice === 'naChoixRevision') showCreerRevisionModal();
+    });
+  }
 
   const toggle = $('#toggleIncompleteOnly', container);
   if (toggle) {
@@ -2813,6 +2830,23 @@ function buildDashboardHtml(options) {
         </div>`).join('')}</div>`
     : '<p class="empty">Aucune sauvegarde officielle enregistrée.</p>';
 
+  // ---- Historique des révisions ----
+  const revActive = d.activeRevision || {};
+  const statutGlobalLabel = computeGlobalStatus().label;
+  const revisionsHtml = `
+    <div class="revision-row revision-row-active">
+      <span class="revision-id">${escapeHtml(revActive.id || '')}</span>
+      <span class="revision-nom">${escapeHtml(revActive.nom || '')}${revActive.motif ? ' — ' + escapeHtml(revActive.motif) : ''} <span class="revision-tag-active">Révision active</span></span>
+      <span class="revision-statut">${escapeHtml(statutGlobalLabel)}</span>
+    </div>
+    ${toArray(d.revisions).slice().reverse().map((r) => `
+    <div class="revision-row">
+      <span class="revision-id">${escapeHtml(r.id)}</span>
+      <span class="revision-nom">${escapeHtml(r.nom)}${r.motif ? ' — ' + escapeHtml(r.motif) : ''}</span>
+      <span class="revision-statut">${escapeHtml(GLOBAL_STATUS_LABELS[r.statut] || 'Archivée')}</span>
+    </div>`).join('')}
+  `;
+
   const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(formatBt(d.champs.bt)) + ')' : ''}`;
   const appUrl = buildDossierUrl();
   const qrSvg = generateQrSvg(appUrl);
@@ -2950,6 +2984,14 @@ function buildDashboardHtml(options) {
   .approbation-stamp-ok .approbation-stamp-title { color: #22a35a; }
   .approbation-stamp-retour .approbation-stamp-title { color: #b8860b; }
   .approbation-stamp-body { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+
+  .revision-list { display: flex; flex-direction: column; gap: 8px; }
+  .revision-row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+  .revision-row-active { border-color: var(--accent); background: var(--accent-soft); }
+  .revision-id { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-weight: 700; flex-shrink: 0; min-width: 42px; }
+  .revision-nom { flex: 1; color: var(--text-muted); }
+  .revision-tag-active { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); margin-left: 6px; }
+  .revision-statut { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
 </style></head>
 <body>
   <div class="wrap">
@@ -3026,6 +3068,9 @@ function buildDashboardHtml(options) {
 
     <h2 class="section-title">Historique des sauvegardes officielles</h2>
     ${histHtml}
+
+    <h2 class="section-title">Révisions du dossier</h2>
+    <div class="revision-list">${revisionsHtml}</div>
 
     ${d.champs.commentaires ? `<h2 class="section-title">Commentaires</h2><div class="comment-box">${escapeHtml(d.champs.commentaires)}</div>` : ''}
 
