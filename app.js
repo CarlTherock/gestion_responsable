@@ -3245,12 +3245,14 @@ function openWorkspace() {
 
   renderAllChecklists();
   renderVpoList();
+  renderVpdList();
   renderNcExtraList();
   refreshAllFileLists();
   refreshApprovals();
   updateFilesCount();
   updateProgressPill();
   renderNonConformites();
+  renderDocuments();
   updateApprobationBadge();
   renderQrThumb();
   renderLienPartageQr();
