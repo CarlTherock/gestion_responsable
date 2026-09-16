@@ -1481,7 +1481,7 @@ function renderDocuments() {
   });
 
   (d.files['mise-a-jour'] || []).forEach((f) => {
-    allDocs.push({ file: f, category: 'photos', tab: 'mise-a-jour', link: 'Mise à jour', date: f.uploadedAt, arrRef: d.files['mise-a-jour'], preuveStatus: 'non-requise' });
+    allDocs.push({ file: f, category: 'photos', tab: 'documents', link: 'Mise à jour (ancien)', date: f.uploadedAt, arrRef: d.files['mise-a-jour'], preuveStatus: 'non-requise' });
   });
 
   const vpoNumeros = new Set((d.vpoItems || []).filter((it) => it.numero).map((it) => it.numero));
@@ -2321,7 +2321,7 @@ const TAB_CATEGORIES = {
   identification: 'checklist', plans: 'checklist', programmation: 'checklist',
   systeme: 'checklist', information: 'checklist', securite: 'checklist',
   vpo: 'ecarts', vpd: 'ecarts', 'non-conformite': 'ecarts',
-  'mise-a-jour': 'plus', documents: 'plus', commentaire: 'plus', approbation: 'plus',
+  documents: 'plus', commentaire: 'plus', approbation: 'plus',
 };
 
 function mobileFilterTabsByCategory(catId) {
@@ -3551,8 +3551,8 @@ function renderChecklist(group) {
           <div class="dropzone-mini" data-item-dropzone="${name}">
             <span class="dz-text-desktop">Glissez-déposez un document, cliquez pour parcourir, ou</span>
             <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Prendre une photo</span>
-            <button type="button" class="btn btn-outline dz-snagit-btn" data-item-snagit="${name}">utiliser Snagit</button>
-            <button type="button" class="btn btn-outline dz-snagit-btn" data-item-paste="${name}">Coller</button>
+            <button type="button" class="btn btn-outline dz-paste-btn" data-item-capture="${name}">Capturer l'écran</button>
+            <button type="button" class="btn btn-outline dz-paste-btn" data-item-paste="${name}" title="Sur Windows : appuyez sur Win+Maj+S pour capturer l'écran, puis cliquez ici pour coller. Sur Mac : Cmd+Maj+4.">Coller une capture d'écran</button>
             <input type="file" data-item-file-input="${name}" capture="environment" multiple class="hidden">
           </div>
           <div class="file-list-mini" data-item-file-list="${name}"></div>
@@ -3648,12 +3648,12 @@ function renderChecklist(group) {
       ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
       ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
       dz.addEventListener('drop', (e) => attachFilesToTask(group, name, e.dataTransfer.files));
-      const snagitBtn = dz.querySelector('[data-item-snagit]');
-      if (snagitBtn) {
-        snagitBtn.addEventListener('click', (e) => {
+      const captureBtn = dz.querySelector('[data-item-capture]');
+      if (captureBtn) {
+        captureBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          window.location.href = 'snagit://capture';
-          toast('Ouverture de Snagit… capturez, puis glissez l\u2019image ici.', 4000);
+          const file = await captureEcranDirect();
+          if (file) await attachFilesToTask(group, name, [file]);
         });
       }
       const pasteBtn = dz.querySelector('[data-item-paste]');
@@ -3693,6 +3693,44 @@ async function readImageFromClipboard() {
   } catch (err) {
     toast('Impossible de lire le presse-papiers (autorisation refusée). Essayez Ctrl+V ou le glisser-déposer.', 4000);
     return null;
+  }
+}
+
+// Capture d'écran directe, sans logiciel externe : utilise l'API Screen
+// Capture du navigateur (la meme technologie que le partage d'écran dans
+// Teams/Meet) — ouvre la fenêtre native « Choisir ce que vous voulez
+// partager » de Windows/Chrome, prend une seule image, puis arrête
+// immédiatement le partage. Fonctionne dans Chrome et Edge de bureau sur
+// GitHub Pages (contexte sécurisé HTTPS) ; indisponible sur mobile et dans
+// certains navigateurs plus anciens — repli clair vers Coller dans ce cas.
+async function captureEcranDirect() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    toast('La capture d\u2019écran directe n\u2019est pas supportée par ce navigateur/appareil. Utilisez Win+Maj+S (Windows) ou Cmd+Maj+4 (Mac), puis Coller.', 5500);
+    return null;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'never' } });
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') toast('Échec de la capture d\u2019écran.', 4000);
+    return null;
+  }
+  try {
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    await video.play();
+    // Laisse le premier vrai cadre vidéo arriver avant de capturer.
+    await new Promise((resolve) => { video.onloadedmetadata = resolve; setTimeout(resolve, 300); });
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) { toast('Échec de la capture d\u2019écran.', 4000); return null; }
+    return new File([blob], `capture-ecran-${Date.now()}.png`, { type: 'image/png' });
+  } finally {
+    stream.getTracks().forEach((t) => t.stop());
   }
 }
 
@@ -4342,25 +4380,6 @@ function fmtSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' Mo';
 }
 
-async function uploadFiles(onglet, files) {
-  if (!state.numero) { toast('Entrez d\u2019abord un numéro de localisation.'); return; }
-  if (!files || !files.length) return;
-
-  for (const f of Array.from(files)) {
-    const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storedAs = `${Date.now()}-${safe}`;
-    state.draft.files[onglet].push({
-      name: f.name, storedAs, size: f.size, type: f.type,
-      uploadedAt: new Date().toISOString(), blob: f,
-    });
-  }
-
-  await dbPut(state.draft);
-  toast(`${files.length} document(s) enregistré(s) localement dans « ${onglet} ».`);
-  refreshFileList(onglet);
-  updateFilesCount();
-}
-
 function refreshFileList(onglet) {
   const listEl = $(`[data-file-list="${onglet}"]`);
   if (!listEl || !state.draft) return;
@@ -4395,168 +4414,6 @@ function updateFilesCount() {
   renderApercu();
   renderDocuments();
 }
-
-$$('.dropzone').forEach((zone) => {
-  const onglet = zone.dataset.dropzone;
-  const input = zone.querySelector('input[type="file"]');
-  zone.addEventListener('click', (e) => { if (e.target !== input) input.click(); });
-  input.addEventListener('change', () => uploadFiles(onglet, input.files));
-  ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add('dragover'); }));
-  ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove('dragover'); }));
-  zone.addEventListener('drop', (e) => uploadFiles(onglet, e.dataTransfer.files));
-});
-
-// ---------- Snagit + outil d'annotation ----------
-const canvas = $('#annotateCanvas');
-const ctx = canvas.getContext('2d');
-let drawing = false, currentTool = 'pen', lastX = 0, lastY = 0, startX = 0, startY = 0;
-
-function resetCanvas() {
-  if (!ctx) return;
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-surface-2') || '#1e2630';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = '#555f6b';
-  ctx.font = '14px Inter, sans-serif';
-  ctx.fillStyle = '#7a8694';
-  ctx.textAlign = 'center';
-  ctx.fillText('Chargez une capture Snagit ou une image pour commencer l\'annotation', canvas.width / 2, canvas.height / 2);
-}
-resetCanvas();
-
-$('#btnSnagit').addEventListener('click', () => {
-  const attempted = 'snagit://capture';
-  window.location.href = attempted;
-  toast("Ouverture de Snagit… si rien ne se passe, capturez puis utilisez « Charger une image existante ».", 4000);
-});
-
-function loadImageBlobIntoCanvas(blob) {
-  const img = new Image();
-  img.onload = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-    const w = img.width * scale, h = img.height * scale;
-    ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
-    URL.revokeObjectURL(img.src);
-  };
-  img.src = URL.createObjectURL(blob);
-}
-
-$('#btnLoadImage').addEventListener('click', () => $('#loadImageInput').click());
-$('#loadImageInput').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  loadImageBlobIntoCanvas(file);
-});
-
-// ---------- Collage direct depuis le presse-papiers ----------
-$('#btnPasteClipboard').addEventListener('click', async () => {
-  if (!navigator.clipboard || !navigator.clipboard.read) {
-    toast("Le collage direct n'est pas supporté par ce navigateur. Utilisez Ctrl+V dans cet onglet, ou glissez-déposez l'image.", 4000);
-    return;
-  }
-  try {
-    const items = await navigator.clipboard.read();
-    let found = false;
-    for (const item of items) {
-      const imgType = item.types.find((t) => t.startsWith('image/'));
-      if (imgType) {
-        const blob = await item.getType(imgType);
-        loadImageBlobIntoCanvas(blob);
-        toast('Image collée depuis le presse-papiers.');
-        found = true;
-        break;
-      }
-    }
-    if (!found) toast('Aucune image trouvée dans le presse-papiers.');
-  } catch (err) {
-    toast('Impossible de lire le presse-papiers (autorisation refusée). Essayez Ctrl+V ou le glisser-déposer.', 4000);
-  }
-});
-
-document.addEventListener('paste', (e) => {
-  if (state.currentTab !== 'mise-a-jour' || $('#screenWorkspace').classList.contains('hidden')) return;
-  const items = e.clipboardData && e.clipboardData.items;
-  if (!items) return;
-  for (const item of items) {
-    if (item.type && item.type.startsWith('image/')) {
-      const blob = item.getAsFile();
-      if (blob) {
-        loadImageBlobIntoCanvas(blob);
-        toast('Image collée depuis le presse-papiers.');
-      }
-      e.preventDefault();
-      break;
-    }
-  }
-});
-
-$$('[data-tool]').forEach((btn) => btn.addEventListener('click', () => {
-  currentTool = btn.dataset.tool;
-  $$('[data-tool]').forEach((b) => b.classList.remove('btn-primary'));
-  btn.classList.add('btn-primary');
-}));
-
-$('#btnClearCanvas').addEventListener('click', resetCanvas);
-
-function canvasPos(e) {
-  const rect = canvas.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  return { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
-}
-
-function startDraw(e) {
-  drawing = true;
-  const p = canvasPos(e);
-  lastX = startX = p.x; lastY = startY = p.y;
-  if (currentTool === 'text') {
-    const txt = prompt('Texte de l\'annotation :');
-    if (txt) { ctx.fillStyle = '#ff7a1a'; ctx.font = 'bold 16px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.fillText(txt, p.x, p.y); }
-    drawing = false;
-  }
-}
-function moveDraw(e) {
-  if (!drawing) return;
-  const p = canvasPos(e);
-  if (currentTool === 'pen') {
-    ctx.strokeStyle = '#ff7a1a'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y); ctx.stroke();
-    lastX = p.x; lastY = p.y;
-  }
-}
-function endDraw(e) {
-  if (!drawing) return;
-  if (currentTool === 'arrow') {
-    const p = canvasPos(e);
-    drawArrow(startX, startY, p.x, p.y);
-  }
-  drawing = false;
-}
-function drawArrow(x1, y1, x2, y2) {
-  const headlen = 14, angle = Math.atan2(y2 - y1, x2 - x1);
-  ctx.strokeStyle = '#ff7a1a'; ctx.fillStyle = '#ff7a1a'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x2, y2);
-  ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
-  ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
-  ctx.closePath(); ctx.fill();
-}
-canvas.addEventListener('mousedown', startDraw);
-canvas.addEventListener('mousemove', moveDraw);
-canvas.addEventListener('mouseup', endDraw);
-canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDraw(e); });
-canvas.addEventListener('touchmove', (e) => { e.preventDefault(); moveDraw(e); });
-canvas.addEventListener('touchend', endDraw);
-
-$('#btnSaveAnnotated').addEventListener('click', () => {
-  if (!state.numero) { toast("Créez d'abord un dossier."); return; }
-  canvas.toBlob(async (blob) => {
-    const filename = `capture-annotee-${Date.now()}.png`;
-    const namedBlob = new File([blob], filename, { type: 'image/png' });
-    await uploadFiles('mise-a-jour', [namedBlob]);
-  }, 'image/png');
-});
 
 // ---------- Approbation : le nom/rôle sont persistés comme champs généraux
 // (voir GENERAL_FIELD_MAP) et lus au moment de la sauvegarde officielle ----------
@@ -5528,7 +5385,7 @@ function buildSearchIndex() {
     index.push({ type: it.numero || 'NC', text: it.texte, sub: 'Non-conformité', tab: 'non-conformite' });
   });
 
-  (d.files['mise-a-jour'] || []).forEach((f) => index.push({ type: 'Document', text: f.name, sub: 'Photo de mise à jour', tab: 'mise-a-jour' }));
+  (d.files['mise-a-jour'] || []).forEach((f) => index.push({ type: 'Document', text: f.name, sub: 'Photo de mise à jour (ancien)', tab: 'documents' }));
   Object.entries(d.ncFichiers || {}).forEach(([numero, files]) => {
     files.forEach((f) => index.push({ type: 'Document', text: f.name, sub: `Photo — ${numero}`, tab: 'non-conformite' }));
   });

@@ -326,18 +326,6 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 .file-row .file-meta { font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); white-space: nowrap; }
 .empty-state { text-align: center; padding: var(--space-8); color: var(--color-text-faint); font-size: var(--text-sm); }
 
-/* ---------- Mise à jour: Snagit + canvas ---------- */
-.snagit-bar { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-5); }
-.snagit-btn {
-  background: linear-gradient(180deg, var(--color-surface-offset), var(--color-surface));
-  border: 1px solid var(--color-border);
-}
-.snagit-btn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); }
-.canvas-tools { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); flex-wrap: wrap; }
-.canvas-tools .btn { padding: var(--space-2) var(--space-3); }
-.canvas-wrap { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface-2); }
-#annotateCanvas { width: 100%; display: block; cursor: crosshair; touch-action: none; }
-
 /* ---------- Approbation ---------- */
 .approval-card {
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
@@ -650,10 +638,7 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   .rings-grid, .stat-row { gap: var(--space-2); }
   .ring-card { padding: var(--space-3) var(--space-1); }
 
-  /* Snagit et outils d'annotation : boutons pleine largeur, plus faciles à toucher */
-  .snagit-bar .btn, .canvas-tools .btn { flex: 1 1 auto; text-align: center; }
-
-  /* Zone de dépôt par tâche : bouton Snagit sur sa propre ligne */
+  /* Zone de dépôt par tâche : boutons Coller/Commentaire/Supprimer sur leur propre ligne */
   .dropzone-mini { display: flex; flex-direction: column; gap: var(--space-2); align-items: stretch; text-align: center; }
   .dropzone-mini button { width: 100%; margin-left: 0 !important; }
 
@@ -878,7 +863,7 @@ select.ncextra-gravite {
 /* ---------- Libellés adaptés desktop/mobile pour la zone de dépôt ---------- */
 .dz-text-mobile { display: none; }
 @media (max-width: 680px) {
-  .dz-text-desktop, .dz-snagit-btn, .btn-nc-paste-photo { display: none; }
+  .dz-text-desktop, .dz-paste-btn, .btn-nc-paste-photo { display: none; }
   .dz-text-mobile { display: inline; font-weight: 600; }
 }
 
