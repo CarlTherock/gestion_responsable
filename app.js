@@ -3201,12 +3201,20 @@ const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
 
 $('#numLoc').addEventListener('input', (e) => {
   const el = $('#numLoc');
+  const enTrainDeSupprimer = e.inputType && e.inputType.startsWith('delete');
+  // Majuscules automatiques en tapant, sans déplacer le curseur (important
+  // quand on corrige au milieu du texte, pas seulement en tapant vers l'avant).
+  const debut = el.selectionStart, fin = el.selectionEnd;
+  const majuscule = el.value.toUpperCase();
+  if (majuscule !== el.value) {
+    el.value = majuscule;
+    if (debut !== null) el.setSelectionRange(debut, fin);
+  }
   let val = el.value;
   // Insère automatiquement un tiret après les 3 premiers caractères, pour
   // respecter le format habituel (ex. 888-FT-8888), mais seulement quand on
   // tape vers l'avant — jamais pendant une suppression (backspace/delete),
   // sinon le tiret réapparaît aussitôt effacé et bloque la correction.
-  const enTrainDeSupprimer = e.inputType && e.inputType.startsWith('delete');
   if (val.length === 3 && !val.includes('-') && !enTrainDeSupprimer) {
     val += '-';
     el.value = val;
