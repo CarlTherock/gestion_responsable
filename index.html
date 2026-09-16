@@ -506,7 +506,7 @@
       <div class="modal-box capture-modal-box">
         <h3>Retoucher la capture</h3>
         <div id="captureEditorBody">
-          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone, puis Copier (le bouton devient Coller — cliquez pour coller la zone au même endroit, puis glissez-la où vous voulez) ou Rogner. Pour le texte, glissez un rectangle. Recliquez sur une flèche/rectangle/ellipse/texte/zone collée déjà tracé pour le sélectionner et changer sa couleur/taille dans le panneau de droite, ou le glisser. « Déplacer » : glissez pour naviguer dans l'image quand elle est zoomée.</p>
+          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone, puis Copier, Coller (décalée, prête à glisser/redimensionner) ou Rogner. Pour le texte, glissez un rectangle. Recliquez sur une flèche/rectangle/ellipse/texte/zone collée déjà tracé pour le sélectionner, le déplacer, le redimensionner ou l'aplatir dans l'image. « Déplacer » : glissez pour naviguer dans l'image quand elle est zoomée.</p>
           <div class="capture-editor-layout">
             <div class="capture-main-column">
               <div class="capture-toolbar">
@@ -522,7 +522,8 @@
               </div>
               <div class="capture-selection-actions hidden" id="captureSelectionActions">
                 <span class="capture-zoom-label">Zone sélectionnée :</span>
-                <button type="button" class="btn btn-outline" id="btnCaptureCopySelection">Copier la sélection</button>
+                <button type="button" class="btn btn-outline" id="btnCaptureCopySelection">Copier</button>
+                <button type="button" class="btn btn-outline hidden" id="btnCapturePasteSelection">Coller</button>
                 <button type="button" class="btn btn-outline" id="btnCaptureCropSelection">Rogner à la sélection</button>
                 <button type="button" class="btn btn-tertiary" id="btnCaptureClearSelection">Annuler la sélection</button>
               </div>
@@ -556,7 +557,11 @@
               </div>
               <div class="capture-prop-row hidden" id="captureObjectSelectedRow">
                 <p class="panel-desc" style="margin:0 0 var(--space-2);font-size:12px;">Objet sélectionné — la couleur/taille ci-dessus s'applique à lui. Glissez-le pour le déplacer.</p>
-                <button type="button" class="btn btn-outline" id="btnCaptureDeleteObject" style="width:100%;">Supprimer cet objet</button>
+                <label for="captureScaleInput">Grossir / diminuer</label>
+                <input type="range" id="captureScaleInput" min="25" max="300" step="5" value="100">
+                <span class="capture-prop-value" id="captureScaleValue">100 %</span>
+                <button type="button" class="btn btn-outline" id="btnCaptureFlattenObject" style="width:100%;margin-top:var(--space-3);" title="Fusionne l'objet dans l'image pour pouvoir dessiner par-dessus sans le déplacer par accident.">Aplatir dans l'image</button>
+                <button type="button" class="btn btn-outline" id="btnCaptureDeleteObject" style="width:100%;margin-top:var(--space-2);">Supprimer cet objet</button>
               </div>
             </div>
           </div>
