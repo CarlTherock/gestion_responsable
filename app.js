@@ -138,6 +138,7 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   checkCircle: '<circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/>',
+  hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
   alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   messageCircle: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
@@ -3769,7 +3770,7 @@ function showCaptureEditor(file) {
     let selectedObjectId = null;
 
     let tool = 'select';
-    let dragMode = null; // 'crop-select' | 'new-shape' | 'move-object' | 'pen' | 'clone-select' | 'pan' | 'text-box'
+    let dragMode = null; // 'crop-select' | 'new-shape' | 'move-object' | 'pen' | 'pan' | 'text-box'
     let dragStart = null;
     let pendingObject = null; // nouvel objet en cours de tracé (aperçu, pas encore validé)
     let moveOrigin = null; // géométrie d'origine de l'objet déplacé (pour calculer le delta)
@@ -3853,6 +3854,8 @@ function showCaptureEditor(file) {
         ctx.font = `bold ${o.fontSize}px Inter, sans-serif`;
         ctx.textAlign = 'left';
         wrapCanvasText(ctx, o.text, o.x + 4, o.y + o.fontSize, Math.max(20, o.w - 8), o.fontSize * 1.2);
+      } else if (o.type === 'stamp') {
+        ctx.drawImage(o.canvasData, o.x, o.y, o.w, o.h);
       }
       if (highlight) {
         const b = objectBBox(o);
@@ -3945,22 +3948,51 @@ function showCaptureEditor(file) {
       redrawAll();
     }
 
+    let selectionMode = 'copy'; // 'copy' | 'paste' -- bascule le bouton Copier/Coller la sélection
     function showSelectionActions(show) {
       if (selectionActionsBar) selectionActionsBar.classList.toggle('hidden', !show);
+    }
+    function resetCopyPasteButton() {
+      selectionMode = 'copy';
+      cloneBuffer = null;
+      const btn = $('#btnCaptureCopySelection');
+      if (btn) btn.textContent = 'Copier la sélection';
     }
     function clearCropSelection() {
       cropSelRect = null;
       showSelectionActions(false);
+      resetCopyPasteButton();
       redrawAll();
     }
-    function copySelection() {
-      if (!cropSelRect) return;
-      const rect = cropSelRect;
-      const off = document.createElement('canvas');
-      off.width = Math.round(rect.w); off.height = Math.round(rect.h);
-      off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
-      cloneBuffer = { canvas: off, w: off.width, h: off.height };
-      toast('Zone copiée — choisissez l\u2019outil Copier/coller puis cliquez où la coller.', 4500);
+    // Bouton unique qui bascule Copier <-> Coller : on copie la zone
+    // sélectionnée, le bouton devient "Coller la sélection" ; cliquer dessus
+    // colle une copie au MÊME endroit, sous forme d'objet qu'on peut ensuite
+    // glisser où on veut (comme les autres formes).
+    function onCopyPasteClick() {
+      const btn = $('#btnCaptureCopySelection');
+      if (selectionMode === 'copy') {
+        if (!cropSelRect) return;
+        const rect = cropSelRect;
+        const off = document.createElement('canvas');
+        off.width = Math.round(rect.w); off.height = Math.round(rect.h);
+        off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
+        cloneBuffer = { canvas: off, x: rect.x, y: rect.y, w: off.width, h: off.height };
+        selectionMode = 'paste';
+        if (btn) btn.textContent = 'Coller la sélection';
+      } else {
+        if (!cloneBuffer) return;
+        pushHistory();
+        const newObj = {
+          id: nextObjectId++, type: 'stamp', color: colorInput.value, size: Number(sizeInput.value), fontSize: Number(fontSizeInput.value),
+          x: cloneBuffer.x, y: cloneBuffer.y, w: cloneBuffer.w, h: cloneBuffer.h, canvasData: cloneBuffer.canvas,
+        };
+        objects.push(newObj);
+        cropSelRect = null;
+        showSelectionActions(false);
+        resetCopyPasteButton();
+        selectObject(newObj);
+        toast('Zone collée — glissez-la pour la déplacer où vous voulez.', 4000);
+      }
     }
     function cropToSelection() {
       if (!cropSelRect) return;
@@ -3977,6 +4009,7 @@ function showCaptureEditor(file) {
       selectedObjectId = null;
       cropSelRect = null;
       showSelectionActions(false);
+      resetCopyPasteButton();
       updatePropsPanelForSelection();
       resetZoom();
       redrawAll();
@@ -4007,16 +4040,6 @@ function showCaptureEditor(file) {
       if (tool === 'select') {
         dragMode = 'crop-select'; dragStart = p; cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 };
         showSelectionActions(false);
-        return;
-      }
-      if (tool === 'clone') {
-        if (cloneBuffer) {
-          pushHistory();
-          baseCtx.drawImage(cloneBuffer.canvas, p.x - cloneBuffer.w / 2, p.y - cloneBuffer.h / 2);
-          redrawAll();
-        } else {
-          dragMode = 'clone-select'; dragStart = p; cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 };
-        }
         return;
       }
       if (tool === 'pen') {
@@ -4061,7 +4084,7 @@ function showCaptureEditor(file) {
         return;
       }
       const p = posFromEvent(e);
-      if (dragMode === 'crop-select' || dragMode === 'clone-select') {
+      if (dragMode === 'crop-select') {
         cropSelRect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
         redrawAll();
       } else if (dragMode === 'text-box') {
@@ -4082,6 +4105,18 @@ function showCaptureEditor(file) {
         redrawAll();
       }
     }
+    // Curseur "déplacer" quand la souris survole une flèche/rectangle/
+    // ellipse/texte/zone collée déjà tracé, pour montrer qu'on peut cliquer
+    // dessus pour le sélectionner/glisser -- même sans être en train de glisser.
+    function onHover(e) {
+      if (dragMode) return; // pendant un glissement actif, le curseur est déjà géré explicitement
+      if (tool !== 'arrow' && tool !== 'rectangle' && tool !== 'ellipse' && tool !== 'text') {
+        canvas.classList.remove('capture-cursor-move');
+        return;
+      }
+      const p = posFromEvent(e);
+      canvas.classList.toggle('capture-cursor-move', !!hitTestObject(p));
+    }
     function onUp(e) {
       if (!dragMode) return;
       const finishedMode = dragMode;
@@ -4091,17 +4126,6 @@ function showCaptureEditor(file) {
       if (finishedMode === 'crop-select') {
         if (cropSelRect && cropSelRect.w > 4 && cropSelRect.h > 4) showSelectionActions(true);
         else { cropSelRect = null; showSelectionActions(false); }
-        redrawAll();
-      } else if (finishedMode === 'clone-select') {
-        const rect = cropSelRect;
-        cropSelRect = null;
-        if (rect && rect.w > 4 && rect.h > 4) {
-          const off = document.createElement('canvas');
-          off.width = Math.round(rect.w); off.height = Math.round(rect.h);
-          off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
-          cloneBuffer = { canvas: off, w: off.width, h: off.height };
-          toast('Zone copiée — cliquez où la coller (autant de fois que voulu).', 4000);
-        }
         redrawAll();
       } else if (finishedMode === 'text-box') {
         const rect = cropSelRect;
@@ -4134,12 +4158,12 @@ function showCaptureEditor(file) {
 
     function onColorInput() {
       const o = objects.find((x) => x.id === selectedObjectId);
-      if (o) { o.color = colorInput.value; redrawAll(); }
+      if (o && o.type !== 'stamp') { o.color = colorInput.value; redrawAll(); }
     }
     function onSizeInput() {
       if (sizeValueEl) sizeValueEl.textContent = `${sizeInput.value} px`;
       const o = objects.find((x) => x.id === selectedObjectId);
-      if (o && o.type !== 'text') { o.size = Number(sizeInput.value); redrawAll(); }
+      if (o && o.type !== 'text' && o.type !== 'stamp') { o.size = Number(sizeInput.value); redrawAll(); }
     }
     function onFontSizeInput() {
       if (fontSizeValueEl) fontSizeValueEl.textContent = `${fontSizeInput.value} px`;
@@ -4151,10 +4175,10 @@ function showCaptureEditor(file) {
       tool = e.currentTarget.dataset.captureTool;
       $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
-      if (tool === 'clone') cloneBuffer = null;
-      if (tool !== 'select' && tool !== 'clone') { cropSelRect = null; showSelectionActions(false); }
+      if (tool !== 'select') { cropSelRect = null; showSelectionActions(false); resetCopyPasteButton(); }
       selectObject(null);
       canvas.classList.toggle('capture-cursor-grab', tool === 'pan');
+      canvas.classList.remove('capture-cursor-move');
       redrawAll();
     }
 
@@ -4189,7 +4213,7 @@ function showCaptureEditor(file) {
       objects = [];
       selectedObjectId = null;
       cropSelRect = null;
-      cloneBuffer = null;
+      resetCopyPasteButton();
       showSelectionActions(false);
       updatePropsPanelForSelection();
       baseCanvas.width = img.naturalWidth; baseCanvas.height = img.naturalHeight;
@@ -4200,7 +4224,7 @@ function showCaptureEditor(file) {
       resetZoom();
     }
     function onUndo() {
-      undo(() => { showSelectionActions(false); cropSelRect = null; updatePropsPanelForSelection(); resetZoom(); });
+      undo(() => { showSelectionActions(false); cropSelRect = null; resetCopyPasteButton(); updatePropsPanelForSelection(); resetZoom(); });
     }
     function onKeydown(e) {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObjectId && document.activeElement === document.body) {
@@ -4211,6 +4235,7 @@ function showCaptureEditor(file) {
     function cleanup() {
       canvas.removeEventListener('mousedown', onDown);
       canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('mousemove', onHover);
       canvas.removeEventListener('mouseup', onUp);
       canvas.removeEventListener('touchstart', onDown);
       canvas.removeEventListener('touchmove', onMove);
@@ -4220,7 +4245,7 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').removeEventListener('click', onUndo);
       $('#btnCaptureCancel').removeEventListener('click', onCancel);
       $('#btnCaptureUse').removeEventListener('click', onUse);
-      $('#btnCaptureCopySelection').removeEventListener('click', copySelection);
+      $('#btnCaptureCopySelection').removeEventListener('click', onCopyPasteClick);
       $('#btnCaptureCropSelection').removeEventListener('click', cropToSelection);
       $('#btnCaptureClearSelection').removeEventListener('click', clearCropSelection);
       $('#btnCaptureDeleteObject').removeEventListener('click', deleteSelectedObject);
@@ -4251,13 +4276,15 @@ function showCaptureEditor(file) {
       baseCanvas.width = img.naturalWidth; baseCanvas.height = img.naturalHeight;
       baseCtx.drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
       canvas.width = baseCanvas.width; canvas.height = baseCanvas.height;
-      objects = []; selectedObjectId = null; cropSelRect = null; cloneBuffer = null; history = [];
+      objects = []; selectedObjectId = null; cropSelRect = null; history = [];
+      resetCopyPasteButton();
       tool = 'select';
       $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
       updatePropsPanelForSelection();
       redrawAll();
       canvas.addEventListener('mousedown', onDown);
       canvas.addEventListener('mousemove', onMove);
+      canvas.addEventListener('mousemove', onHover);
       canvas.addEventListener('mouseup', onUp);
       canvas.addEventListener('touchstart', onDown);
       canvas.addEventListener('touchmove', onMove);
@@ -4267,7 +4294,7 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').addEventListener('click', onUndo);
       $('#btnCaptureCancel').addEventListener('click', onCancel);
       $('#btnCaptureUse').addEventListener('click', onUse);
-      $('#btnCaptureCopySelection').addEventListener('click', copySelection);
+      $('#btnCaptureCopySelection').addEventListener('click', onCopyPasteClick);
       $('#btnCaptureCropSelection').addEventListener('click', cropToSelection);
       $('#btnCaptureClearSelection').addEventListener('click', clearCropSelection);
       $('#btnCaptureDeleteObject').addEventListener('click', deleteSelectedObject);
