@@ -506,7 +506,7 @@
       <div class="modal-box capture-modal-box">
         <h3>Retoucher la capture</h3>
         <div id="captureEditorBody">
-          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone — elle s'agrandit automatiquement pour y travailler plus précisément. Pour le texte, glissez un rectangle pour définir la zone du texte. « Copier/coller » : glissez pour copier une zone, puis cliquez où la coller. « Annuler une étape » revient en arrière une action à la fois.</p>
+          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone, puis Copier ou Rogner. Pour le texte, glissez un rectangle. Recliquez sur une flèche/rectangle/ellipse/texte déjà tracé pour le sélectionner et changer sa couleur/taille dans le panneau de droite. « Déplacer » : glissez pour naviguer dans l'image quand elle est zoomée.</p>
           <div class="capture-editor-layout">
             <div class="capture-main-column">
               <div class="capture-toolbar">
@@ -517,8 +517,15 @@
                 <button type="button" class="btn btn-outline" data-capture-tool="ellipse">Ellipse</button>
                 <button type="button" class="btn btn-outline" data-capture-tool="text">Texte</button>
                 <button type="button" class="btn btn-outline" data-capture-tool="clone">Copier/coller</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="pan">Déplacer</button>
                 <button type="button" class="btn btn-outline" id="btnCaptureUndo">Annuler une étape</button>
                 <button type="button" class="btn btn-outline" id="btnCaptureReset">Réinitialiser</button>
+              </div>
+              <div class="capture-selection-actions hidden" id="captureSelectionActions">
+                <span class="capture-zoom-label">Zone sélectionnée :</span>
+                <button type="button" class="btn btn-outline" id="btnCaptureCopySelection">Copier la sélection</button>
+                <button type="button" class="btn btn-outline" id="btnCaptureCropSelection">Rogner à la sélection</button>
+                <button type="button" class="btn btn-tertiary" id="btnCaptureClearSelection">Annuler la sélection</button>
               </div>
               <div class="capture-zoom-bar">
                 <span class="capture-zoom-label">Zoom</span>
@@ -533,7 +540,7 @@
               </div>
             </div>
             <div class="capture-props-panel">
-              <h4>Propriétés de l'outil</h4>
+              <h4 id="capturePropsTitle">Propriétés de l'outil</h4>
               <div class="capture-prop-row">
                 <label for="captureColorInput">Couleur</label>
                 <input type="color" id="captureColorInput" value="#ff7a1a">
@@ -547,6 +554,10 @@
                 <label for="captureFontSizeInput">Taille du texte</label>
                 <input type="range" id="captureFontSizeInput" min="12" max="72" value="24">
                 <span class="capture-prop-value" id="captureFontSizeValue">24 px</span>
+              </div>
+              <div class="capture-prop-row hidden" id="captureObjectSelectedRow">
+                <p class="panel-desc" style="margin:0 0 var(--space-2);font-size:12px;">Objet sélectionné — la couleur/taille ci-dessus s'applique à lui. Glissez-le pour le déplacer.</p>
+                <button type="button" class="btn btn-outline" id="btnCaptureDeleteObject" style="width:100%;">Supprimer cet objet</button>
               </div>
             </div>
           </div>

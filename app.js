@@ -3753,96 +3753,142 @@ function showCaptureEditor(file) {
 
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
+
+    // ---- Couche de base (image + traits de crayon + résultat d'un rognage) :
+    // toujours composée en dessous des objets vectoriels lors du redessin.
+    const baseCanvas = document.createElement('canvas');
+    const baseCtx = baseCanvas.getContext('2d');
+
+    // ---- Objets vectoriels re-sélectionnables (flèche/rectangle/ellipse/
+    // texte) : contrairement au crayon (gravé directement dans la couche de
+    // base), ils restent des données modifiables tant que la fenêtre est
+    // ouverte -- recliquer dessus les sélectionne pour changer couleur/taille
+    // ou les déplacer.
+    let objects = [];
+    let nextObjectId = 1;
+    let selectedObjectId = null;
+
     let tool = 'select';
-    let dragging = false;
+    let dragMode = null; // 'crop-select' | 'new-shape' | 'move-object' | 'pen' | 'clone-select' | 'pan' | 'text-box'
     let dragStart = null;
-    let preDragSnapshotUrl = null; // aperçu temporaire (sélection/texte en cours), jamais dans l'historique
+    let pendingObject = null; // nouvel objet en cours de tracé (aperçu, pas encore validé)
+    let moveOrigin = null; // géométrie d'origine de l'objet déplacé (pour calculer le delta)
+    let cropSelRect = null; // sélection de zone persistante (outil Sélectionner), jusqu'à action explicite
     let cloneBuffer = null; // { canvas, w, h } : zone copiée en attente d'être collée (outil Copier/coller)
-    // Contrôles de couleur/épaisseur/taille de texte (panneau de droite,
-    // même esprit que le panneau "Propriétés de l'outil" de Snagit).
+    let panLast = null; // dernière position (coordonnées écran) pour le calcul du déplacement
+
     const colorInput = $('#captureColorInput');
     const sizeInput = $('#captureSizeInput');
     const sizeValueEl = $('#captureSizeValue');
     const fontSizeInput = $('#captureFontSizeInput');
     const fontSizeValueEl = $('#captureFontSizeValue');
-    function onSizeInput() { if (sizeValueEl) sizeValueEl.textContent = `${sizeInput.value} px`; }
-    function onFontSizeInput() { if (fontSizeValueEl) fontSizeValueEl.textContent = `${fontSizeInput.value} px`; }
-    // Historique d'annulation : un instantané complet du canevas avant CHAQUE
-    // action (trait, flèche, texte, zoom sur sélection) -- permet de revenir
-    // en arrière une étape à la fois, y compris un zoom.
+    const selectionActionsBar = $('#captureSelectionActions');
+    const objectSelectedRow = $('#captureObjectSelectedRow');
+    const propsTitle = $('#capturePropsTitle');
+
     const MAX_HISTORY = 20;
     let history = [];
 
-    function snapshotDataUrl() {
-      try { return canvas.toDataURL('image/png'); } catch (e) { return null; }
+    function cloneObjects(list) { return list.map((o) => Object.assign({}, o)); }
+
+    function snapshotState() {
+      let baseDataUrl = null;
+      try { baseDataUrl = baseCanvas.toDataURL('image/png'); } catch (e) { /* ignore */ }
+      return { baseDataUrl, width: baseCanvas.width, height: baseCanvas.height, objects: cloneObjects(objects) };
     }
     function pushHistory() {
-      const snap = snapshotDataUrl();
-      if (!snap) return;
-      history.push({ dataUrl: snap, width: canvas.width, height: canvas.height });
+      const snap = snapshotState();
+      if (!snap.baseDataUrl) return;
+      history.push(snap);
       if (history.length > MAX_HISTORY) history.shift();
     }
-    function restoreFromDataUrl(dataUrl, width, height, cb) {
+    function restoreSnapshot(snap, cb) {
       const im = new Image();
       im.onload = () => {
-        canvas.width = width;
-        canvas.height = height;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+        baseCanvas.width = snap.width; baseCanvas.height = snap.height;
+        baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+        baseCtx.drawImage(im, 0, 0, baseCanvas.width, baseCanvas.height);
+        canvas.width = snap.width; canvas.height = snap.height;
+        objects = cloneObjects(snap.objects);
+        selectedObjectId = null;
+        redrawAll();
         if (cb) cb();
       };
-      im.src = dataUrl;
+      im.src = snap.baseDataUrl;
     }
     function undo(cb) {
       if (!history.length) { if (cb) cb(); return; }
-      const last = history.pop();
-      restoreFromDataUrl(last.dataUrl, last.width, last.height, cb);
+      restoreSnapshot(history.pop(), cb);
     }
 
-    function drawArrowOnCtx(x1, y1, x2, y2) {
+    function drawArrowOnCtx(c, x1, y1, x2, y2) {
       const headlen = Math.max(14, canvas.width / 60);
       const angle = Math.atan2(y2 - y1, x2 - x1);
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
-      ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
-      ctx.closePath(); ctx.fill();
-    }
-    function setAnnotationStyle() {
-      const color = (colorInput && colorInput.value) || '#ff7a1a';
-      const size = (sizeInput && Number(sizeInput.value)) || 3;
-      ctx.strokeStyle = color; ctx.fillStyle = color;
-      ctx.lineWidth = size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+      c.beginPath();
+      c.moveTo(x2, y2);
+      c.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+      c.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+      c.closePath(); c.fill();
     }
 
-    function posFromEvent(e) {
-      const rect = canvas.getBoundingClientRect();
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-      return {
-        x: Math.max(0, Math.min(canvas.width, (clientX - rect.left) * (canvas.width / rect.width))),
-        y: Math.max(0, Math.min(canvas.height, (clientY - rect.top) * (canvas.height / rect.height))),
-      };
+    // ---- Objets : géométrie normalisée (x,y = coin haut-gauche, w,h >= 0) ----
+    function objectBBox(o) {
+      if (o.type === 'arrow') {
+        return { x: Math.min(o.x1, o.x2), y: Math.min(o.y1, o.y2), w: Math.abs(o.x2 - o.x1), h: Math.abs(o.y2 - o.y1) };
+      }
+      return { x: o.x, y: o.y, w: o.w, h: o.h };
     }
-
-    // ---- Zoom sur une zone sélectionnée : agrandit la région choisie pour y
-    // travailler plus précisément. L'état d'avant (image complète) reste
-    // disponible via Annuler une étape.
-    function zoomToSelection(rect) {
-      if (rect.w < 6 || rect.h < 6) return;
-      pushHistory();
-      const targetMax = 1600; // largeur/hauteur cible après agrandissement
-      const scale = Math.max(1, Math.min(targetMax / rect.w, targetMax / rect.h, 4));
-      const outCanvas = document.createElement('canvas');
-      outCanvas.width = Math.round(rect.w * scale);
-      outCanvas.height = Math.round(rect.h * scale);
-      outCanvas.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, outCanvas.width, outCanvas.height);
-      canvas.width = outCanvas.width;
-      canvas.height = outCanvas.height;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(outCanvas, 0, 0);
-      resetZoom();
+    function drawObject(o, highlight) {
+      ctx.strokeStyle = o.color; ctx.fillStyle = o.color; ctx.lineWidth = o.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if (o.type === 'rectangle') {
+        ctx.strokeRect(o.x, o.y, o.w, o.h);
+      } else if (o.type === 'ellipse') {
+        ctx.beginPath();
+        ctx.ellipse(o.x + o.w / 2, o.y + o.h / 2, Math.max(0.01, o.w / 2), Math.max(0.01, o.h / 2), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (o.type === 'arrow') {
+        drawArrowOnCtx(ctx, o.x1, o.y1, o.x2, o.y2);
+      } else if (o.type === 'text') {
+        ctx.font = `bold ${o.fontSize}px Inter, sans-serif`;
+        ctx.textAlign = 'left';
+        wrapCanvasText(ctx, o.text, o.x + 4, o.y + o.fontSize, Math.max(20, o.w - 8), o.fontSize * 1.2);
+      }
+      if (highlight) {
+        const b = objectBBox(o);
+        ctx.save();
+        ctx.strokeStyle = '#22aaff'; ctx.fillStyle = 'transparent'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+        ctx.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12);
+        ctx.restore();
+      }
+    }
+    function hitTestObject(p) {
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const o = objects[i];
+        const b = objectBBox(o);
+        const pad = Math.max(8, o.size);
+        if (o.type === 'arrow') {
+          if (distToSegment(p, { x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 }) <= pad) return o;
+        } else if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) {
+          return o;
+        }
+      }
+      return null;
+    }
+    function distToSegment(p, a, b) {
+      const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+      if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+      let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(p.x - (a.x + t * (b.x - a.x)), p.y - (a.y + t * (b.y - a.y)));
+    }
+    function shiftObject(o, dx, dy) {
+      if (o.type === 'arrow') return Object.assign({}, o, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
+      return Object.assign({}, o, { x: o.x + dx, y: o.y + dy });
+    }
+    function objectIntersects(o, rect) {
+      const b = objectBBox(o);
+      return b.x + b.w >= rect.x && b.x <= rect.x + rect.w && b.y + b.h >= rect.y && b.y <= rect.y + rect.h;
     }
 
     function drawDashedRect(rect) {
@@ -3857,151 +3903,266 @@ function showCaptureEditor(file) {
       ctx.restore();
     }
 
-    function restorePreDragPreview(cb) {
-      if (!preDragSnapshotUrl) { if (cb) cb(); return; }
-      const im = new Image();
-      im.onload = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
-        if (cb) cb();
+    // ---- Redessin complet : base + objets (avec surbrillance) + sélection
+    // de zone + aperçu de l'action en cours (nouvelle forme/déplacement). ----
+    function redrawAll() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(baseCanvas, 0, 0);
+      objects.forEach((o) => drawObject(o, o.id === selectedObjectId && dragMode !== 'move-object'));
+      if (dragMode === 'new-shape' && pendingObject) drawObject(pendingObject, false);
+      if (dragMode === 'move-object' && selectedObjectId) {
+        const o = objects.find((x) => x.id === selectedObjectId);
+        if (o) drawObject(o, true);
+      }
+      if (cropSelRect) drawDashedRect(cropSelRect);
+    }
+
+    function updatePropsPanelForSelection() {
+      const o = objects.find((x) => x.id === selectedObjectId);
+      if (o) {
+        objectSelectedRow.classList.remove('hidden');
+        propsTitle.textContent = 'Propriétés de l\u2019objet sélectionné';
+        colorInput.value = o.color;
+        sizeInput.value = o.size;
+        onSizeInput();
+        if (o.type === 'text') { fontSizeInput.value = o.fontSize; onFontSizeInput(); }
+      } else {
+        objectSelectedRow.classList.add('hidden');
+        propsTitle.textContent = 'Propriétés de l\u2019outil';
+      }
+    }
+    function selectObject(o) {
+      selectedObjectId = o ? o.id : null;
+      updatePropsPanelForSelection();
+      redrawAll();
+    }
+    function deleteSelectedObject() {
+      if (!selectedObjectId) return;
+      pushHistory();
+      objects = objects.filter((o) => o.id !== selectedObjectId);
+      selectedObjectId = null;
+      updatePropsPanelForSelection();
+      redrawAll();
+    }
+
+    function showSelectionActions(show) {
+      if (selectionActionsBar) selectionActionsBar.classList.toggle('hidden', !show);
+    }
+    function clearCropSelection() {
+      cropSelRect = null;
+      showSelectionActions(false);
+      redrawAll();
+    }
+    function copySelection() {
+      if (!cropSelRect) return;
+      const rect = cropSelRect;
+      const off = document.createElement('canvas');
+      off.width = Math.round(rect.w); off.height = Math.round(rect.h);
+      off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
+      cloneBuffer = { canvas: off, w: off.width, h: off.height };
+      toast('Zone copiée — choisissez l\u2019outil Copier/coller puis cliquez où la coller.', 4500);
+    }
+    function cropToSelection() {
+      if (!cropSelRect) return;
+      pushHistory();
+      const rect = { x: Math.round(cropSelRect.x), y: Math.round(cropSelRect.y), w: Math.round(cropSelRect.w), h: Math.round(cropSelRect.h) };
+      const off = document.createElement('canvas');
+      off.width = rect.w; off.height = rect.h;
+      off.getContext('2d').drawImage(baseCanvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+      baseCanvas.width = rect.w; baseCanvas.height = rect.h;
+      baseCtx.clearRect(0, 0, rect.w, rect.h);
+      baseCtx.drawImage(off, 0, 0);
+      canvas.width = rect.w; canvas.height = rect.h;
+      objects = objects.filter((o) => objectIntersects(o, rect)).map((o) => shiftObject(o, -rect.x, -rect.y));
+      selectedObjectId = null;
+      cropSelRect = null;
+      showSelectionActions(false);
+      updatePropsPanelForSelection();
+      resetZoom();
+      redrawAll();
+    }
+
+    function posFromEvent(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      return {
+        x: Math.max(0, Math.min(canvas.width, (clientX - rect.left) * (canvas.width / rect.width))),
+        y: Math.max(0, Math.min(canvas.height, (clientY - rect.top) * (canvas.height / rect.height))),
       };
-      im.src = preDragSnapshotUrl;
+    }
+    function clientPosFromEvent(e) {
+      return { x: e.touches ? e.touches[0].clientX : e.clientX, y: e.touches ? e.touches[0].clientY : e.clientY };
     }
 
     function onDown(e) {
       e.preventDefault();
       const p = posFromEvent(e);
-      if (tool === 'select' || tool === 'text') {
-        dragging = true; dragStart = p;
-        preDragSnapshotUrl = snapshotDataUrl();
-      } else if (tool === 'pen') {
-        dragging = true;
-        pushHistory();
-        setAnnotationStyle();
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        dragStart = p;
-      } else if (tool === 'arrow') {
-        dragging = true; dragStart = p;
-        preDragSnapshotUrl = snapshotDataUrl();
-      } else if (tool === 'rectangle' || tool === 'ellipse') {
-        dragging = true; dragStart = p;
-        preDragSnapshotUrl = snapshotDataUrl();
-      } else if (tool === 'clone') {
+      if (tool === 'pan') {
+        dragMode = 'pan';
+        panLast = clientPosFromEvent(e);
+        canvas.classList.add('capture-cursor-grabbing');
+        return;
+      }
+      if (tool === 'select') {
+        dragMode = 'crop-select'; dragStart = p; cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 };
+        showSelectionActions(false);
+        return;
+      }
+      if (tool === 'clone') {
         if (cloneBuffer) {
-          // Un clic (sans glisser) colle la zone copiée, centrée sur le clic. On
-          // peut recoller plusieurs fois de suite sans recopier.
           pushHistory();
-          ctx.drawImage(cloneBuffer.canvas, p.x - cloneBuffer.w / 2, p.y - cloneBuffer.h / 2);
+          baseCtx.drawImage(cloneBuffer.canvas, p.x - cloneBuffer.w / 2, p.y - cloneBuffer.h / 2);
+          redrawAll();
         } else {
-          dragging = true; dragStart = p;
-          preDragSnapshotUrl = snapshotDataUrl();
+          dragMode = 'clone-select'; dragStart = p; cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 };
+        }
+        return;
+      }
+      if (tool === 'pen') {
+        dragMode = 'pen';
+        pushHistory();
+        baseCtx.strokeStyle = colorInput.value; baseCtx.lineWidth = Number(sizeInput.value); baseCtx.lineCap = 'round'; baseCtx.lineJoin = 'round';
+        baseCtx.beginPath();
+        baseCtx.moveTo(p.x, p.y);
+        dragStart = p;
+        return;
+      }
+      if (tool === 'arrow' || tool === 'rectangle' || tool === 'ellipse' || tool === 'text') {
+        const hit = hitTestObject(p);
+        if (hit) {
+          selectObject(hit);
+          dragMode = 'move-object'; dragStart = p; moveOrigin = Object.assign({}, hit);
+          pushHistory();
+          canvas.classList.add('capture-cursor-move');
+          return;
+        }
+        selectObject(null);
+        dragMode = tool === 'text' ? 'text-box' : 'new-shape';
+        dragStart = p;
+        if (tool !== 'text') {
+          pendingObject = {
+            id: 0, type: tool, color: colorInput.value, size: Number(sizeInput.value), fontSize: Number(fontSizeInput.value),
+            x: p.x, y: p.y, w: 0, h: 0, x1: p.x, y1: p.y, x2: p.x, y2: p.y,
+          };
+        } else {
+          cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 }; // réutilise le rectangle pointillé pour délimiter la zone de texte
         }
       }
     }
     function onMove(e) {
-      if (!dragging) return;
+      if (!dragMode) return;
       e.preventDefault();
+      if (dragMode === 'pan') {
+        const p = clientPosFromEvent(e);
+        const wrap = canvas.closest('.capture-canvas-wrap');
+        if (wrap && panLast) { wrap.scrollLeft -= (p.x - panLast.x); wrap.scrollTop -= (p.y - panLast.y); }
+        panLast = p;
+        return;
+      }
       const p = posFromEvent(e);
-      if (tool === 'select' || tool === 'text') {
-        const rect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
-        restorePreDragPreview(() => drawDashedRect(rect));
-        dragStart._last = rect;
-      } else if (tool === 'clone' && !cloneBuffer) {
-        const rect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
-        restorePreDragPreview(() => drawDashedRect(rect));
-        dragStart._last = rect;
-      } else if (tool === 'pen') {
-        setAnnotationStyle();
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-      } else if (tool === 'arrow') {
-        restorePreDragPreview(() => {
-          setAnnotationStyle();
-          drawArrowOnCtx(dragStart.x, dragStart.y, p.x, p.y);
-        });
-      } else if (tool === 'rectangle') {
-        restorePreDragPreview(() => {
-          setAnnotationStyle();
-          ctx.strokeRect(Math.min(dragStart.x, p.x), Math.min(dragStart.y, p.y), Math.abs(p.x - dragStart.x), Math.abs(p.y - dragStart.y));
-        });
-      } else if (tool === 'ellipse') {
-        restorePreDragPreview(() => {
-          setAnnotationStyle();
-          const cx = (dragStart.x + p.x) / 2, cy = (dragStart.y + p.y) / 2;
-          const rx = Math.abs(p.x - dragStart.x) / 2, ry = Math.abs(p.y - dragStart.y) / 2;
-          ctx.beginPath();
-          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-          ctx.stroke();
-        });
+      if (dragMode === 'crop-select' || dragMode === 'clone-select') {
+        cropSelRect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
+        redrawAll();
+      } else if (dragMode === 'text-box') {
+        cropSelRect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
+        redrawAll();
+      } else if (dragMode === 'pen') {
+        baseCtx.lineTo(p.x, p.y);
+        baseCtx.stroke();
+        redrawAll();
+      } else if (dragMode === 'new-shape' && pendingObject) {
+        if (tool === 'arrow') { pendingObject.x2 = p.x; pendingObject.y2 = p.y; }
+        else { pendingObject.x = Math.min(dragStart.x, p.x); pendingObject.y = Math.min(dragStart.y, p.y); pendingObject.w = Math.abs(p.x - dragStart.x); pendingObject.h = Math.abs(p.y - dragStart.y); }
+        redrawAll();
+      } else if (dragMode === 'move-object' && selectedObjectId && moveOrigin) {
+        const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
+        const idx = objects.findIndex((o) => o.id === selectedObjectId);
+        if (idx !== -1) objects[idx] = shiftObject(moveOrigin, dx, dy);
+        redrawAll();
       }
     }
-    function onUp() {
-      if (!dragging) return;
-      dragging = false;
-      if (tool === 'select') {
-        const rect = (dragStart && dragStart._last) || null;
-        restorePreDragPreview(() => { if (rect) zoomToSelection(rect); });
-        preDragSnapshotUrl = null;
-      } else if (tool === 'clone') {
-        const rect = (dragStart && dragStart._last) || null;
-        restorePreDragPreview(() => {
-          if (rect && rect.w > 4 && rect.h > 4) {
-            const off = document.createElement('canvas');
-            off.width = Math.round(rect.w);
-            off.height = Math.round(rect.h);
-            off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
-            cloneBuffer = { canvas: off, w: off.width, h: off.height };
-            toast('Zone copiée — cliquez où la coller (autant de fois que voulu).', 4000);
-          }
-        });
-        preDragSnapshotUrl = null;
-      } else if (tool === 'text') {
-        const rect = (dragStart && dragStart._last) || null;
-        restorePreDragPreview(() => {
-          if (!rect || rect.w < 20 || rect.h < 16) { preDragSnapshotUrl = null; return; }
-          const txt = prompt('Texte de l\u2019annotation :');
-          preDragSnapshotUrl = null;
-          if (!txt) return;
+    function onUp(e) {
+      if (!dragMode) return;
+      const finishedMode = dragMode;
+      dragMode = null;
+      canvas.classList.remove('capture-cursor-grabbing', 'capture-cursor-move');
+      if (finishedMode === 'pan') { panLast = null; return; }
+      if (finishedMode === 'crop-select') {
+        if (cropSelRect && cropSelRect.w > 4 && cropSelRect.h > 4) showSelectionActions(true);
+        else { cropSelRect = null; showSelectionActions(false); }
+        redrawAll();
+      } else if (finishedMode === 'clone-select') {
+        const rect = cropSelRect;
+        cropSelRect = null;
+        if (rect && rect.w > 4 && rect.h > 4) {
+          const off = document.createElement('canvas');
+          off.width = Math.round(rect.w); off.height = Math.round(rect.h);
+          off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
+          cloneBuffer = { canvas: off, w: off.width, h: off.height };
+          toast('Zone copiée — cliquez où la coller (autant de fois que voulu).', 4000);
+        }
+        redrawAll();
+      } else if (finishedMode === 'text-box') {
+        const rect = cropSelRect;
+        cropSelRect = null;
+        if (!rect || rect.w < 20 || rect.h < 16) { redrawAll(); return; }
+        const txt = prompt('Texte de l\u2019annotation :');
+        if (!txt) { redrawAll(); return; }
+        pushHistory();
+        const fontSize = Number(fontSizeInput.value) || 24;
+        const newObj = { id: nextObjectId++, type: 'text', color: colorInput.value, size: Number(sizeInput.value), fontSize, x: rect.x, y: rect.y, w: rect.w, h: rect.h, text: txt };
+        objects.push(newObj);
+        selectObject(newObj);
+      } else if (finishedMode === 'new-shape' && pendingObject) {
+        const b = objectBBox(pendingObject);
+        const bigEnough = pendingObject.type === 'arrow' ? (Math.abs(pendingObject.x2 - pendingObject.x1) > 4 || Math.abs(pendingObject.y2 - pendingObject.y1) > 4) : (b.w > 4 && b.h > 4);
+        if (bigEnough) {
           pushHistory();
-          const fontSize = (fontSizeInput && Number(fontSizeInput.value)) || 24;
-          ctx.fillStyle = (colorInput && colorInput.value) || '#ff7a1a';
-          ctx.font = `bold ${fontSize}px Inter, sans-serif`;
-          ctx.textAlign = 'left';
-          wrapCanvasText(ctx, txt, rect.x + 4, rect.y + fontSize, rect.w - 8, fontSize * 1.2);
-        });
+          const newObj = Object.assign({}, pendingObject, { id: nextObjectId++ });
+          objects.push(newObj);
+          selectObject(newObj);
+        } else {
+          redrawAll();
+        }
+        pendingObject = null;
+      } else if (finishedMode === 'move-object') {
+        moveOrigin = null;
+        redrawAll();
       }
-      // Fleche/Rectangle/Ellipse : déjà tracés directement sur le canevas
-      // (aperçu en direct devenu définitif) -- on ajoute l'état d'avant à
-      // l'historique ici, une fois le glissement terminé avec une taille valide.
-      if ((tool === 'arrow' || tool === 'rectangle' || tool === 'ellipse') && preDragSnapshotUrl) {
-        history.push({ dataUrl: preDragSnapshotUrl, width: canvas.width, height: canvas.height });
-        if (history.length > MAX_HISTORY) history.shift();
-        preDragSnapshotUrl = null;
-      }
-      // pen : déjà tracé et déjà ajouté à l'historique dès le début du trait (onDown).
+    }
+
+    function onColorInput() {
+      const o = objects.find((x) => x.id === selectedObjectId);
+      if (o) { o.color = colorInput.value; redrawAll(); }
+    }
+    function onSizeInput() {
+      if (sizeValueEl) sizeValueEl.textContent = `${sizeInput.value} px`;
+      const o = objects.find((x) => x.id === selectedObjectId);
+      if (o && o.type !== 'text') { o.size = Number(sizeInput.value); redrawAll(); }
+    }
+    function onFontSizeInput() {
+      if (fontSizeValueEl) fontSizeValueEl.textContent = `${fontSizeInput.value} px`;
+      const o = objects.find((x) => x.id === selectedObjectId);
+      if (o && o.type === 'text') { o.fontSize = Number(fontSizeInput.value); redrawAll(); }
     }
 
     function onToolClick(e) {
       tool = e.currentTarget.dataset.captureTool;
       $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
-      if (tool === 'clone') cloneBuffer = null; // (re)cliquer sur l'outil = repartir sur une nouvelle zone à copier
+      if (tool === 'clone') cloneBuffer = null;
+      if (tool !== 'select' && tool !== 'clone') { cropSelRect = null; showSelectionActions(false); }
+      selectObject(null);
+      canvas.classList.toggle('capture-cursor-grab', tool === 'pan');
+      redrawAll();
     }
 
-    // ---- Barre de zoom : zoom purement visuel (largeur CSS du canevas),
-    // n'affecte jamais la résolution réelle de travail/export. Recalculée
-    // chaque fois que les dimensions du canevas changent (zoom sur
-    // sélection, réinitialisation, annulation) puisque le rapport largeur/
-    // hauteur peut changer.
     const zoomRange = $('#captureZoomRange');
     const zoomValueEl = $('#captureZoomValue');
     let baseDisplayWidth = null;
     function recomputeBaseDisplayWidth() {
-      canvas.style.width = '';
-      canvas.style.height = '';
-      canvas.style.maxWidth = '';
-      canvas.style.maxHeight = '';
+      canvas.style.width = ''; canvas.style.height = ''; canvas.style.maxWidth = ''; canvas.style.maxHeight = '';
       const rect = canvas.getBoundingClientRect();
       baseDisplayWidth = rect.width || canvas.width;
     }
@@ -4010,22 +4171,14 @@ function showCaptureEditor(file) {
       const pct = Number(zoomRange.value);
       if (zoomValueEl) zoomValueEl.textContent = `${pct} %`;
       if (pct === 100) {
-        canvas.style.width = '';
-        canvas.style.height = '';
-        canvas.style.maxWidth = '';
-        canvas.style.maxHeight = '';
+        canvas.style.width = ''; canvas.style.height = ''; canvas.style.maxWidth = ''; canvas.style.maxHeight = '';
       } else {
-        canvas.style.maxWidth = 'none';
-        canvas.style.maxHeight = 'none';
+        canvas.style.maxWidth = 'none'; canvas.style.maxHeight = 'none';
         canvas.style.width = `${Math.round(baseDisplayWidth * pct / 100)}px`;
         canvas.style.height = 'auto';
       }
     }
-    function resetZoom() {
-      zoomRange.value = 100;
-      baseDisplayWidth = null;
-      applyZoom();
-    }
+    function resetZoom() { zoomRange.value = 100; baseDisplayWidth = null; applyZoom(); }
     function onZoomInput() { applyZoom(); }
     function onZoomIn() { zoomRange.value = Math.min(300, Number(zoomRange.value) + 25); applyZoom(); }
     function onZoomOut() { zoomRange.value = Math.max(25, Number(zoomRange.value) - 25); applyZoom(); }
@@ -4033,15 +4186,28 @@ function showCaptureEditor(file) {
 
     function onReset() {
       history = [];
-      preDragSnapshotUrl = null;
+      objects = [];
+      selectedObjectId = null;
+      cropSelRect = null;
       cloneBuffer = null;
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      showSelectionActions(false);
+      updatePropsPanelForSelection();
+      baseCanvas.width = img.naturalWidth; baseCanvas.height = img.naturalHeight;
+      baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+      baseCtx.drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
+      canvas.width = baseCanvas.width; canvas.height = baseCanvas.height;
+      redrawAll();
       resetZoom();
     }
-    function onUndo() { undo(resetZoom); }
+    function onUndo() {
+      undo(() => { showSelectionActions(false); cropSelRect = null; updatePropsPanelForSelection(); resetZoom(); });
+    }
+    function onKeydown(e) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObjectId && document.activeElement === document.body) {
+        e.preventDefault();
+        deleteSelectedObject();
+      }
+    }
     function cleanup() {
       canvas.removeEventListener('mousedown', onDown);
       canvas.removeEventListener('mousemove', onMove);
@@ -4054,21 +4220,27 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').removeEventListener('click', onUndo);
       $('#btnCaptureCancel').removeEventListener('click', onCancel);
       $('#btnCaptureUse').removeEventListener('click', onUse);
+      $('#btnCaptureCopySelection').removeEventListener('click', copySelection);
+      $('#btnCaptureCropSelection').removeEventListener('click', cropToSelection);
+      $('#btnCaptureClearSelection').removeEventListener('click', clearCropSelection);
+      $('#btnCaptureDeleteObject').removeEventListener('click', deleteSelectedObject);
       zoomRange.removeEventListener('input', onZoomInput);
       $('#btnCaptureZoomIn').removeEventListener('click', onZoomIn);
       $('#btnCaptureZoomOut').removeEventListener('click', onZoomOut);
       $('#btnCaptureZoomReset').removeEventListener('click', onZoomReset);
+      if (colorInput) colorInput.removeEventListener('input', onColorInput);
       if (sizeInput) sizeInput.removeEventListener('input', onSizeInput);
       if (fontSizeInput) fontSizeInput.removeEventListener('input', onFontSizeInput);
-      canvas.style.width = '';
-      canvas.style.height = '';
-      canvas.style.maxWidth = '';
-      canvas.style.maxHeight = '';
+      document.removeEventListener('keydown', onKeydown);
+      canvas.classList.remove('capture-cursor-grab', 'capture-cursor-grabbing', 'capture-cursor-move');
+      canvas.style.width = ''; canvas.style.height = ''; canvas.style.maxWidth = ''; canvas.style.maxHeight = '';
+      showSelectionActions(false);
       overlay.classList.add('hidden');
       URL.revokeObjectURL(objectUrl);
     }
     function onCancel() { cleanup(); resolve(null); }
     function onUse() {
+      redrawAll();
       canvas.toBlob((blob) => {
         cleanup();
         resolve(blob ? new File([blob], `capture-annotee-${Date.now()}.png`, { type: 'image/png' }) : null);
@@ -4076,13 +4248,14 @@ function showCaptureEditor(file) {
     }
 
     img.onload = () => {
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      baseCanvas.width = img.naturalWidth; baseCanvas.height = img.naturalHeight;
+      baseCtx.drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
+      canvas.width = baseCanvas.width; canvas.height = baseCanvas.height;
+      objects = []; selectedObjectId = null; cropSelRect = null; cloneBuffer = null; history = [];
       tool = 'select';
-      history = [];
       $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      updatePropsPanelForSelection();
+      redrawAll();
       canvas.addEventListener('mousedown', onDown);
       canvas.addEventListener('mousemove', onMove);
       canvas.addEventListener('mouseup', onUp);
@@ -4094,13 +4267,18 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').addEventListener('click', onUndo);
       $('#btnCaptureCancel').addEventListener('click', onCancel);
       $('#btnCaptureUse').addEventListener('click', onUse);
+      $('#btnCaptureCopySelection').addEventListener('click', copySelection);
+      $('#btnCaptureCropSelection').addEventListener('click', cropToSelection);
+      $('#btnCaptureClearSelection').addEventListener('click', clearCropSelection);
+      $('#btnCaptureDeleteObject').addEventListener('click', deleteSelectedObject);
       zoomRange.addEventListener('input', onZoomInput);
       $('#btnCaptureZoomIn').addEventListener('click', onZoomIn);
       $('#btnCaptureZoomOut').addEventListener('click', onZoomOut);
       $('#btnCaptureZoomReset').addEventListener('click', onZoomReset);
+      if (colorInput) { colorInput.addEventListener('input', onColorInput); }
       if (sizeInput) { sizeInput.addEventListener('input', onSizeInput); onSizeInput(); }
       if (fontSizeInput) { fontSizeInput.addEventListener('input', onFontSizeInput); onFontSizeInput(); }
-      cloneBuffer = null;
+      document.addEventListener('keydown', onKeydown);
       overlay.classList.remove('hidden');
       resetZoom();
     };

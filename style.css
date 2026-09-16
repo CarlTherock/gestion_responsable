@@ -424,6 +424,7 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 .capture-editor-layout { display: flex; gap: var(--space-5); flex: 1 1 auto; min-height: 0; }
 .capture-main-column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
 .capture-props-panel { width: 220px; flex-shrink: 0; border-left: 1px solid var(--color-border); padding-left: var(--space-4); overflow-y: auto; }
+.capture-selection-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); flex-shrink: 0; }
 .capture-props-panel h4 { margin: 0 0 var(--space-4); font-size: 12px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .capture-prop-row { margin-bottom: var(--space-4); }
 .capture-prop-row label { display: block; font-size: var(--text-sm); color: var(--color-text-muted); margin-bottom: var(--space-2); }
@@ -444,6 +445,9 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   align-items: safe center; justify-content: safe center;
 }
 #captureEditorCanvas { max-width: 100%; max-height: 100%; display: block; cursor: crosshair; touch-action: none; }
+#captureEditorCanvas.capture-cursor-grab { cursor: grab; }
+#captureEditorCanvas.capture-cursor-grabbing { cursor: grabbing; }
+#captureEditorCanvas.capture-cursor-move { cursor: move; }
 .capture-zoom-bar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); flex-shrink: 0; }
 .capture-zoom-label { font-size: var(--text-sm); color: var(--color-text-muted); margin-right: var(--space-1); }
 .capture-zoom-btn { padding: 4px 12px; font-size: 18px; line-height: 1; }
