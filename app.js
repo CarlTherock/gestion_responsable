@@ -3776,6 +3776,7 @@ function showCaptureEditor(file) {
     let moveOrigin = null; // géométrie d'origine de l'objet déplacé (pour calculer le delta)
     let cropSelRect = null; // sélection de zone persistante (outil Sélectionner), jusqu'à action explicite
     let cloneBuffer = null; // { canvas, w, h } : zone copiée en attente d'être collée (outil Copier/coller)
+    let nextStampNumber = 1; // compteur du Tampon numéroté (1, 2, 3... n'est jamais réutilisé après suppression)
     let panLast = null; // dernière position (coordonnées écran) pour le calcul du déplacement
 
     const colorInput = $('#captureColorInput');
@@ -3838,10 +3839,30 @@ function showCaptureEditor(file) {
 
     // ---- Objets : géométrie normalisée (x,y = coin haut-gauche, w,h >= 0) ----
     function objectBBox(o) {
-      if (o.type === 'arrow') {
+      if (o.type === 'arrow' || o.type === 'line') {
         return { x: Math.min(o.x1, o.x2), y: Math.min(o.y1, o.y2), w: Math.abs(o.x2 - o.x1), h: Math.abs(o.y2 - o.y1) };
       }
+      if (o.type === 'badge') {
+        return { x: o.x - o.size, y: o.y - o.size, w: o.size * 2, h: o.size * 2 };
+      }
       return { x: o.x, y: o.y, w: o.w, h: o.h };
+    }
+    // Pixelise une zone du canevas source (technique standard : réduire puis
+    // agrandir sans lissage) -- résultat baké une fois pour toutes à la
+    // création, ne se remet jamais à jour même si l'objet est déplacé.
+    function pixelateRegion(sourceCanvas, rect) {
+      const w = Math.max(1, Math.round(rect.w)), h = Math.max(1, Math.round(rect.h));
+      const blockSize = Math.max(4, Math.round(Math.min(w, h) / 12));
+      const smallW = Math.max(1, Math.round(w / blockSize)), smallH = Math.max(1, Math.round(h / blockSize));
+      const small = document.createElement('canvas');
+      small.width = smallW; small.height = smallH;
+      small.getContext('2d').drawImage(sourceCanvas, rect.x, rect.y, rect.w, rect.h, 0, 0, smallW, smallH);
+      const out = document.createElement('canvas');
+      out.width = w; out.height = h;
+      const outCtx = out.getContext('2d');
+      outCtx.imageSmoothingEnabled = false;
+      outCtx.drawImage(small, 0, 0, smallW, smallH, 0, 0, w, h);
+      return out;
     }
     function drawObjectShape(c, o) {
       c.strokeStyle = o.color; c.fillStyle = o.color; c.lineWidth = o.size; c.lineCap = 'round'; c.lineJoin = 'round';
@@ -3853,6 +3874,43 @@ function showCaptureEditor(file) {
         c.stroke();
       } else if (o.type === 'arrow') {
         drawArrowOnCtx(c, o.x1, o.y1, o.x2, o.y2);
+      } else if (o.type === 'line') {
+        c.beginPath(); c.moveTo(o.x1, o.y1); c.lineTo(o.x2, o.y2); c.stroke();
+      } else if (o.type === 'highlight') {
+        c.save();
+        c.globalAlpha = 0.35;
+        c.fillRect(o.x, o.y, o.w, o.h);
+        c.restore();
+      } else if (o.type === 'blur') {
+        c.drawImage(o.canvasData, o.x, o.y, o.w, o.h);
+      } else if (o.type === 'badge') {
+        c.beginPath();
+        c.arc(o.x, o.y, o.size, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#ffffff';
+        c.font = `bold ${Math.round(o.size * 1.05)}px Inter, sans-serif`;
+        c.textAlign = 'center';
+        const prevBaseline = c.textBaseline;
+        c.textBaseline = 'middle';
+        c.fillText(String(o.number), o.x, o.y + 1);
+        c.textBaseline = prevBaseline;
+      } else if (o.type === 'callout') {
+        c.save();
+        c.fillStyle = '#ffffff';
+        c.beginPath();
+        try { c.roundRect(o.x, o.y, o.w, o.h, 8); } catch (e) { c.rect(o.x, o.y, o.w, o.h); }
+        c.fill(); c.stroke();
+        c.beginPath();
+        c.moveTo(o.x + 22, o.y + o.h);
+        c.lineTo(o.x + 10, o.y + o.h + 16);
+        c.lineTo(o.x + 36, o.y + o.h);
+        c.closePath();
+        c.fillStyle = '#ffffff'; c.fill(); c.stroke();
+        c.fillStyle = o.color;
+        c.font = `600 ${o.fontSize}px Inter, sans-serif`;
+        c.textAlign = 'left';
+        wrapCanvasText(c, o.text, o.x + 8, o.y + o.fontSize + 4, Math.max(20, o.w - 16), o.fontSize * 1.2);
+        c.restore();
       } else if (o.type === 'text') {
         c.font = `bold ${o.fontSize}px Inter, sans-serif`;
         c.textAlign = 'left';
@@ -3876,8 +3934,10 @@ function showCaptureEditor(file) {
         const o = objects[i];
         const b = objectBBox(o);
         const pad = Math.max(8, o.size);
-        if (o.type === 'arrow') {
+        if (o.type === 'arrow' || o.type === 'line') {
           if (distToSegment(p, { x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 }) <= pad) return o;
+        } else if (o.type === 'badge') {
+          if (Math.hypot(p.x - o.x, p.y - o.y) <= o.size + 4) return o;
         } else if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) {
           return o;
         }
@@ -3892,7 +3952,7 @@ function showCaptureEditor(file) {
       return Math.hypot(p.x - (a.x + t * (b.x - a.x)), p.y - (a.y + t * (b.y - a.y)));
     }
     function shiftObject(o, dx, dy) {
-      if (o.type === 'arrow') return Object.assign({}, o, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
+      if (o.type === 'arrow' || o.type === 'line') return Object.assign({}, o, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
       return Object.assign({}, o, { x: o.x + dx, y: o.y + dy });
     }
     function objectIntersects(o, rect) {
@@ -3918,7 +3978,10 @@ function showCaptureEditor(file) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(baseCanvas, 0, 0);
       objects.forEach((o) => drawObject(o, o.id === selectedObjectId && dragMode !== 'move-object'));
-      if (dragMode === 'new-shape' && pendingObject) drawObject(pendingObject, false);
+      if (dragMode === 'new-shape' && pendingObject) {
+        if (pendingObject.type === 'blur') drawDashedRect(objectBBox(pendingObject));
+        else drawObject(pendingObject, false);
+      }
       if (dragMode === 'move-object' && selectedObjectId) {
         const o = objects.find((x) => x.id === selectedObjectId);
         if (o) drawObject(o, true);
@@ -3926,21 +3989,31 @@ function showCaptureEditor(file) {
       if (cropSelRect) drawDashedRect(cropSelRect);
     }
 
+    const sizeLabelEl = $('#captureSizeLabel');
     function updatePropsPanelForSelection() {
       const o = objects.find((x) => x.id === selectedObjectId);
       if (o) {
         objectSelectedRow.classList.remove('hidden');
         propsTitle.textContent = 'Propriétés de l\u2019objet sélectionné';
         colorInput.value = o.color;
+        if (o.type === 'badge') {
+          sizeInput.min = 10; sizeInput.max = 50;
+          if (sizeLabelEl) sizeLabelEl.textContent = 'Rayon du tampon';
+        } else {
+          sizeInput.min = 1; sizeInput.max = 20;
+          if (sizeLabelEl) sizeLabelEl.textContent = 'Épaisseur du trait';
+        }
         sizeInput.value = o.size;
         onSizeInput();
-        if (o.type === 'text') { fontSizeInput.value = o.fontSize; onFontSizeInput(); }
+        if (o.type === 'text' || o.type === 'callout') { fontSizeInput.value = o.fontSize; onFontSizeInput(); }
         selectedObjectBaseline = Object.assign({}, o);
         if (scaleInput) scaleInput.value = 100;
         if (scaleValueEl) scaleValueEl.textContent = '100 %';
       } else {
         objectSelectedRow.classList.add('hidden');
         propsTitle.textContent = 'Propriétés de l\u2019outil';
+        sizeInput.min = 1; sizeInput.max = 20;
+        if (sizeLabelEl) sizeLabelEl.textContent = 'Épaisseur du trait';
         selectedObjectBaseline = null;
       }
     }
@@ -3953,10 +4026,12 @@ function showCaptureEditor(file) {
       if (!o || !selectedObjectBaseline) return;
       const pct = Number(scaleInput.value) / 100;
       const b = selectedObjectBaseline;
-      if (o.type === 'arrow') {
+      if (o.type === 'arrow' || o.type === 'line') {
         const midx = (b.x1 + b.x2) / 2, midy = (b.y1 + b.y2) / 2;
         o.x1 = midx + (b.x1 - midx) * pct; o.y1 = midy + (b.y1 - midy) * pct;
         o.x2 = midx + (b.x2 - midx) * pct; o.y2 = midy + (b.y2 - midy) * pct;
+      } else if (o.type === 'badge') {
+        o.size = Math.max(6, b.size * pct);
       } else {
         const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
         const newW = b.w * pct, newH = b.h * pct;
@@ -4100,7 +4175,25 @@ function showCaptureEditor(file) {
         dragStart = p;
         return;
       }
-      if (tool === 'arrow' || tool === 'rectangle' || tool === 'ellipse' || tool === 'text') {
+      if (tool === 'badge') {
+        const hit = hitTestObject(p);
+        if (hit) {
+          selectObject(hit);
+          dragMode = 'move-object'; dragStart = p; moveOrigin = Object.assign({}, hit);
+          pushHistory();
+          canvas.classList.add('capture-cursor-move');
+          return;
+        }
+        pushHistory();
+        const newBadge = {
+          id: nextObjectId++, type: 'badge', color: colorInput.value, size: 18,
+          x: p.x, y: p.y, number: nextStampNumber++,
+        };
+        objects.push(newBadge);
+        selectObject(newBadge);
+        return;
+      }
+      if (tool === 'arrow' || tool === 'rectangle' || tool === 'ellipse' || tool === 'text' || tool === 'line' || tool === 'highlight' || tool === 'blur' || tool === 'callout') {
         const hit = hitTestObject(p);
         if (hit) {
           selectObject(hit);
@@ -4110,15 +4203,15 @@ function showCaptureEditor(file) {
           return;
         }
         selectObject(null);
-        dragMode = tool === 'text' ? 'text-box' : 'new-shape';
+        dragMode = (tool === 'text' || tool === 'callout') ? 'text-box' : 'new-shape';
         dragStart = p;
-        if (tool !== 'text') {
+        if (dragMode === 'new-shape') {
           pendingObject = {
             id: 0, type: tool, color: colorInput.value, size: Number(sizeInput.value), fontSize: Number(fontSizeInput.value),
             x: p.x, y: p.y, w: 0, h: 0, x1: p.x, y1: p.y, x2: p.x, y2: p.y,
           };
         } else {
-          cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 }; // réutilise le rectangle pointillé pour délimiter la zone de texte
+          cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 }; // réutilise le rectangle pointillé pour délimiter la zone de texte/légende
         }
       }
     }
@@ -4144,7 +4237,7 @@ function showCaptureEditor(file) {
         baseCtx.stroke();
         redrawAll();
       } else if (dragMode === 'new-shape' && pendingObject) {
-        if (tool === 'arrow') { pendingObject.x2 = p.x; pendingObject.y2 = p.y; }
+        if (tool === 'arrow' || tool === 'line') { pendingObject.x2 = p.x; pendingObject.y2 = p.y; }
         else { pendingObject.x = Math.min(dragStart.x, p.x); pendingObject.y = Math.min(dragStart.y, p.y); pendingObject.w = Math.abs(p.x - dragStart.x); pendingObject.h = Math.abs(p.y - dragStart.y); }
         redrawAll();
       } else if (dragMode === 'move-object' && selectedObjectId && moveOrigin) {
@@ -4159,7 +4252,7 @@ function showCaptureEditor(file) {
     // dessus pour le sélectionner/glisser -- même sans être en train de glisser.
     function onHover(e) {
       if (dragMode) return; // pendant un glissement actif, le curseur est déjà géré explicitement
-      if (tool !== 'arrow' && tool !== 'rectangle' && tool !== 'ellipse' && tool !== 'text') {
+      if (tool !== 'arrow' && tool !== 'rectangle' && tool !== 'ellipse' && tool !== 'text' && tool !== 'line' && tool !== 'highlight' && tool !== 'blur' && tool !== 'callout' && tool !== 'badge') {
         canvas.classList.remove('capture-cursor-move');
         return;
       }
@@ -4184,17 +4277,26 @@ function showCaptureEditor(file) {
         if (!txt) { redrawAll(); return; }
         pushHistory();
         const fontSize = Number(fontSizeInput.value) || 24;
-        const newObj = { id: nextObjectId++, type: 'text', color: colorInput.value, size: Number(sizeInput.value), fontSize, x: rect.x, y: rect.y, w: rect.w, h: rect.h, text: txt };
+        const objType = tool === 'callout' ? 'callout' : 'text';
+        const newObj = { id: nextObjectId++, type: objType, color: colorInput.value, size: Number(sizeInput.value), fontSize, x: rect.x, y: rect.y, w: rect.w, h: rect.h, text: txt };
         objects.push(newObj);
         selectObject(newObj);
       } else if (finishedMode === 'new-shape' && pendingObject) {
         const b = objectBBox(pendingObject);
-        const bigEnough = pendingObject.type === 'arrow' ? (Math.abs(pendingObject.x2 - pendingObject.x1) > 4 || Math.abs(pendingObject.y2 - pendingObject.y1) > 4) : (b.w > 4 && b.h > 4);
+        const bigEnough = (pendingObject.type === 'arrow' || pendingObject.type === 'line') ? (Math.abs(pendingObject.x2 - pendingObject.x1) > 4 || Math.abs(pendingObject.y2 - pendingObject.y1) > 4) : (b.w > 4 && b.h > 4);
         if (bigEnough) {
           pushHistory();
-          const newObj = Object.assign({}, pendingObject, { id: nextObjectId++ });
-          objects.push(newObj);
-          selectObject(newObj);
+          if (pendingObject.type === 'blur') {
+            const rect = objectBBox(pendingObject);
+            const pixelated = pixelateRegion(canvas, rect);
+            const newObj = { id: nextObjectId++, type: 'blur', color: pendingObject.color, size: pendingObject.size, x: rect.x, y: rect.y, w: rect.w, h: rect.h, canvasData: pixelated };
+            objects.push(newObj);
+            selectObject(newObj);
+          } else {
+            const newObj = Object.assign({}, pendingObject, { id: nextObjectId++ });
+            objects.push(newObj);
+            selectObject(newObj);
+          }
         } else {
           redrawAll();
         }
@@ -4207,17 +4309,17 @@ function showCaptureEditor(file) {
 
     function onColorInput() {
       const o = objects.find((x) => x.id === selectedObjectId);
-      if (o && o.type !== 'stamp') { o.color = colorInput.value; redrawAll(); }
+      if (o && o.type !== 'stamp' && o.type !== 'blur') { o.color = colorInput.value; redrawAll(); }
     }
     function onSizeInput() {
       if (sizeValueEl) sizeValueEl.textContent = `${sizeInput.value} px`;
       const o = objects.find((x) => x.id === selectedObjectId);
-      if (o && o.type !== 'text' && o.type !== 'stamp') { o.size = Number(sizeInput.value); redrawAll(); }
+      if (o && o.type !== 'text' && o.type !== 'stamp' && o.type !== 'blur' && o.type !== 'callout') { o.size = Number(sizeInput.value); redrawAll(); }
     }
     function onFontSizeInput() {
       if (fontSizeValueEl) fontSizeValueEl.textContent = `${fontSizeInput.value} px`;
       const o = objects.find((x) => x.id === selectedObjectId);
-      if (o && o.type === 'text') { o.fontSize = Number(fontSizeInput.value); redrawAll(); }
+      if (o && (o.type === 'text' || o.type === 'callout')) { o.fontSize = Number(fontSizeInput.value); redrawAll(); }
     }
 
     function onToolClick(e) {
@@ -4262,6 +4364,7 @@ function showCaptureEditor(file) {
       objects = [];
       selectedObjectId = null;
       cropSelRect = null;
+      nextStampNumber = 1;
       resetCopyPasteButtons();
       showSelectionActions(false);
       updatePropsPanelForSelection();
@@ -4332,7 +4435,7 @@ function showCaptureEditor(file) {
       baseCanvas.width = img.naturalWidth; baseCanvas.height = img.naturalHeight;
       baseCtx.drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
       canvas.width = baseCanvas.width; canvas.height = baseCanvas.height;
-      objects = []; selectedObjectId = null; cropSelRect = null; history = [];
+      objects = []; selectedObjectId = null; cropSelRect = null; history = []; nextStampNumber = 1;
       resetCopyPasteButtons();
       tool = 'select';
       $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
