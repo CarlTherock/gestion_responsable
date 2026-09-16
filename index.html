@@ -506,7 +506,7 @@
       <div class="modal-box capture-modal-box">
         <h3>Retoucher la capture</h3>
         <div id="captureEditorBody">
-          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone, puis Copier, Coller (décalée, prête à glisser/redimensionner) ou Rogner. Pour le texte, glissez un rectangle. Recliquez sur une flèche/rectangle/ellipse/texte/zone collée déjà tracé pour le sélectionner, le déplacer, le redimensionner ou l'aplatir dans l'image. « Déplacer » : glissez pour naviguer dans l'image quand elle est zoomée.</p>
+          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone, puis Copier, Coller (décalée, prête à glisser/redimensionner) ou Rogner. Pour Texte/Légende, glissez un rectangle. Tampon numéroté : cliquez pour placer (1, 2, 3…). Recliquez sur un objet déjà tracé pour le sélectionner, le déplacer, le redimensionner ou l'aplatir dans l'image. « Déplacer » : glissez pour naviguer dans l'image quand elle est zoomée.</p>
           <div class="capture-editor-layout">
             <div class="capture-main-column">
               <div class="capture-toolbar">
@@ -515,6 +515,11 @@
                 <button type="button" class="btn btn-outline" data-capture-tool="arrow">Flèche</button>
                 <button type="button" class="btn btn-outline" data-capture-tool="rectangle">Rectangle</button>
                 <button type="button" class="btn btn-outline" data-capture-tool="ellipse">Ellipse</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="line">Ligne</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="highlight">Surligneur</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="blur">Flouter</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="badge">Tampon numéroté</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="callout">Légende</button>
                 <button type="button" class="btn btn-outline" data-capture-tool="text">Texte</button>
                 <button type="button" class="btn btn-outline" data-capture-tool="pan"><span class="icon-inline" data-icon="hand" style="margin-right:4px;"></span>Déplacer</button>
                 <button type="button" class="btn btn-outline" id="btnCaptureUndo">Annuler une étape</button>
@@ -546,7 +551,7 @@
                 <input type="color" id="captureColorInput" value="#ff7a1a">
               </div>
               <div class="capture-prop-row">
-                <label for="captureSizeInput">Épaisseur du trait</label>
+                <label for="captureSizeInput" id="captureSizeLabel">Épaisseur du trait</label>
                 <input type="range" id="captureSizeInput" min="1" max="20" value="3">
                 <span class="capture-prop-value" id="captureSizeValue">3 px</span>
               </div>
