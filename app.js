@@ -3757,6 +3757,16 @@ function showCaptureEditor(file) {
     let dragging = false;
     let dragStart = null;
     let preDragSnapshotUrl = null; // aperçu temporaire (sélection/texte en cours), jamais dans l'historique
+    let cloneBuffer = null; // { canvas, w, h } : zone copiée en attente d'être collée (outil Copier/coller)
+    // Contrôles de couleur/épaisseur/taille de texte (panneau de droite,
+    // même esprit que le panneau "Propriétés de l'outil" de Snagit).
+    const colorInput = $('#captureColorInput');
+    const sizeInput = $('#captureSizeInput');
+    const sizeValueEl = $('#captureSizeValue');
+    const fontSizeInput = $('#captureFontSizeInput');
+    const fontSizeValueEl = $('#captureFontSizeValue');
+    function onSizeInput() { if (sizeValueEl) sizeValueEl.textContent = `${sizeInput.value} px`; }
+    function onFontSizeInput() { if (fontSizeValueEl) fontSizeValueEl.textContent = `${fontSizeInput.value} px`; }
     // Historique d'annulation : un instantané complet du canevas avant CHAQUE
     // action (trait, flèche, texte, zoom sur sélection) -- permet de revenir
     // en arrière une étape à la fois, y compris un zoom.
@@ -3800,8 +3810,10 @@ function showCaptureEditor(file) {
       ctx.closePath(); ctx.fill();
     }
     function setAnnotationStyle() {
-      ctx.strokeStyle = '#ff7a1a'; ctx.fillStyle = '#ff7a1a';
-      ctx.lineWidth = Math.max(3, canvas.width / 300); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const color = (colorInput && colorInput.value) || '#ff7a1a';
+      const size = (sizeInput && Number(sizeInput.value)) || 3;
+      ctx.strokeStyle = color; ctx.fillStyle = color;
+      ctx.lineWidth = size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     }
 
     function posFromEvent(e) {
@@ -3875,6 +3887,16 @@ function showCaptureEditor(file) {
       } else if (tool === 'rectangle' || tool === 'ellipse') {
         dragging = true; dragStart = p;
         preDragSnapshotUrl = snapshotDataUrl();
+      } else if (tool === 'clone') {
+        if (cloneBuffer) {
+          // Un clic (sans glisser) colle la zone copiée, centrée sur le clic. On
+          // peut recoller plusieurs fois de suite sans recopier.
+          pushHistory();
+          ctx.drawImage(cloneBuffer.canvas, p.x - cloneBuffer.w / 2, p.y - cloneBuffer.h / 2);
+        } else {
+          dragging = true; dragStart = p;
+          preDragSnapshotUrl = snapshotDataUrl();
+        }
       }
     }
     function onMove(e) {
@@ -3882,6 +3904,10 @@ function showCaptureEditor(file) {
       e.preventDefault();
       const p = posFromEvent(e);
       if (tool === 'select' || tool === 'text') {
+        const rect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
+        restorePreDragPreview(() => drawDashedRect(rect));
+        dragStart._last = rect;
+      } else if (tool === 'clone' && !cloneBuffer) {
         const rect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
         restorePreDragPreview(() => drawDashedRect(rect));
         dragStart._last = rect;
@@ -3917,6 +3943,19 @@ function showCaptureEditor(file) {
         const rect = (dragStart && dragStart._last) || null;
         restorePreDragPreview(() => { if (rect) zoomToSelection(rect); });
         preDragSnapshotUrl = null;
+      } else if (tool === 'clone') {
+        const rect = (dragStart && dragStart._last) || null;
+        restorePreDragPreview(() => {
+          if (rect && rect.w > 4 && rect.h > 4) {
+            const off = document.createElement('canvas');
+            off.width = Math.round(rect.w);
+            off.height = Math.round(rect.h);
+            off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
+            cloneBuffer = { canvas: off, w: off.width, h: off.height };
+            toast('Zone copiée — cliquez où la coller (autant de fois que voulu).', 4000);
+          }
+        });
+        preDragSnapshotUrl = null;
       } else if (tool === 'text') {
         const rect = (dragStart && dragStart._last) || null;
         restorePreDragPreview(() => {
@@ -3925,10 +3964,11 @@ function showCaptureEditor(file) {
           preDragSnapshotUrl = null;
           if (!txt) return;
           pushHistory();
-          setAnnotationStyle();
-          ctx.font = `bold ${Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30))}px Inter, sans-serif`;
+          const fontSize = (fontSizeInput && Number(fontSizeInput.value)) || 24;
+          ctx.fillStyle = (colorInput && colorInput.value) || '#ff7a1a';
+          ctx.font = `bold ${fontSize}px Inter, sans-serif`;
           ctx.textAlign = 'left';
-          wrapCanvasText(ctx, txt, rect.x + 4, rect.y + Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30)), rect.w - 8, Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30)) * 1.2);
+          wrapCanvasText(ctx, txt, rect.x + 4, rect.y + fontSize, rect.w - 8, fontSize * 1.2);
         });
       }
       // Fleche/Rectangle/Ellipse : déjà tracés directement sur le canevas
@@ -3946,6 +3986,7 @@ function showCaptureEditor(file) {
       tool = e.currentTarget.dataset.captureTool;
       $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
+      if (tool === 'clone') cloneBuffer = null; // (re)cliquer sur l'outil = repartir sur une nouvelle zone à copier
     }
 
     // ---- Barre de zoom : zoom purement visuel (largeur CSS du canevas),
@@ -3959,6 +4000,8 @@ function showCaptureEditor(file) {
     function recomputeBaseDisplayWidth() {
       canvas.style.width = '';
       canvas.style.height = '';
+      canvas.style.maxWidth = '';
+      canvas.style.maxHeight = '';
       const rect = canvas.getBoundingClientRect();
       baseDisplayWidth = rect.width || canvas.width;
     }
@@ -3969,6 +4012,8 @@ function showCaptureEditor(file) {
       if (pct === 100) {
         canvas.style.width = '';
         canvas.style.height = '';
+        canvas.style.maxWidth = '';
+        canvas.style.maxHeight = '';
       } else {
         canvas.style.maxWidth = 'none';
         canvas.style.maxHeight = 'none';
@@ -3989,6 +4034,7 @@ function showCaptureEditor(file) {
     function onReset() {
       history = [];
       preDragSnapshotUrl = null;
+      cloneBuffer = null;
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -4012,8 +4058,12 @@ function showCaptureEditor(file) {
       $('#btnCaptureZoomIn').removeEventListener('click', onZoomIn);
       $('#btnCaptureZoomOut').removeEventListener('click', onZoomOut);
       $('#btnCaptureZoomReset').removeEventListener('click', onZoomReset);
+      if (sizeInput) sizeInput.removeEventListener('input', onSizeInput);
+      if (fontSizeInput) fontSizeInput.removeEventListener('input', onFontSizeInput);
       canvas.style.width = '';
       canvas.style.height = '';
+      canvas.style.maxWidth = '';
+      canvas.style.maxHeight = '';
       overlay.classList.add('hidden');
       URL.revokeObjectURL(objectUrl);
     }
@@ -4048,6 +4098,9 @@ function showCaptureEditor(file) {
       $('#btnCaptureZoomIn').addEventListener('click', onZoomIn);
       $('#btnCaptureZoomOut').addEventListener('click', onZoomOut);
       $('#btnCaptureZoomReset').addEventListener('click', onZoomReset);
+      if (sizeInput) { sizeInput.addEventListener('input', onSizeInput); onSizeInput(); }
+      if (fontSizeInput) { fontSizeInput.addEventListener('input', onFontSizeInput); onFontSizeInput(); }
+      cloneBuffer = null;
       overlay.classList.remove('hidden');
       resetZoom();
     };

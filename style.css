@@ -421,11 +421,27 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 #captureEditorOverlay { padding: 0; }
 .capture-modal-box { max-width: 100vw; width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
 #captureEditorBody { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; padding: 0 var(--space-6) var(--space-4); }
+.capture-editor-layout { display: flex; gap: var(--space-5); flex: 1 1 auto; min-height: 0; }
+.capture-main-column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.capture-props-panel { width: 220px; flex-shrink: 0; border-left: 1px solid var(--color-border); padding-left: var(--space-4); overflow-y: auto; }
+.capture-props-panel h4 { margin: 0 0 var(--space-4); font-size: 12px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.capture-prop-row { margin-bottom: var(--space-4); }
+.capture-prop-row label { display: block; font-size: var(--text-sm); color: var(--color-text-muted); margin-bottom: var(--space-2); }
+.capture-prop-row input[type="range"] { width: 100%; }
+.capture-prop-row input[type="color"] { width: 100%; height: 38px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: none; cursor: pointer; padding: 2px; }
+.capture-prop-value { display: block; font-size: 12px; color: var(--color-text-muted); margin-top: var(--space-1); text-align: right; }
 .capture-toolbar { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); flex-shrink: 0; }
 .capture-toolbar .btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .capture-canvas-wrap {
   border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: auto; background: var(--color-surface-2);
   flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+  /* "safe center" corrige un bogue CSS connu : un élément centré en flexbox
+     qui déborde de son conteneur devient invisible/impossible à faire
+     défiler avec justify-content/align-items:center seul. Nécessaire pour
+     que le zoom au-dessus de 100% fonctionne (le canevas devient plus
+     grand que le conteneur). Ignoré silencieusement si non supporté (la
+     ligne juste avant sert alors de repli). */
+  align-items: safe center; justify-content: safe center;
 }
 #captureEditorCanvas { max-width: 100%; max-height: 100%; display: block; cursor: crosshair; touch-action: none; }
 .capture-zoom-bar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); flex-shrink: 0; }

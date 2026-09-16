@@ -506,27 +506,49 @@
       <div class="modal-box capture-modal-box">
         <h3>Retoucher la capture</h3>
         <div id="captureEditorBody">
-          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone — elle s'agrandit automatiquement pour y travailler plus précisément. Pour le texte, glissez un rectangle pour définir la zone du texte. « Annuler une étape » revient en arrière une action à la fois.</p>
-          <div class="capture-toolbar">
-            <button type="button" class="btn btn-outline active" data-capture-tool="select">Sélectionner une zone</button>
-            <button type="button" class="btn btn-outline" data-capture-tool="pen">Crayon</button>
-            <button type="button" class="btn btn-outline" data-capture-tool="arrow">Flèche</button>
-            <button type="button" class="btn btn-outline" data-capture-tool="rectangle">Rectangle</button>
-            <button type="button" class="btn btn-outline" data-capture-tool="ellipse">Ellipse</button>
-            <button type="button" class="btn btn-outline" data-capture-tool="text">Texte</button>
-            <button type="button" class="btn btn-outline" id="btnCaptureUndo">Annuler une étape</button>
-            <button type="button" class="btn btn-outline" id="btnCaptureReset">Réinitialiser</button>
-          </div>
-          <div class="capture-zoom-bar">
-            <span class="capture-zoom-label">Zoom</span>
-            <button type="button" class="btn btn-tertiary capture-zoom-btn" id="btnCaptureZoomOut">−</button>
-            <input type="range" id="captureZoomRange" min="25" max="300" step="5" value="100">
-            <button type="button" class="btn btn-tertiary capture-zoom-btn" id="btnCaptureZoomIn">+</button>
-            <span class="capture-zoom-value" id="captureZoomValue">100 %</span>
-            <button type="button" class="btn btn-tertiary" id="btnCaptureZoomReset">Réinitialiser le zoom</button>
-          </div>
-          <div class="capture-canvas-wrap">
-            <canvas id="captureEditorCanvas"></canvas>
+          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone — elle s'agrandit automatiquement pour y travailler plus précisément. Pour le texte, glissez un rectangle pour définir la zone du texte. « Copier/coller » : glissez pour copier une zone, puis cliquez où la coller. « Annuler une étape » revient en arrière une action à la fois.</p>
+          <div class="capture-editor-layout">
+            <div class="capture-main-column">
+              <div class="capture-toolbar">
+                <button type="button" class="btn btn-outline active" data-capture-tool="select">Sélectionner une zone</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="pen">Crayon</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="arrow">Flèche</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="rectangle">Rectangle</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="ellipse">Ellipse</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="text">Texte</button>
+                <button type="button" class="btn btn-outline" data-capture-tool="clone">Copier/coller</button>
+                <button type="button" class="btn btn-outline" id="btnCaptureUndo">Annuler une étape</button>
+                <button type="button" class="btn btn-outline" id="btnCaptureReset">Réinitialiser</button>
+              </div>
+              <div class="capture-zoom-bar">
+                <span class="capture-zoom-label">Zoom</span>
+                <button type="button" class="btn btn-tertiary capture-zoom-btn" id="btnCaptureZoomOut">−</button>
+                <input type="range" id="captureZoomRange" min="25" max="300" step="5" value="100">
+                <button type="button" class="btn btn-tertiary capture-zoom-btn" id="btnCaptureZoomIn">+</button>
+                <span class="capture-zoom-value" id="captureZoomValue">100 %</span>
+                <button type="button" class="btn btn-tertiary" id="btnCaptureZoomReset">Réinitialiser le zoom</button>
+              </div>
+              <div class="capture-canvas-wrap">
+                <canvas id="captureEditorCanvas"></canvas>
+              </div>
+            </div>
+            <div class="capture-props-panel">
+              <h4>Propriétés de l'outil</h4>
+              <div class="capture-prop-row">
+                <label for="captureColorInput">Couleur</label>
+                <input type="color" id="captureColorInput" value="#ff7a1a">
+              </div>
+              <div class="capture-prop-row">
+                <label for="captureSizeInput">Épaisseur du trait</label>
+                <input type="range" id="captureSizeInput" min="1" max="20" value="3">
+                <span class="capture-prop-value" id="captureSizeValue">3 px</span>
+              </div>
+              <div class="capture-prop-row">
+                <label for="captureFontSizeInput">Taille du texte</label>
+                <input type="range" id="captureFontSizeInput" min="12" max="72" value="24">
+                <span class="capture-prop-value" id="captureFontSizeValue">24 px</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal-actions">
