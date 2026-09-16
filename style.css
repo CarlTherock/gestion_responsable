@@ -428,6 +428,11 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
 }
 #captureEditorCanvas { max-width: 100%; max-height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.capture-zoom-bar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); flex-shrink: 0; }
+.capture-zoom-label { font-size: var(--text-sm); color: var(--color-text-muted); margin-right: var(--space-1); }
+.capture-zoom-btn { padding: 4px 12px; font-size: 18px; line-height: 1; }
+#captureZoomRange { width: 160px; }
+.capture-zoom-value { font-size: var(--text-sm); color: var(--color-text-muted); min-width: 48px; text-align: right; }
 
 /* ---------- Visionneuse d'image plein écran (au lieu de la petite fenêtre générique) ---------- */
 .lightbox-overlay {

@@ -3783,10 +3783,10 @@ function showCaptureEditor(file) {
       };
       im.src = dataUrl;
     }
-    function undo() {
-      if (!history.length) return;
+    function undo(cb) {
+      if (!history.length) { if (cb) cb(); return; }
       const last = history.pop();
-      restoreFromDataUrl(last.dataUrl, last.width, last.height);
+      restoreFromDataUrl(last.dataUrl, last.width, last.height, cb);
     }
 
     function drawArrowOnCtx(x1, y1, x2, y2) {
@@ -3830,6 +3830,7 @@ function showCaptureEditor(file) {
       canvas.height = outCanvas.height;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(outCanvas, 0, 0);
+      resetZoom();
     }
 
     function drawDashedRect(rect) {
@@ -3871,6 +3872,9 @@ function showCaptureEditor(file) {
       } else if (tool === 'arrow') {
         dragging = true; dragStart = p;
         preDragSnapshotUrl = snapshotDataUrl();
+      } else if (tool === 'rectangle' || tool === 'ellipse') {
+        dragging = true; dragStart = p;
+        preDragSnapshotUrl = snapshotDataUrl();
       }
     }
     function onMove(e) {
@@ -3889,6 +3893,20 @@ function showCaptureEditor(file) {
         restorePreDragPreview(() => {
           setAnnotationStyle();
           drawArrowOnCtx(dragStart.x, dragStart.y, p.x, p.y);
+        });
+      } else if (tool === 'rectangle') {
+        restorePreDragPreview(() => {
+          setAnnotationStyle();
+          ctx.strokeRect(Math.min(dragStart.x, p.x), Math.min(dragStart.y, p.y), Math.abs(p.x - dragStart.x), Math.abs(p.y - dragStart.y));
+        });
+      } else if (tool === 'ellipse') {
+        restorePreDragPreview(() => {
+          setAnnotationStyle();
+          const cx = (dragStart.x + p.x) / 2, cy = (dragStart.y + p.y) / 2;
+          const rx = Math.abs(p.x - dragStart.x) / 2, ry = Math.abs(p.y - dragStart.y) / 2;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
         });
       }
     }
@@ -3913,7 +3931,15 @@ function showCaptureEditor(file) {
           wrapCanvasText(ctx, txt, rect.x + 4, rect.y + Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30)), rect.w - 8, Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30)) * 1.2);
         });
       }
-      // pen/arrow : déjà tracés directement sur le canevas, rien de plus à faire.
+      // Fleche/Rectangle/Ellipse : déjà tracés directement sur le canevas
+      // (aperçu en direct devenu définitif) -- on ajoute l'état d'avant à
+      // l'historique ici, une fois le glissement terminé avec une taille valide.
+      if ((tool === 'arrow' || tool === 'rectangle' || tool === 'ellipse') && preDragSnapshotUrl) {
+        history.push({ dataUrl: preDragSnapshotUrl, width: canvas.width, height: canvas.height });
+        if (history.length > MAX_HISTORY) history.shift();
+        preDragSnapshotUrl = null;
+      }
+      // pen : déjà tracé et déjà ajouté à l'historique dès le début du trait (onDown).
     }
 
     function onToolClick(e) {
@@ -3921,6 +3947,45 @@ function showCaptureEditor(file) {
       $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
     }
+
+    // ---- Barre de zoom : zoom purement visuel (largeur CSS du canevas),
+    // n'affecte jamais la résolution réelle de travail/export. Recalculée
+    // chaque fois que les dimensions du canevas changent (zoom sur
+    // sélection, réinitialisation, annulation) puisque le rapport largeur/
+    // hauteur peut changer.
+    const zoomRange = $('#captureZoomRange');
+    const zoomValueEl = $('#captureZoomValue');
+    let baseDisplayWidth = null;
+    function recomputeBaseDisplayWidth() {
+      canvas.style.width = '';
+      canvas.style.height = '';
+      const rect = canvas.getBoundingClientRect();
+      baseDisplayWidth = rect.width || canvas.width;
+    }
+    function applyZoom() {
+      if (!baseDisplayWidth) recomputeBaseDisplayWidth();
+      const pct = Number(zoomRange.value);
+      if (zoomValueEl) zoomValueEl.textContent = `${pct} %`;
+      if (pct === 100) {
+        canvas.style.width = '';
+        canvas.style.height = '';
+      } else {
+        canvas.style.maxWidth = 'none';
+        canvas.style.maxHeight = 'none';
+        canvas.style.width = `${Math.round(baseDisplayWidth * pct / 100)}px`;
+        canvas.style.height = 'auto';
+      }
+    }
+    function resetZoom() {
+      zoomRange.value = 100;
+      baseDisplayWidth = null;
+      applyZoom();
+    }
+    function onZoomInput() { applyZoom(); }
+    function onZoomIn() { zoomRange.value = Math.min(300, Number(zoomRange.value) + 25); applyZoom(); }
+    function onZoomOut() { zoomRange.value = Math.max(25, Number(zoomRange.value) - 25); applyZoom(); }
+    function onZoomReset() { resetZoom(); }
+
     function onReset() {
       history = [];
       preDragSnapshotUrl = null;
@@ -3928,8 +3993,9 @@ function showCaptureEditor(file) {
       canvas.height = img.naturalHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resetZoom();
     }
-    function onUndo() { undo(); }
+    function onUndo() { undo(resetZoom); }
     function cleanup() {
       canvas.removeEventListener('mousedown', onDown);
       canvas.removeEventListener('mousemove', onMove);
@@ -3942,6 +4008,12 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').removeEventListener('click', onUndo);
       $('#btnCaptureCancel').removeEventListener('click', onCancel);
       $('#btnCaptureUse').removeEventListener('click', onUse);
+      zoomRange.removeEventListener('input', onZoomInput);
+      $('#btnCaptureZoomIn').removeEventListener('click', onZoomIn);
+      $('#btnCaptureZoomOut').removeEventListener('click', onZoomOut);
+      $('#btnCaptureZoomReset').removeEventListener('click', onZoomReset);
+      canvas.style.width = '';
+      canvas.style.height = '';
       overlay.classList.add('hidden');
       URL.revokeObjectURL(objectUrl);
     }
@@ -3972,7 +4044,12 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').addEventListener('click', onUndo);
       $('#btnCaptureCancel').addEventListener('click', onCancel);
       $('#btnCaptureUse').addEventListener('click', onUse);
+      zoomRange.addEventListener('input', onZoomInput);
+      $('#btnCaptureZoomIn').addEventListener('click', onZoomIn);
+      $('#btnCaptureZoomOut').addEventListener('click', onZoomOut);
+      $('#btnCaptureZoomReset').addEventListener('click', onZoomReset);
       overlay.classList.remove('hidden');
+      resetZoom();
     };
     img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file); };
     img.src = objectUrl;
