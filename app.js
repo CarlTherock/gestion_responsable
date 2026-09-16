@@ -1638,27 +1638,45 @@ async function showDashboard() {
   const zone = $('#dashDossierActif');
   if (!dernier) {
     reprendreBtn.classList.add('hidden');
-    zone.innerHTML = '';
+    zone.innerHTML = `
+      <div class="dash-empty-state">
+        ${iconSvg('folder', 26)}
+        <p>Aucun dossier actif pour le moment.</p>
+        <p class="dash-empty-hint">Créez un nouveau dossier ou ouvrez-en un existant pour commencer.</p>
+      </div>`;
     return;
   }
   reprendreBtn.classList.remove('hidden');
   const existing = await dbGet(dernier.numero);
   if (!existing) {
     reprendreBtn.classList.add('hidden');
-    zone.innerHTML = '';
+    zone.innerHTML = `
+      <div class="dash-empty-state">
+        ${iconSvg('folder', 26)}
+        <p>Aucun dossier actif pour le moment.</p>
+        <p class="dash-empty-hint">Créez un nouveau dossier ou ouvrez-en un existant pour commencer.</p>
+      </div>`;
     return;
   }
   const d = normalizeDraft(existing);
   const modeLabel = d.mode === 'installation' ? "Suivi d'installation" : 'Démantèlement TEI';
+  const appr = d.activeRevision.approbation;
+  let statusBadge = 'En cours'; let statusClass = '';
+  if (appr && appr.decision === 'approuve') { statusBadge = 'Approuvé'; statusClass = 'is-ok'; }
+  else if (appr && appr.decision === 'retourne') { statusBadge = 'Retourné pour correction'; statusClass = 'is-warn'; }
+  else if (d.activeRevision.demandeApprobationLe) { statusBadge = 'En attente d\u2019approbation'; statusClass = 'is-warn'; }
   zone.innerHTML = `
-    <div class="panel-title" style="font-size:var(--text-base);">Dossier actif</div>
-    <div class="revision-row revision-active" style="margin-top:var(--space-2);margin-bottom:var(--space-4);">
-      <span class="revision-id">${escapeHtml(dernier.numero)}${d.champs.bt ? ' · ' + escapeHtml(formatBt(d.champs.bt)) : ''}</span>
-      <span class="revision-nom">${escapeHtml(d.champs.desc || '')} · ${modeLabel}</span>
-      <span class="revision-statut">Révision ${escapeHtml(d.activeRevision.id)} · ${new Date(d.modifieLe || d.creeLe).toLocaleString('fr-CA')}</span>
+    <div class="dash-active-card">
+      <div class="panel-title" style="font-size:var(--text-base);margin-bottom:var(--space-3);">${iconSvg('clipboard', 17)} Dossier actif</div>
+      <div class="revision-row revision-active">
+        <span class="revision-id">${escapeHtml(dernier.numero)}${d.champs.bt ? ' · ' + escapeHtml(formatBt(d.champs.bt)) : ''}</span>
+        <span class="revision-nom">${escapeHtml(d.champs.desc || '')} · ${modeLabel}</span>
+        <span class="dash-status-pill ${statusClass}">${escapeHtml(statusBadge)}</span>
+        <span class="revision-statut">Révision ${escapeHtml(d.activeRevision.id)} · ${new Date(d.modifieLe || d.creeLe).toLocaleString('fr-CA')}</span>
+      </div>
     </div>
     ${(d.revisions && d.revisions.length) ? `
-    <div class="panel-title" style="font-size:var(--text-base);">Révisions du dossier</div>
+    <div class="panel-title" style="font-size:var(--text-base);margin-top:var(--space-5);">${iconSvg('layers', 17)} Révisions du dossier</div>
     <div class="revision-list" style="margin-top:var(--space-2);">
       ${d.revisions.slice().reverse().map((r) => `
       <div class="revision-row">
@@ -5352,7 +5370,7 @@ function renderApprobationFinaleCard() {
   } else if (appr && appr.decision === 'retourne') {
     html = `
       <div class="approbation-finale-card state-retourne">
-        <div class="approbation-finale-title">Retourné pour correction</div>
+        <div class="approbation-finale-title">${iconSvg('alertTriangle')} Retourné pour correction</div>
         <div class="approbation-finale-meta">
           Par <strong>${escapeHtml(appr.nom)}</strong> (${escapeHtml(ROLE_LABELS[appr.role] || appr.role)}) le ${new Date(appr.date).toLocaleString('fr-CA')}.<br>
           Motif : ${escapeHtml(appr.commentaire || '')}
@@ -5365,7 +5383,7 @@ function renderApprobationFinaleCard() {
   } else if (rev.demandeApprobationLe) {
     html = `
       <div class="approbation-finale-card state-attente">
-        <div class="approbation-finale-title">En attente d'approbation</div>
+        <div class="approbation-finale-title">${iconSvg('clock')} En attente d'approbation</div>
         <div class="approbation-finale-meta">Demande préparée le ${new Date(rev.demandeApprobationLe).toLocaleString('fr-CA')}${rev.demandeDestinataireNom ? ` pour <strong>${escapeHtml(rev.demandeDestinataireNom)}</strong> (${escapeHtml(ROLE_LABELS[rev.demandeDestinataireRole] || rev.demandeDestinataireRole || '')})` : ''}. Enregistrez la décision dès qu'elle est connue.</div>
         <div class="approbation-finale-actions">
           <button type="button" class="btn btn-primary" id="btnEnregistrerDecision">Enregistrer la décision</button>
@@ -5375,13 +5393,13 @@ function renderApprobationFinaleCard() {
   } else if (closure.ready) {
     html = `
       <div class="approbation-finale-card state-pret">
-        <div class="approbation-finale-title">Prêt pour approbation</div>
-        <div class="approbation-finale-meta">
-          Checklist : ${done} / ${total} tâches terminées<br>
-          Preuves requises manquantes : ${preuve.manquantes}<br>
-          VPO ouvertes : ${vpo.pending}<br>
-          VPD ouvertes : ${vpd.pending}<br>
-          Non-conformités ouvertes : ${nc.total}
+        <div class="approbation-finale-title">${iconSvg('shieldCheck')} Prêt pour approbation</div>
+        <div class="approbation-finale-metrics">
+          <div class="approbation-metric-row"><span>Checklist</span><span class="approbation-metric-value ${done === total ? 'is-ok' : ''}">${done} / ${total}</span></div>
+          <div class="approbation-metric-row"><span>Preuves requises manquantes</span><span class="approbation-metric-value ${preuve.manquantes ? 'is-warn' : 'is-ok'}">${preuve.manquantes}</span></div>
+          <div class="approbation-metric-row"><span>VPO ouvertes</span><span class="approbation-metric-value ${vpo.pending ? 'is-warn' : 'is-ok'}">${vpo.pending}</span></div>
+          <div class="approbation-metric-row"><span>VPD ouvertes</span><span class="approbation-metric-value ${vpd.pending ? 'is-warn' : 'is-ok'}">${vpd.pending}</span></div>
+          <div class="approbation-metric-row"><span>Non-conformités ouvertes</span><span class="approbation-metric-value ${nc.total ? 'is-warn' : 'is-ok'}">${nc.total}</span></div>
         </div>
         <div class="approbation-finale-actions">
           <button type="button" class="btn btn-primary" id="btnDemanderApprobation">Demander l'approbation finale</button>
@@ -5390,7 +5408,7 @@ function renderApprobationFinaleCard() {
   } else {
     html = `
       <div class="approbation-finale-card">
-        <div class="approbation-finale-title">Approbation finale</div>
+        <div class="approbation-finale-title">${iconSvg('info')} Approbation finale</div>
         <div class="approbation-finale-meta">Le dossier doit être complété à 100 % (tâches, VPO obligatoires, non-conformités et preuves requises) avant de pouvoir demander une approbation. Voir la Vérification avant fermeture dans l'onglet Aperçu.</div>
       </div>`;
   }

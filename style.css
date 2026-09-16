@@ -1166,6 +1166,19 @@ select.ncextra-gravite {
 .revision-nom { flex: 1; }
 .revision-statut { color: var(--color-text-muted); font-size: var(--text-xs); white-space: nowrap; }
 
+/* ---------- Tableau de bord : dossier actif, état vide ---------- */
+.dash-active-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4) var(--space-5); background: var(--color-surface-2); }
+.dash-status-pill { font-size: var(--text-xs); font-weight: 600; padding: 2px var(--space-2); border-radius: var(--radius-full); background: var(--color-surface-offset); color: var(--color-text-muted); white-space: nowrap; }
+.dash-status-pill.is-ok { background: rgba(74,222,128,0.12); color: #4ade80; }
+.dash-status-pill.is-warn { background: rgba(234,179,8,0.12); color: #eab308; }
+.dash-empty-state {
+  text-align: center; padding: var(--space-12) var(--space-6); border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md); color: var(--color-text-muted);
+}
+.dash-empty-state svg { color: var(--color-text-faint); margin-bottom: var(--space-3); }
+.dash-empty-state p { margin: 0 0 var(--space-1); font-size: var(--text-base); }
+.dash-empty-state .dash-empty-hint { font-size: var(--text-sm); color: var(--color-text-faint); margin-bottom: 0; }
+
 /* ---------- Historique de sauvegarde enrichi (résumé des changements) ---------- */
 .approval-row-rich { flex-direction: column; align-items: stretch; gap: var(--space-2); }
 .approval-row-header { display: flex; align-items: center; gap: var(--space-3); }
@@ -1180,9 +1193,19 @@ select.ncextra-gravite {
 .approbation-finale-card.state-attente { background: rgba(234,179,8,0.08); border-color: rgba(234,179,8,0.35); }
 .approbation-finale-card.state-approuve { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.35); }
 .approbation-finale-card.state-retourne { background: rgba(214,69,69,0.08); border-color: rgba(214,69,69,0.4); }
-.approbation-finale-title { font-weight: 700; font-size: var(--text-base); margin-bottom: var(--space-2); }
+.approbation-finale-title { font-weight: 700; font-size: var(--text-base); margin-bottom: var(--space-2); display: flex; align-items: center; }
+.state-pret .approbation-finale-title { color: #38bdf8; }
+.state-attente .approbation-finale-title { color: #eab308; }
+.state-approuve .approbation-finale-title { color: #4ade80; }
+.state-retourne .approbation-finale-title { color: #d64545; }
 .approbation-finale-meta { font-size: var(--text-sm); color: var(--color-text-muted); line-height: 1.6; margin-bottom: var(--space-2); }
 .approbation-finale-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+.approbation-finale-metrics { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); }
+.approbation-metric-row { display: flex; justify-content: space-between; align-items: center; font-size: var(--text-sm); padding: var(--space-1) 0; border-bottom: 1px solid var(--color-divider); color: var(--color-text-muted); }
+.approbation-metric-row:last-child { border-bottom: none; }
+.approbation-metric-value { font-family: var(--font-mono); font-weight: 600; color: var(--color-text); }
+.approbation-metric-value.is-ok { color: #4ade80; }
+.approbation-metric-value.is-warn { color: #eab308; }
 
 .workspace-locked-banner { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); background: rgba(74,222,128,0.12); border-bottom: 1px solid rgba(74,222,128,0.35); color: #4ade80; font-weight: 600; font-size: var(--text-sm); }
 .workspace-locked .tab-panel:not([data-panel="approbation"]):not([data-panel="apercu"]):not([data-panel="documents"]) { pointer-events: none; opacity: 0.55; }
