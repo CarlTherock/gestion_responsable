@@ -417,6 +417,14 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 .modal-box textarea, .modal-box input { width: 100%; margin-top: var(--space-2); }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-3); padding: var(--space-5) var(--space-6); flex-shrink: 0; border-top: 1px solid var(--color-divider); margin-top: 0; }
 
+/* ---------- Éditeur de capture d'écran : sélection de zone + annotations ---------- */
+.capture-modal-box { max-width: 960px; max-height: min(92vh, 820px); }
+#captureEditorBody { overflow-y: auto; padding: 0 var(--space-6) var(--space-5); flex: 1 1 auto; min-height: 0; }
+.capture-toolbar { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.capture-toolbar .btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.capture-canvas-wrap { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface-2); display: flex; justify-content: center; }
+#captureEditorCanvas { max-width: 100%; height: auto; display: block; cursor: crosshair; touch-action: none; }
+
 /* ---------- Pastille de progression ---------- */
 #wsProgressPill { font-family: var(--font-mono); font-weight: 600; color: #10151b; }
 

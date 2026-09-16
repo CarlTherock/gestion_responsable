@@ -3653,7 +3653,9 @@ function renderChecklist(group) {
         captureBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const file = await captureEcranDirect();
-          if (file) await attachFilesToTask(group, name, [file]);
+          if (!file) return;
+          const edited = await showCaptureEditor(file);
+          if (edited) await attachFilesToTask(group, name, [edited]);
         });
       }
       const pasteBtn = dz.querySelector('[data-item-paste]');
@@ -3732,6 +3734,170 @@ async function captureEcranDirect() {
   } finally {
     stream.getTracks().forEach((t) => t.stop());
   }
+}
+
+// Éditeur de capture : sélection d'une zone + annotations (crayon, flèche,
+// texte), avant d'ajouter l'image à la tâche. Fonctionne sur la capture
+// d'écran directe ET sur une image collée/déposée normalement — appelé
+// juste avant l'attachement final. Se dégrade proprement (retourne le
+// fichier original sans passer par l'éditeur) si le canvas 2D n'est pas
+// disponible dans l'environnement (garde défensive, ne devrait pas arriver
+// dans un vrai navigateur).
+function showCaptureEditor(file) {
+  return new Promise((resolve) => {
+    const overlay = $('#captureEditorOverlay');
+    const canvas = $('#captureEditorCanvas');
+    if (!overlay || !canvas) { resolve(file); return; }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { resolve(file); return; }
+
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    let tool = 'select';
+    let annotations = [];
+    let currentStroke = null;
+    let selRect = null;
+    let dragging = false;
+    let dragStart = null;
+
+    function drawArrowOnCtx(x1, y1, x2, y2) {
+      const headlen = Math.max(14, canvas.width / 60);
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+      ctx.closePath(); ctx.fill();
+    }
+    function drawAnnotation(a) {
+      ctx.strokeStyle = '#ff7a1a'; ctx.fillStyle = '#ff7a1a'; ctx.lineWidth = Math.max(3, canvas.width / 300); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if (a.type === 'pen' && a.points.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(a.points[0].x, a.points[0].y);
+        a.points.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.stroke();
+      } else if (a.type === 'arrow') {
+        drawArrowOnCtx(a.x1, a.y1, a.x2, a.y2);
+      } else if (a.type === 'text') {
+        ctx.font = `bold ${Math.max(20, canvas.width / 40)}px Inter, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.fillText(a.text, a.x, a.y);
+      }
+    }
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      annotations.forEach(drawAnnotation);
+      if (currentStroke) drawAnnotation(currentStroke);
+      if (selRect) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.fillRect(0, 0, canvas.width, selRect.y);
+        ctx.fillRect(0, selRect.y + selRect.h, canvas.width, canvas.height - selRect.y - selRect.h);
+        ctx.fillRect(0, selRect.y, selRect.x, selRect.h);
+        ctx.fillRect(selRect.x + selRect.w, selRect.y, canvas.width - selRect.x - selRect.w, selRect.h);
+        ctx.strokeStyle = '#ff7a1a'; ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
+        ctx.strokeRect(selRect.x, selRect.y, selRect.w, selRect.h);
+        ctx.restore();
+      }
+    }
+    function posFromEvent(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      return {
+        x: Math.max(0, Math.min(canvas.width, (clientX - rect.left) * (canvas.width / rect.width))),
+        y: Math.max(0, Math.min(canvas.height, (clientY - rect.top) * (canvas.height / rect.height))),
+      };
+    }
+    function onDown(e) {
+      e.preventDefault();
+      const p = posFromEvent(e);
+      if (tool === 'select') {
+        dragging = true; dragStart = p; selRect = { x: p.x, y: p.y, w: 0, h: 0 };
+      } else if (tool === 'pen') {
+        dragging = true; currentStroke = { type: 'pen', points: [p] };
+      } else if (tool === 'arrow') {
+        dragging = true; dragStart = p; currentStroke = { type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+      } else if (tool === 'text') {
+        const txt = prompt('Texte de l\u2019annotation :');
+        if (txt) { annotations.push({ type: 'text', x: p.x, y: p.y, text: txt }); redraw(); }
+      }
+    }
+    function onMove(e) {
+      if (!dragging) return;
+      e.preventDefault();
+      const p = posFromEvent(e);
+      if (tool === 'select') {
+        selRect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
+      } else if (tool === 'pen') {
+        currentStroke.points.push(p);
+      } else if (tool === 'arrow') {
+        currentStroke.x2 = p.x; currentStroke.y2 = p.y;
+      }
+      redraw();
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      if ((tool === 'pen' || tool === 'arrow') && currentStroke) { annotations.push(currentStroke); currentStroke = null; }
+      redraw();
+    }
+    function onToolClick(e) {
+      tool = e.currentTarget.dataset.captureTool;
+      $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
+      e.currentTarget.classList.add('active');
+    }
+    function onReset() { annotations = []; selRect = null; currentStroke = null; redraw(); }
+    function cleanup() {
+      canvas.removeEventListener('mousedown', onDown);
+      canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('mouseup', onUp);
+      canvas.removeEventListener('touchstart', onDown);
+      canvas.removeEventListener('touchmove', onMove);
+      canvas.removeEventListener('touchend', onUp);
+      $$('[data-capture-tool]').forEach((b) => b.removeEventListener('click', onToolClick));
+      $('#btnCaptureReset').removeEventListener('click', onReset);
+      $('#btnCaptureCancel').removeEventListener('click', onCancel);
+      $('#btnCaptureUse').removeEventListener('click', onUse);
+      overlay.classList.add('hidden');
+      URL.revokeObjectURL(objectUrl);
+    }
+    function onCancel() { cleanup(); resolve(null); }
+    function onUse() {
+      const crop = (selRect && selRect.w > 4 && selRect.h > 4) ? selRect : { x: 0, y: 0, w: canvas.width, h: canvas.height };
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = Math.round(crop.w);
+      outCanvas.height = Math.round(crop.h);
+      outCanvas.getContext('2d').drawImage(canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, outCanvas.width, outCanvas.height);
+      outCanvas.toBlob((blob) => {
+        cleanup();
+        resolve(blob ? new File([blob], `capture-annotee-${Date.now()}.png`, { type: 'image/png' }) : null);
+      }, 'image/png');
+    }
+
+    img.onload = () => {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      tool = 'select';
+      $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
+      redraw();
+      canvas.addEventListener('mousedown', onDown);
+      canvas.addEventListener('mousemove', onMove);
+      canvas.addEventListener('mouseup', onUp);
+      canvas.addEventListener('touchstart', onDown);
+      canvas.addEventListener('touchmove', onMove);
+      canvas.addEventListener('touchend', onUp);
+      $$('[data-capture-tool]').forEach((b) => b.addEventListener('click', onToolClick));
+      $('#btnCaptureReset').addEventListener('click', onReset);
+      $('#btnCaptureCancel').addEventListener('click', onCancel);
+      $('#btnCaptureUse').addEventListener('click', onUse);
+      overlay.classList.remove('hidden');
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file); };
+    img.src = objectUrl;
+  });
 }
 
 async function attachFilesToTask(group, name, fileList) {

@@ -501,6 +501,29 @@
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay hidden" id="captureEditorOverlay">
+      <div class="modal-box capture-modal-box">
+        <h3>Retoucher la capture</h3>
+        <div id="captureEditorBody">
+          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner la zone à garder (facultatif — toute l'image est utilisée sinon). Utilisez les outils pour annoter avant d'ajouter la capture.</p>
+          <div class="capture-toolbar">
+            <button type="button" class="btn btn-outline active" data-capture-tool="select">Sélectionner une zone</button>
+            <button type="button" class="btn btn-outline" data-capture-tool="pen">Crayon</button>
+            <button type="button" class="btn btn-outline" data-capture-tool="arrow">Flèche</button>
+            <button type="button" class="btn btn-outline" data-capture-tool="text">Texte</button>
+            <button type="button" class="btn btn-outline" id="btnCaptureReset">Réinitialiser</button>
+          </div>
+          <div class="capture-canvas-wrap">
+            <canvas id="captureEditorCanvas"></canvas>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-outline" id="btnCaptureCancel">Annuler</button>
+          <button class="btn btn-primary" id="btnCaptureUse">Utiliser cette capture</button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
 
