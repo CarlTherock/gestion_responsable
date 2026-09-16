@@ -3783,6 +3783,9 @@ function showCaptureEditor(file) {
     const sizeValueEl = $('#captureSizeValue');
     const fontSizeInput = $('#captureFontSizeInput');
     const fontSizeValueEl = $('#captureFontSizeValue');
+    const scaleInput = $('#captureScaleInput');
+    const scaleValueEl = $('#captureScaleValue');
+    let selectedObjectBaseline = null; // géométrie de l'objet au moment de sa sélection, pour appliquer le curseur d'échelle relativement à cet état
     const selectionActionsBar = $('#captureSelectionActions');
     const objectSelectedRow = $('#captureObjectSelectedRow');
     const propsTitle = $('#capturePropsTitle');
@@ -3840,23 +3843,26 @@ function showCaptureEditor(file) {
       }
       return { x: o.x, y: o.y, w: o.w, h: o.h };
     }
-    function drawObject(o, highlight) {
-      ctx.strokeStyle = o.color; ctx.fillStyle = o.color; ctx.lineWidth = o.size; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    function drawObjectShape(c, o) {
+      c.strokeStyle = o.color; c.fillStyle = o.color; c.lineWidth = o.size; c.lineCap = 'round'; c.lineJoin = 'round';
       if (o.type === 'rectangle') {
-        ctx.strokeRect(o.x, o.y, o.w, o.h);
+        c.strokeRect(o.x, o.y, o.w, o.h);
       } else if (o.type === 'ellipse') {
-        ctx.beginPath();
-        ctx.ellipse(o.x + o.w / 2, o.y + o.h / 2, Math.max(0.01, o.w / 2), Math.max(0.01, o.h / 2), 0, 0, Math.PI * 2);
-        ctx.stroke();
+        c.beginPath();
+        c.ellipse(o.x + o.w / 2, o.y + o.h / 2, Math.max(0.01, o.w / 2), Math.max(0.01, o.h / 2), 0, 0, Math.PI * 2);
+        c.stroke();
       } else if (o.type === 'arrow') {
-        drawArrowOnCtx(ctx, o.x1, o.y1, o.x2, o.y2);
+        drawArrowOnCtx(c, o.x1, o.y1, o.x2, o.y2);
       } else if (o.type === 'text') {
-        ctx.font = `bold ${o.fontSize}px Inter, sans-serif`;
-        ctx.textAlign = 'left';
-        wrapCanvasText(ctx, o.text, o.x + 4, o.y + o.fontSize, Math.max(20, o.w - 8), o.fontSize * 1.2);
+        c.font = `bold ${o.fontSize}px Inter, sans-serif`;
+        c.textAlign = 'left';
+        wrapCanvasText(c, o.text, o.x + 4, o.y + o.fontSize, Math.max(20, o.w - 8), o.fontSize * 1.2);
       } else if (o.type === 'stamp') {
-        ctx.drawImage(o.canvasData, o.x, o.y, o.w, o.h);
+        c.drawImage(o.canvasData, o.x, o.y, o.w, o.h);
       }
+    }
+    function drawObject(o, highlight) {
+      drawObjectShape(ctx, o);
       if (highlight) {
         const b = objectBBox(o);
         ctx.save();
@@ -3929,10 +3935,54 @@ function showCaptureEditor(file) {
         sizeInput.value = o.size;
         onSizeInput();
         if (o.type === 'text') { fontSizeInput.value = o.fontSize; onFontSizeInput(); }
+        selectedObjectBaseline = Object.assign({}, o);
+        if (scaleInput) scaleInput.value = 100;
+        if (scaleValueEl) scaleValueEl.textContent = '100 %';
       } else {
         objectSelectedRow.classList.add('hidden');
         propsTitle.textContent = 'Propriétés de l\u2019outil';
+        selectedObjectBaseline = null;
       }
+    }
+    // Redimensionne l'objet sélectionné autour de son centre, relativement à
+    // sa géométrie au moment de la sélection (selectedObjectBaseline) -- le
+    // curseur repart toujours de 100% à chaque nouvelle sélection.
+    function onScaleInput() {
+      if (scaleValueEl) scaleValueEl.textContent = `${scaleInput.value} %`;
+      const o = objects.find((x) => x.id === selectedObjectId);
+      if (!o || !selectedObjectBaseline) return;
+      const pct = Number(scaleInput.value) / 100;
+      const b = selectedObjectBaseline;
+      if (o.type === 'arrow') {
+        const midx = (b.x1 + b.x2) / 2, midy = (b.y1 + b.y2) / 2;
+        o.x1 = midx + (b.x1 - midx) * pct; o.y1 = midy + (b.y1 - midy) * pct;
+        o.x2 = midx + (b.x2 - midx) * pct; o.y2 = midy + (b.y2 - midy) * pct;
+      } else {
+        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        const newW = b.w * pct, newH = b.h * pct;
+        o.x = cx - newW / 2; o.y = cy - newH / 2; o.w = newW; o.h = newH;
+      }
+      redrawAll();
+    }
+    let scaleHistoryPushed = false;
+    function onScalePointerDown() {
+      if (!selectedObjectId || scaleHistoryPushed) return;
+      pushHistory();
+      scaleHistoryPushed = true;
+    }
+    function onScalePointerUp() { scaleHistoryPushed = false; }
+    // Aplatit l'objet sélectionné dans l'image (couche de base) -- il n'est
+    // plus déplaçable/sélectionnable ensuite, ce qui permet de dessiner une
+    // ligne/flèche par-dessus sans risquer de le déplacer par accident.
+    function flattenSelectedObject() {
+      const o = objects.find((x) => x.id === selectedObjectId);
+      if (!o) return;
+      pushHistory();
+      drawObjectShape(baseCtx, o);
+      objects = objects.filter((x) => x.id !== o.id);
+      selectedObjectId = null;
+      updatePropsPanelForSelection();
+      redrawAll();
     }
     function selectObject(o) {
       selectedObjectId = o ? o.id : null;
@@ -3948,51 +3998,49 @@ function showCaptureEditor(file) {
       redrawAll();
     }
 
-    let selectionMode = 'copy'; // 'copy' | 'paste' -- bascule le bouton Copier/Coller la sélection
+    const pasteBtn = $('#btnCapturePasteSelection');
+    const PASTE_OFFSET = 24; // décalage (px, à l'échelle réelle du canevas) pour que la copie collée soit visible distinctement de l'originale
     function showSelectionActions(show) {
       if (selectionActionsBar) selectionActionsBar.classList.toggle('hidden', !show);
     }
-    function resetCopyPasteButton() {
-      selectionMode = 'copy';
+    function resetCopyPasteButtons() {
       cloneBuffer = null;
-      const btn = $('#btnCaptureCopySelection');
-      if (btn) btn.textContent = 'Copier la sélection';
+      if (pasteBtn) pasteBtn.classList.add('hidden');
     }
     function clearCropSelection() {
       cropSelRect = null;
       showSelectionActions(false);
-      resetCopyPasteButton();
+      resetCopyPasteButtons();
       redrawAll();
     }
-    // Bouton unique qui bascule Copier <-> Coller : on copie la zone
-    // sélectionnée, le bouton devient "Coller la sélection" ; cliquer dessus
-    // colle une copie au MÊME endroit, sous forme d'objet qu'on peut ensuite
-    // glisser où on veut (comme les autres formes).
-    function onCopyPasteClick() {
-      const btn = $('#btnCaptureCopySelection');
-      if (selectionMode === 'copy') {
-        if (!cropSelRect) return;
-        const rect = cropSelRect;
-        const off = document.createElement('canvas');
-        off.width = Math.round(rect.w); off.height = Math.round(rect.h);
-        off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
-        cloneBuffer = { canvas: off, x: rect.x, y: rect.y, w: off.width, h: off.height };
-        selectionMode = 'paste';
-        if (btn) btn.textContent = 'Coller la sélection';
-      } else {
-        if (!cloneBuffer) return;
-        pushHistory();
-        const newObj = {
-          id: nextObjectId++, type: 'stamp', color: colorInput.value, size: Number(sizeInput.value), fontSize: Number(fontSizeInput.value),
-          x: cloneBuffer.x, y: cloneBuffer.y, w: cloneBuffer.w, h: cloneBuffer.h, canvasData: cloneBuffer.canvas,
-        };
-        objects.push(newObj);
-        cropSelRect = null;
-        showSelectionActions(false);
-        resetCopyPasteButton();
-        selectObject(newObj);
-        toast('Zone collée — glissez-la pour la déplacer où vous voulez.', 4000);
-      }
+    // Copier : capture la zone sélectionnée dans un tampon et fait apparaître
+    // le bouton Coller (reste disponible pour coller plusieurs fois).
+    function onCopyClick() {
+      if (!cropSelRect) return;
+      const rect = cropSelRect;
+      const off = document.createElement('canvas');
+      off.width = Math.round(rect.w); off.height = Math.round(rect.h);
+      off.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, off.width, off.height);
+      cloneBuffer = { canvas: off, x: rect.x, y: rect.y, w: off.width, h: off.height };
+      if (pasteBtn) pasteBtn.classList.remove('hidden');
+      toast('Zone copiée — cliquez sur Coller.', 3000);
+    }
+    // Coller : colle une copie DÉCALÉE par rapport à la zone d'origine (pour
+    // qu'on voie tout de suite qu'il s'agit d'une nouvelle copie), comme un
+    // objet qu'on peut ensuite glisser et redimensionner depuis le panneau de
+    // droite. Peut être cliqué plusieurs fois de suite pour coller plusieurs
+    // copies, chacune décalée un peu plus.
+    function onPasteClick() {
+      if (!cloneBuffer) return;
+      pushHistory();
+      const newObj = {
+        id: nextObjectId++, type: 'stamp', color: colorInput.value, size: Number(sizeInput.value), fontSize: Number(fontSizeInput.value),
+        x: cloneBuffer.x + PASTE_OFFSET, y: cloneBuffer.y + PASTE_OFFSET, w: cloneBuffer.w, h: cloneBuffer.h, canvasData: cloneBuffer.canvas,
+      };
+      objects.push(newObj);
+      cloneBuffer = Object.assign({}, cloneBuffer, { x: newObj.x, y: newObj.y }); // le prochain collage se décale à partir d'ici
+      selectObject(newObj);
+      toast('Zone collée — glissez-la pour la déplacer, ou ajustez sa taille dans le panneau de droite.', 4500);
     }
     function cropToSelection() {
       if (!cropSelRect) return;
@@ -4009,7 +4057,7 @@ function showCaptureEditor(file) {
       selectedObjectId = null;
       cropSelRect = null;
       showSelectionActions(false);
-      resetCopyPasteButton();
+      resetCopyPasteButtons();
       updatePropsPanelForSelection();
       resetZoom();
       redrawAll();
@@ -4040,6 +4088,7 @@ function showCaptureEditor(file) {
       if (tool === 'select') {
         dragMode = 'crop-select'; dragStart = p; cropSelRect = { x: p.x, y: p.y, w: 0, h: 0 };
         showSelectionActions(false);
+        resetCopyPasteButtons();
         return;
       }
       if (tool === 'pen') {
@@ -4175,7 +4224,7 @@ function showCaptureEditor(file) {
       tool = e.currentTarget.dataset.captureTool;
       $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
-      if (tool !== 'select') { cropSelRect = null; showSelectionActions(false); resetCopyPasteButton(); }
+      if (tool !== 'select') { cropSelRect = null; showSelectionActions(false); resetCopyPasteButtons(); }
       selectObject(null);
       canvas.classList.toggle('capture-cursor-grab', tool === 'pan');
       canvas.classList.remove('capture-cursor-move');
@@ -4213,7 +4262,7 @@ function showCaptureEditor(file) {
       objects = [];
       selectedObjectId = null;
       cropSelRect = null;
-      resetCopyPasteButton();
+      resetCopyPasteButtons();
       showSelectionActions(false);
       updatePropsPanelForSelection();
       baseCanvas.width = img.naturalWidth; baseCanvas.height = img.naturalHeight;
@@ -4224,7 +4273,7 @@ function showCaptureEditor(file) {
       resetZoom();
     }
     function onUndo() {
-      undo(() => { showSelectionActions(false); cropSelRect = null; resetCopyPasteButton(); updatePropsPanelForSelection(); resetZoom(); });
+      undo(() => { showSelectionActions(false); cropSelRect = null; resetCopyPasteButtons(); updatePropsPanelForSelection(); resetZoom(); });
     }
     function onKeydown(e) {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObjectId && document.activeElement === document.body) {
@@ -4245,10 +4294,17 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').removeEventListener('click', onUndo);
       $('#btnCaptureCancel').removeEventListener('click', onCancel);
       $('#btnCaptureUse').removeEventListener('click', onUse);
-      $('#btnCaptureCopySelection').removeEventListener('click', onCopyPasteClick);
+      $('#btnCaptureCopySelection').removeEventListener('click', onCopyClick);
+      if (pasteBtn) pasteBtn.removeEventListener('click', onPasteClick);
       $('#btnCaptureCropSelection').removeEventListener('click', cropToSelection);
       $('#btnCaptureClearSelection').removeEventListener('click', clearCropSelection);
       $('#btnCaptureDeleteObject').removeEventListener('click', deleteSelectedObject);
+      $('#btnCaptureFlattenObject').removeEventListener('click', flattenSelectedObject);
+      if (scaleInput) {
+        scaleInput.removeEventListener('input', onScaleInput);
+        scaleInput.removeEventListener('pointerdown', onScalePointerDown);
+        scaleInput.removeEventListener('pointerup', onScalePointerUp);
+      }
       zoomRange.removeEventListener('input', onZoomInput);
       $('#btnCaptureZoomIn').removeEventListener('click', onZoomIn);
       $('#btnCaptureZoomOut').removeEventListener('click', onZoomOut);
@@ -4277,7 +4333,7 @@ function showCaptureEditor(file) {
       baseCtx.drawImage(img, 0, 0, baseCanvas.width, baseCanvas.height);
       canvas.width = baseCanvas.width; canvas.height = baseCanvas.height;
       objects = []; selectedObjectId = null; cropSelRect = null; history = [];
-      resetCopyPasteButton();
+      resetCopyPasteButtons();
       tool = 'select';
       $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
       updatePropsPanelForSelection();
@@ -4294,10 +4350,17 @@ function showCaptureEditor(file) {
       $('#btnCaptureUndo').addEventListener('click', onUndo);
       $('#btnCaptureCancel').addEventListener('click', onCancel);
       $('#btnCaptureUse').addEventListener('click', onUse);
-      $('#btnCaptureCopySelection').addEventListener('click', onCopyPasteClick);
+      $('#btnCaptureCopySelection').addEventListener('click', onCopyClick);
+      if (pasteBtn) pasteBtn.addEventListener('click', onPasteClick);
       $('#btnCaptureCropSelection').addEventListener('click', cropToSelection);
       $('#btnCaptureClearSelection').addEventListener('click', clearCropSelection);
       $('#btnCaptureDeleteObject').addEventListener('click', deleteSelectedObject);
+      $('#btnCaptureFlattenObject').addEventListener('click', flattenSelectedObject);
+      if (scaleInput) {
+        scaleInput.addEventListener('input', onScaleInput);
+        scaleInput.addEventListener('pointerdown', onScalePointerDown);
+        scaleInput.addEventListener('pointerup', onScalePointerUp);
+      }
       zoomRange.addEventListener('input', onZoomInput);
       $('#btnCaptureZoomIn').addEventListener('click', onZoomIn);
       $('#btnCaptureZoomOut').addEventListener('click', onZoomOut);
