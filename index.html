@@ -506,12 +506,13 @@
       <div class="modal-box capture-modal-box">
         <h3>Retoucher la capture</h3>
         <div id="captureEditorBody">
-          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner la zone à garder (facultatif — toute l'image est utilisée sinon). Utilisez les outils pour annoter avant d'ajouter la capture.</p>
+          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone — elle s'agrandit automatiquement pour y travailler plus précisément. Pour le texte, glissez un rectangle pour définir la zone du texte. « Annuler une étape » revient en arrière une action à la fois.</p>
           <div class="capture-toolbar">
             <button type="button" class="btn btn-outline active" data-capture-tool="select">Sélectionner une zone</button>
             <button type="button" class="btn btn-outline" data-capture-tool="pen">Crayon</button>
             <button type="button" class="btn btn-outline" data-capture-tool="arrow">Flèche</button>
             <button type="button" class="btn btn-outline" data-capture-tool="text">Texte</button>
+            <button type="button" class="btn btn-outline" id="btnCaptureUndo">Annuler une étape</button>
             <button type="button" class="btn btn-outline" id="btnCaptureReset">Réinitialiser</button>
           </div>
           <div class="capture-canvas-wrap">
@@ -523,6 +524,11 @@
           <button class="btn btn-primary" id="btnCaptureUse">Utiliser cette capture</button>
         </div>
       </div>
+    </div>
+
+    <div class="lightbox-overlay hidden" id="imageLightboxOverlay">
+      <button type="button" class="lightbox-close-btn" id="btnLightboxClose" aria-label="Fermer">✕</button>
+      <img id="lightboxImg" src="" alt="">
     </div>
   </main>
 </div>

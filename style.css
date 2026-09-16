@@ -417,13 +417,30 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 .modal-box textarea, .modal-box input { width: 100%; margin-top: var(--space-2); }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-3); padding: var(--space-5) var(--space-6); flex-shrink: 0; border-top: 1px solid var(--color-divider); margin-top: 0; }
 
-/* ---------- Éditeur de capture d'écran : sélection de zone + annotations ---------- */
-.capture-modal-box { max-width: 960px; max-height: min(92vh, 820px); }
-#captureEditorBody { overflow-y: auto; padding: 0 var(--space-6) var(--space-5); flex: 1 1 auto; min-height: 0; }
-.capture-toolbar { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
+/* ---------- Éditeur de capture d'écran : plein écran, sélection de zone + annotations ---------- */
+#captureEditorOverlay { padding: 0; }
+.capture-modal-box { max-width: 100vw; width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
+#captureEditorBody { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; padding: 0 var(--space-6) var(--space-4); }
+.capture-toolbar { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); flex-shrink: 0; }
 .capture-toolbar .btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
-.capture-canvas-wrap { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface-2); display: flex; justify-content: center; }
-#captureEditorCanvas { max-width: 100%; height: auto; display: block; cursor: crosshair; touch-action: none; }
+.capture-canvas-wrap {
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: auto; background: var(--color-surface-2);
+  flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+}
+#captureEditorCanvas { max-width: 100%; max-height: 100%; display: block; cursor: crosshair; touch-action: none; }
+
+/* ---------- Visionneuse d'image plein écran (au lieu de la petite fenêtre générique) ---------- */
+.lightbox-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 1100;
+  display: flex; align-items: center; justify-content: center; padding: var(--space-5);
+}
+.lightbox-overlay.hidden { display: none; }
+.lightbox-overlay img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.lightbox-close-btn {
+  position: absolute; top: var(--space-4); right: var(--space-5); z-index: 1101;
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff;
+  border-radius: 50%; width: 44px; height: 44px; font-size: 22px; line-height: 1; cursor: pointer;
+}
 
 /* ---------- Pastille de progression ---------- */
 #wsProgressPill { font-family: var(--font-mono); font-weight: 600; color: #10151b; }

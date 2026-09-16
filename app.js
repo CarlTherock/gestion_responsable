@@ -3754,11 +3754,40 @@ function showCaptureEditor(file) {
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
     let tool = 'select';
-    let annotations = [];
-    let currentStroke = null;
-    let selRect = null;
     let dragging = false;
     let dragStart = null;
+    let preDragSnapshotUrl = null; // aperçu temporaire (sélection/texte en cours), jamais dans l'historique
+    // Historique d'annulation : un instantané complet du canevas avant CHAQUE
+    // action (trait, flèche, texte, zoom sur sélection) -- permet de revenir
+    // en arrière une étape à la fois, y compris un zoom.
+    const MAX_HISTORY = 20;
+    let history = [];
+
+    function snapshotDataUrl() {
+      try { return canvas.toDataURL('image/png'); } catch (e) { return null; }
+    }
+    function pushHistory() {
+      const snap = snapshotDataUrl();
+      if (!snap) return;
+      history.push({ dataUrl: snap, width: canvas.width, height: canvas.height });
+      if (history.length > MAX_HISTORY) history.shift();
+    }
+    function restoreFromDataUrl(dataUrl, width, height, cb) {
+      const im = new Image();
+      im.onload = () => {
+        canvas.width = width;
+        canvas.height = height;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+        if (cb) cb();
+      };
+      im.src = dataUrl;
+    }
+    function undo() {
+      if (!history.length) return;
+      const last = history.pop();
+      restoreFromDataUrl(last.dataUrl, last.width, last.height);
+    }
 
     function drawArrowOnCtx(x1, y1, x2, y2) {
       const headlen = Math.max(14, canvas.width / 60);
@@ -3770,38 +3799,11 @@ function showCaptureEditor(file) {
       ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
       ctx.closePath(); ctx.fill();
     }
-    function drawAnnotation(a) {
-      ctx.strokeStyle = '#ff7a1a'; ctx.fillStyle = '#ff7a1a'; ctx.lineWidth = Math.max(3, canvas.width / 300); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      if (a.type === 'pen' && a.points.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(a.points[0].x, a.points[0].y);
-        a.points.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
-        ctx.stroke();
-      } else if (a.type === 'arrow') {
-        drawArrowOnCtx(a.x1, a.y1, a.x2, a.y2);
-      } else if (a.type === 'text') {
-        ctx.font = `bold ${Math.max(20, canvas.width / 40)}px Inter, sans-serif`;
-        ctx.textAlign = 'left';
-        ctx.fillText(a.text, a.x, a.y);
-      }
+    function setAnnotationStyle() {
+      ctx.strokeStyle = '#ff7a1a'; ctx.fillStyle = '#ff7a1a';
+      ctx.lineWidth = Math.max(3, canvas.width / 300); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     }
-    function redraw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      annotations.forEach(drawAnnotation);
-      if (currentStroke) drawAnnotation(currentStroke);
-      if (selRect) {
-        ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.4)';
-        ctx.fillRect(0, 0, canvas.width, selRect.y);
-        ctx.fillRect(0, selRect.y + selRect.h, canvas.width, canvas.height - selRect.y - selRect.h);
-        ctx.fillRect(0, selRect.y, selRect.x, selRect.h);
-        ctx.fillRect(selRect.x + selRect.w, selRect.y, canvas.width - selRect.x - selRect.w, selRect.h);
-        ctx.strokeStyle = '#ff7a1a'; ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
-        ctx.strokeRect(selRect.x, selRect.y, selRect.w, selRect.h);
-        ctx.restore();
-      }
-    }
+
     function posFromEvent(e) {
       const rect = canvas.getBoundingClientRect();
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -3811,45 +3813,123 @@ function showCaptureEditor(file) {
         y: Math.max(0, Math.min(canvas.height, (clientY - rect.top) * (canvas.height / rect.height))),
       };
     }
+
+    // ---- Zoom sur une zone sélectionnée : agrandit la région choisie pour y
+    // travailler plus précisément. L'état d'avant (image complète) reste
+    // disponible via Annuler une étape.
+    function zoomToSelection(rect) {
+      if (rect.w < 6 || rect.h < 6) return;
+      pushHistory();
+      const targetMax = 1600; // largeur/hauteur cible après agrandissement
+      const scale = Math.max(1, Math.min(targetMax / rect.w, targetMax / rect.h, 4));
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = Math.round(rect.w * scale);
+      outCanvas.height = Math.round(rect.h * scale);
+      outCanvas.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, outCanvas.width, outCanvas.height);
+      canvas.width = outCanvas.width;
+      canvas.height = outCanvas.height;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(outCanvas, 0, 0);
+    }
+
+    function drawDashedRect(rect) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(0, 0, canvas.width, rect.y);
+      ctx.fillRect(0, rect.y + rect.h, canvas.width, canvas.height - rect.y - rect.h);
+      ctx.fillRect(0, rect.y, rect.x, rect.h);
+      ctx.fillRect(rect.x + rect.w, rect.y, canvas.width - rect.x - rect.w, rect.h);
+      ctx.strokeStyle = '#ff7a1a'; ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.restore();
+    }
+
+    function restorePreDragPreview(cb) {
+      if (!preDragSnapshotUrl) { if (cb) cb(); return; }
+      const im = new Image();
+      im.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+        if (cb) cb();
+      };
+      im.src = preDragSnapshotUrl;
+    }
+
     function onDown(e) {
       e.preventDefault();
       const p = posFromEvent(e);
-      if (tool === 'select') {
-        dragging = true; dragStart = p; selRect = { x: p.x, y: p.y, w: 0, h: 0 };
+      if (tool === 'select' || tool === 'text') {
+        dragging = true; dragStart = p;
+        preDragSnapshotUrl = snapshotDataUrl();
       } else if (tool === 'pen') {
-        dragging = true; currentStroke = { type: 'pen', points: [p] };
+        dragging = true;
+        pushHistory();
+        setAnnotationStyle();
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        dragStart = p;
       } else if (tool === 'arrow') {
-        dragging = true; dragStart = p; currentStroke = { type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y };
-      } else if (tool === 'text') {
-        const txt = prompt('Texte de l\u2019annotation :');
-        if (txt) { annotations.push({ type: 'text', x: p.x, y: p.y, text: txt }); redraw(); }
+        dragging = true; dragStart = p;
+        preDragSnapshotUrl = snapshotDataUrl();
       }
     }
     function onMove(e) {
       if (!dragging) return;
       e.preventDefault();
       const p = posFromEvent(e);
-      if (tool === 'select') {
-        selRect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
+      if (tool === 'select' || tool === 'text') {
+        const rect = { x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y), w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y) };
+        restorePreDragPreview(() => drawDashedRect(rect));
+        dragStart._last = rect;
       } else if (tool === 'pen') {
-        currentStroke.points.push(p);
+        setAnnotationStyle();
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
       } else if (tool === 'arrow') {
-        currentStroke.x2 = p.x; currentStroke.y2 = p.y;
+        restorePreDragPreview(() => {
+          setAnnotationStyle();
+          drawArrowOnCtx(dragStart.x, dragStart.y, p.x, p.y);
+        });
       }
-      redraw();
     }
     function onUp() {
       if (!dragging) return;
       dragging = false;
-      if ((tool === 'pen' || tool === 'arrow') && currentStroke) { annotations.push(currentStroke); currentStroke = null; }
-      redraw();
+      if (tool === 'select') {
+        const rect = (dragStart && dragStart._last) || null;
+        restorePreDragPreview(() => { if (rect) zoomToSelection(rect); });
+        preDragSnapshotUrl = null;
+      } else if (tool === 'text') {
+        const rect = (dragStart && dragStart._last) || null;
+        restorePreDragPreview(() => {
+          if (!rect || rect.w < 20 || rect.h < 16) { preDragSnapshotUrl = null; return; }
+          const txt = prompt('Texte de l\u2019annotation :');
+          preDragSnapshotUrl = null;
+          if (!txt) return;
+          pushHistory();
+          setAnnotationStyle();
+          ctx.font = `bold ${Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30))}px Inter, sans-serif`;
+          ctx.textAlign = 'left';
+          wrapCanvasText(ctx, txt, rect.x + 4, rect.y + Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30)), rect.w - 8, Math.max(18, Math.min(rect.h * 0.5, canvas.width / 30)) * 1.2);
+        });
+      }
+      // pen/arrow : déjà tracés directement sur le canevas, rien de plus à faire.
     }
+
     function onToolClick(e) {
       tool = e.currentTarget.dataset.captureTool;
       $$('[data-capture-tool]').forEach((b) => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
     }
-    function onReset() { annotations = []; selRect = null; currentStroke = null; redraw(); }
+    function onReset() {
+      history = [];
+      preDragSnapshotUrl = null;
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    }
+    function onUndo() { undo(); }
     function cleanup() {
       canvas.removeEventListener('mousedown', onDown);
       canvas.removeEventListener('mousemove', onMove);
@@ -3859,6 +3939,7 @@ function showCaptureEditor(file) {
       canvas.removeEventListener('touchend', onUp);
       $$('[data-capture-tool]').forEach((b) => b.removeEventListener('click', onToolClick));
       $('#btnCaptureReset').removeEventListener('click', onReset);
+      $('#btnCaptureUndo').removeEventListener('click', onUndo);
       $('#btnCaptureCancel').removeEventListener('click', onCancel);
       $('#btnCaptureUse').removeEventListener('click', onUse);
       overlay.classList.add('hidden');
@@ -3866,12 +3947,7 @@ function showCaptureEditor(file) {
     }
     function onCancel() { cleanup(); resolve(null); }
     function onUse() {
-      const crop = (selRect && selRect.w > 4 && selRect.h > 4) ? selRect : { x: 0, y: 0, w: canvas.width, h: canvas.height };
-      const outCanvas = document.createElement('canvas');
-      outCanvas.width = Math.round(crop.w);
-      outCanvas.height = Math.round(crop.h);
-      outCanvas.getContext('2d').drawImage(canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, outCanvas.width, outCanvas.height);
-      outCanvas.toBlob((blob) => {
+      canvas.toBlob((blob) => {
         cleanup();
         resolve(blob ? new File([blob], `capture-annotee-${Date.now()}.png`, { type: 'image/png' }) : null);
       }, 'image/png');
@@ -3881,8 +3957,10 @@ function showCaptureEditor(file) {
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       tool = 'select';
+      history = [];
       $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
-      redraw();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       canvas.addEventListener('mousedown', onDown);
       canvas.addEventListener('mousemove', onMove);
       canvas.addEventListener('mouseup', onUp);
@@ -3891,6 +3969,7 @@ function showCaptureEditor(file) {
       canvas.addEventListener('touchend', onUp);
       $$('[data-capture-tool]').forEach((b) => b.addEventListener('click', onToolClick));
       $('#btnCaptureReset').addEventListener('click', onReset);
+      $('#btnCaptureUndo').addEventListener('click', onUndo);
       $('#btnCaptureCancel').addEventListener('click', onCancel);
       $('#btnCaptureUse').addEventListener('click', onUse);
       overlay.classList.remove('hidden');
@@ -3970,13 +4049,29 @@ function renderItemFileList(group, name) {
 }
 
 // Affiche une image jointe en grand, dans une fenêtre simple.
+// Visionneuse plein écran (pas la petite fenêtre générique) — appelée quand
+// on clique sur une vignette pour l'agrandir.
 function openImageLightbox(file) {
+  const overlay = $('#imageLightboxOverlay');
+  const img = $('#lightboxImg');
+  const closeBtn = $('#btnLightboxClose');
+  if (!overlay || !img) return;
   const url = URL.createObjectURL(file.blob);
-  showModal({
-    title: file.name,
-    bodyHtml: `<img src="${url}" style="max-width:100%;border-radius:var(--radius-sm);display:block;">`,
-    confirmLabel: 'Fermer',
-  });
+  img.src = url;
+  img.alt = file.name;
+  overlay.classList.remove('hidden');
+  function close() {
+    overlay.classList.add('hidden');
+    URL.revokeObjectURL(url);
+    closeBtn.removeEventListener('click', close);
+    overlay.removeEventListener('click', onOverlayClick);
+    document.removeEventListener('keydown', onKeydown);
+  }
+  function onOverlayClick(e) { if (e.target === overlay) close(); }
+  function onKeydown(e) { if (e.key === 'Escape') close(); }
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', onOverlayClick);
+  document.addEventListener('keydown', onKeydown);
 }
 
 // Partage une photo par le partage natif de l'appareil (qui PEUT joindre le
