@@ -506,7 +506,6 @@
       <div class="modal-box capture-modal-box">
         <h3>Retoucher la capture</h3>
         <div id="captureEditorBody">
-          <p class="panel-desc" style="margin:0 0 var(--space-3);">Glissez pour sélectionner une zone, puis Copier, Coller (décalée, prête à glisser/redimensionner) ou Rogner. Pour Texte/Légende, glissez un rectangle. Tampon numéroté : cliquez pour placer (1, 2, 3…). Recliquez sur un objet déjà tracé pour le sélectionner, le déplacer, le redimensionner ou l'aplatir dans l'image. « Déplacer » : glissez pour naviguer dans l'image quand elle est zoomée.</p>
           <div class="capture-editor-layout">
             <div class="capture-main-column">
               <div class="capture-toolbar">
@@ -543,8 +542,53 @@
               <div class="capture-canvas-wrap">
                 <canvas id="captureEditorCanvas"></canvas>
               </div>
+              <div class="capture-mobile-bar" id="captureMobileBar">
+                <button type="button" class="capture-mobile-cat active" data-mobile-cat="selection">
+                  <span class="icon-inline" data-icon="crop"></span><span class="capture-mobile-cat-label">Sélection</span>
+                </button>
+                <button type="button" class="capture-mobile-cat" data-mobile-cat="dessin">
+                  <span class="icon-inline" data-icon="edit3"></span><span class="capture-mobile-cat-label">Dessin</span>
+                </button>
+                <button type="button" class="capture-mobile-cat" data-mobile-cat="formes">
+                  <span class="icon-inline" data-icon="square"></span><span class="capture-mobile-cat-label">Formes</span>
+                </button>
+                <button type="button" class="capture-mobile-cat" data-mobile-cat="texte">
+                  <span class="icon-inline" data-icon="type"></span><span class="capture-mobile-cat-label">Texte</span>
+                </button>
+                <button type="button" class="capture-mobile-cat" id="btnCaptureMobileProps">
+                  <span class="icon-inline" data-icon="settings"></span><span class="capture-mobile-cat-label">Réglages</span>
+                </button>
+                <button type="button" class="capture-mobile-cat" id="btnCaptureUndoMobile">
+                  <span class="icon-inline" data-icon="cornerUpLeft"></span><span class="capture-mobile-cat-label">Annuler</span>
+                </button>
+                <button type="button" class="capture-mobile-cat" id="btnCaptureResetMobile">
+                  <span class="icon-inline" data-icon="refreshCw"></span><span class="capture-mobile-cat-label">Réinit.</span>
+                </button>
+              </div>
+              <div class="capture-mobile-submenu" id="captureMobileSubmenu">
+                <div class="capture-mobile-tool-group" data-mobile-group="selection">
+                  <button type="button" class="capture-mobile-tool active" data-capture-tool="select" title="Sélectionner une zone"><span class="icon-inline" data-icon="crop"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="pan" title="Déplacer"><span class="icon-inline" data-icon="hand"></span></button>
+                </div>
+                <div class="capture-mobile-tool-group hidden" data-mobile-group="dessin">
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="pen" title="Crayon"><span class="icon-inline" data-icon="edit3"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="line" title="Ligne"><span class="icon-inline" data-icon="lineIcon"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="arrow" title="Flèche"><span class="icon-inline" data-icon="arrowIcon"></span></button>
+                </div>
+                <div class="capture-mobile-tool-group hidden" data-mobile-group="formes">
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="rectangle" title="Rectangle"><span class="icon-inline" data-icon="square"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="ellipse" title="Ellipse"><span class="icon-inline" data-icon="circle"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="highlight" title="Surligneur"><span class="icon-inline" data-icon="square"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="blur" title="Flouter"><span class="icon-inline" data-icon="image"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="badge" title="Tampon numéroté"><span class="icon-inline" data-icon="tag"></span></button>
+                </div>
+                <div class="capture-mobile-tool-group hidden" data-mobile-group="texte">
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="text" title="Texte"><span class="icon-inline" data-icon="type"></span></button>
+                  <button type="button" class="capture-mobile-tool" data-capture-tool="callout" title="Légende"><span class="icon-inline" data-icon="clipboard"></span></button>
+                </div>
+              </div>
             </div>
-            <div class="capture-props-panel">
+            <div class="capture-props-panel capture-props-collapsed" id="capturePropsPanel">
               <h4 id="capturePropsTitle">Propriétés de l'outil</h4>
               <div class="capture-prop-row">
                 <label for="captureColorInput">Couleur</label>
