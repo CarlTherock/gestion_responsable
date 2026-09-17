@@ -3577,10 +3577,10 @@ function renderChecklist(group) {
         <div class="checklist-item-drawer${checked ? '' : ' hidden'}" data-drawer="${name}">
           <div class="dropzone-mini" data-item-dropzone="${name}">
             <span class="dz-text-desktop">Glissez-déposez un document, cliquez pour parcourir, ou</span>
-            <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Prendre une photo</span>
+            <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Photo ou bibliothèque</span>
             <button type="button" class="btn btn-outline dz-paste-btn" data-item-capture="${name}">Capturer l'écran</button>
             <button type="button" class="btn btn-outline dz-paste-btn" data-item-paste="${name}" title="Sur Windows : appuyez sur Win+Maj+S pour capturer l'écran, puis cliquez ici pour coller. Sur Mac : Cmd+Maj+4.">Coller une capture d'écran</button>
-            <input type="file" data-item-file-input="${name}" capture="environment" multiple class="hidden">
+            <input type="file" data-item-file-input="${name}" multiple class="hidden">
           </div>
           <div class="file-list-mini" data-item-file-list="${name}"></div>
         </div>` : ''}
