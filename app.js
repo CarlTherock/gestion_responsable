@@ -1777,7 +1777,7 @@ function renderApercu() {
   container.innerHTML = `
     <div class="global-status-line"><span class="tp-status-badge">${escapeHtml(globalStatus.label)}</span></div>
     <div class="status-banner status-${status.level}">${escapeHtml(status.text)}</div>
-    <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}">
+    <div class="closure-card ${closure.ready ? 'closure-ready' : 'closure-blocked'}"${closure.ready ? ' data-apercu-jump="approbation" role="button" tabindex="0" style="cursor:pointer;"' : ''}>
       <div class="closure-title">Vérification avant fermeture</div>
       <div class="closure-text">${escapeHtml(closure.text)}</div>
       ${!closure.ready ? `<div class="closure-actions">
@@ -4606,7 +4606,7 @@ function renderItemFileList(group, name) {
   $$('[data-file-enlarge]', listEl).forEach((img) => {
     img.addEventListener('click', () => {
       const [, idx] = img.dataset.fileEnlarge.split('::');
-      openImageLightbox(files[Number(idx)]);
+      ouvrirImageAttacheePourRetouche(group, name, Number(idx));
     });
   });
   $$('[data-file-comment]', listEl).forEach((btn) => {
@@ -4628,6 +4628,32 @@ function renderItemFileList(group, name) {
       supprimerFichier(state.draft.casesFichiers[name], files[Number(idx)], () => { renderItemFileList(group, name); updateFilesCount(); renderDocuments(); });
     });
   });
+}
+
+// Sur le web (PC), cliquer sur une vignette déjà attachée — peu importe
+// comment elle a été ajoutée (collée, capturée, glissée-déposée) — ouvre
+// désormais le même éditeur de retouche que "Capturer l'écran", pour
+// pouvoir corriger/annoter une image après coup. Sur mobile, on garde la
+// simple visionneuse (comportement inchangé, comme demandé).
+async function ouvrirImageAttacheePourRetouche(group, name, idx) {
+  const files = state.draft.casesFichiers[name] || [];
+  const fichier = files[idx];
+  if (!fichier) return;
+  const estMobile = window.innerWidth <= 680;
+  if (estMobile || typeof showCaptureEditor !== 'function') {
+    openImageLightbox(fichier);
+    return;
+  }
+  const edited = await showCaptureEditor(fichier.blob);
+  if (!edited) return; // annulé : l'image d'origine reste inchangée
+  files[idx] = {
+    name: edited.name, size: edited.size, type: edited.type, uploadedAt: new Date().toISOString(),
+    blob: edited, commentaire: fichier.commentaire, partages: fichier.partages,
+  };
+  await dbPut(state.draft);
+  logActivity(`Photo retouchée (${GROUP_LABELS[group] || group})`);
+  renderItemFileList(group, name);
+  toast('Retouches enregistrées.');
 }
 
 // Affiche une image jointe en grand, dans une fenêtre simple.
@@ -5716,9 +5742,14 @@ function renderQrThumb() {
 // SharePoint/serveur web) — un lien-jeton opaque (certains liens OneDrive
 // personnels) ne le permettra pas ; à tester une fois par l'utilisateur.
 function buildLienDashboardPartage(lienPartage) {
-  const lien = (lienPartage || '').trim();
+  const lien = (lienPartage || '').trim().replace(/\/+$/, '');
   if (!lien) return '';
-  return lien.replace(/\/+$/, '') + '/OUVRIR_DASHBOARD.html';
+  // Si le lien fourni pointe déjà directement vers OUVRIR_DASHBOARD.html (ex.
+  // copié depuis la barre d'adresse en naviguant dedans), ne pas l'ajouter
+  // une deuxième fois -- corrige un lien dupliqué du type
+  // ".../OUVRIR_DASHBOARD.html/OUVRIR_DASHBOARD.html".
+  if (/\/OUVRIR_DASHBOARD\.html$/i.test(lien)) return lien;
+  return lien + '/OUVRIR_DASHBOARD.html';
 }
 
 // Code QR généré à partir du lien de dossier partagé fourni par l'utilisateur
