@@ -140,6 +140,7 @@ const ICONS = {
   checkCircle: '<circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/>',
   hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
   crop: '<path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/>',
+  scanQr: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/>',
   edit3: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   square: '<rect x="3" y="3" width="18" height="18" rx="2"/>',
   type: '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
@@ -3229,20 +3230,24 @@ $('#numLoc').addEventListener('input', (e) => {
     el.value = val;
   }
   const trimmed = val.trim();
-  if (!trimmed) { el.classList.remove('invalid', 'valid'); return; }
+  const dotLoc = $('#numLocValidityDot');
+  if (!trimmed) { el.classList.remove('invalid', 'valid'); if (dotLoc) dotLoc.classList.remove('is-valid', 'is-invalid'); return; }
   const ok = NUMERO_PATTERN.test(trimmed);
   el.classList.toggle('invalid', !ok);
   el.classList.toggle('valid', ok);
+  if (dotLoc) { dotLoc.classList.toggle('is-valid', ok); dotLoc.classList.toggle('is-invalid', !ok); }
 });
 
 $('#numBt').addEventListener('input', () => {
   const el = $('#numBt');
   const val = el.value.trim();
-  if (!val) { el.classList.remove('valid', 'invalid'); return; }
+  const dotBt = $('#numBtValidityDot');
+  if (!val) { el.classList.remove('valid', 'invalid'); if (dotBt) dotBt.classList.remove('is-valid', 'is-invalid'); return; }
   const chiffres = val.replace(/\D/g, '');
   const ok = chiffres.length === 7;
   el.classList.toggle('valid', ok);
   el.classList.toggle('invalid', !ok);
+  if (dotBt) { dotBt.classList.toggle('is-valid', ok); dotBt.classList.toggle('is-invalid', !ok); }
 });
 
 async function ouvrirDossier() {
@@ -5915,6 +5920,86 @@ async function importDossierFromPickedFolder(expectedNumero) {
 }
 
 $('#btnImportNetwork').addEventListener('click', () => importDossierFromPickedFolder());
+
+// ---------- Lecteur de code QR (caméra) pour ouvrir un dossier ----------
+// Décode avec jsQR (bibliothèque vendorisée, aucune dépendance réseau).
+// Le code QR généré ailleurs dans l'app (buildDossierUrl()) encode déjà
+// l'URL complète de l'app avec ?mode=...&numero=...&bt=... -- il suffit
+// donc de rediriger la page vers le texte décodé pour que le mécanisme
+// autoResumeFromUrl() déjà en place prenne le relais automatiquement,
+// sans dupliquer sa logique ici.
+let qrScannerStream = null;
+let qrScannerRafId = null;
+async function ouvrirLecteurQr() {
+  const overlay = $('#qrScannerOverlay');
+  const video = $('#qrScannerVideo');
+  const statusEl = $('#qrScannerStatus');
+  if (!overlay || !video) return;
+  if (typeof jsQR === 'undefined') {
+    toast('Le lecteur de code QR n\u2019a pas pu se charger.', 4000);
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('La caméra n\u2019est pas accessible sur ce navigateur/appareil.', 4000);
+    return;
+  }
+  overlay.classList.remove('hidden');
+  if (statusEl) statusEl.textContent = 'Ouverture de la caméra…';
+  try {
+    qrScannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  } catch (err) {
+    if (statusEl) statusEl.textContent = '';
+    toast('Impossible d\u2019accéder à la caméra (autorisation refusée ?).', 4000);
+    fermerLecteurQr();
+    return;
+  }
+  video.srcObject = qrScannerStream;
+  await video.play();
+  if (statusEl) statusEl.textContent = 'Recherche d\u2019un code QR…';
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  function tick() {
+    if (!qrScannerStream) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      let code = null;
+      try {
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        code = jsQR(frame.data, frame.width, frame.height);
+      } catch (err) { /* image pas encore prête -- on réessaie à la prochaine image */ }
+      if (code && code.data) {
+        if (statusEl) statusEl.textContent = 'Code QR reconnu — ouverture…';
+        const texte = code.data.trim();
+        fermerLecteurQr();
+        // N'accepte que les liens qui pointent vers cette app elle-même
+        // (même origine + même chemin) -- ignore tout autre code QR scanné
+        // par erreur, pour ne jamais naviguer ailleurs sans le vouloir.
+        if (texte.indexOf(location.origin + location.pathname) === 0) {
+          location.href = texte;
+        } else {
+          toast('Ce code QR ne correspond pas à un dossier de cette application.', 4500);
+        }
+        return;
+      }
+    }
+    qrScannerRafId = requestAnimationFrame(tick);
+  }
+  qrScannerRafId = requestAnimationFrame(tick);
+}
+function fermerLecteurQr() {
+  const overlay = $('#qrScannerOverlay');
+  const video = $('#qrScannerVideo');
+  if (qrScannerRafId) { cancelAnimationFrame(qrScannerRafId); qrScannerRafId = null; }
+  if (qrScannerStream) { qrScannerStream.getTracks().forEach((t) => t.stop()); qrScannerStream = null; }
+  if (video) video.srcObject = null;
+  if (overlay) overlay.classList.add('hidden');
+}
+const btnDashScanQr = $('#dashBtnScanQr');
+if (btnDashScanQr) btnDashScanQr.addEventListener('click', ouvrirLecteurQr);
+const btnQrScannerClose = $('#btnQrScannerClose');
+if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteurQr);
 
 // ---------- Reprise automatique via un lien/QR scanné ----------
 (async function autoResumeFromUrl() {

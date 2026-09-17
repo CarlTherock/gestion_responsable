@@ -59,6 +59,7 @@
       <div class="tools-row" style="margin-bottom: var(--space-5);">
         <button class="btn btn-primary" id="dashBtnNouveau">+ Nouveau dossier</button>
         <button class="btn btn-outline" id="dashBtnOuvrir">Ouvrir un dossier</button>
+        <button class="btn btn-outline" id="dashBtnScanQr"><span class="icon-inline" data-icon="scanQr" style="margin-right:4px;"></span>Scanner un code QR</button>
         <button class="btn btn-outline hidden" id="dashBtnReprendre">Reprendre le dernier dossier</button>
       </div>
 
@@ -122,14 +123,20 @@
         <div class="field-row">
           <div class="field">
             <label for="numLoc">Numéro de localisation</label>
-            <input type="text" id="numLoc" placeholder="ex. 12-FT-4407">
+            <div class="field-input-row">
+              <input type="text" id="numLoc" placeholder="ex. 12-FT-4407">
+              <span class="field-validity-dot" id="numLocValidityDot" aria-hidden="true"></span>
+            </div>
             <div class="field-hint">Lettres, chiffres et tirets seulement (obligatoire)</div>
           </div>
         </div>
         <div class="field-row" style="margin-top: var(--space-4);">
           <div class="field">
             <label for="numBt">B.T.</label>
-            <input type="text" id="numBt" placeholder="ex. 123-AB-4567X" maxlength="12">
+            <div class="field-input-row">
+              <input type="text" id="numBt" placeholder="ex. 123-AB-4567X" maxlength="12">
+              <span class="field-validity-dot" id="numBtValidityDot" aria-hidden="true"></span>
+            </div>
             <div class="field-hint">Champ obligatoire — doit contenir exactement 7 chiffres</div>
           </div>
           <button class="btn btn-primary" id="btnOuvrirDossier">Continuer →</button>
@@ -626,12 +633,25 @@
       <button type="button" class="lightbox-close-btn" id="btnLightboxClose" aria-label="Fermer">✕</button>
       <img id="lightboxImg" src="" alt="">
     </div>
+
+    <div class="lightbox-overlay hidden" id="qrScannerOverlay">
+      <button type="button" class="lightbox-close-btn" id="btnQrScannerClose" aria-label="Fermer">✕</button>
+      <div class="qr-scanner-box">
+        <p class="qr-scanner-hint">Visez le code QR d'un dossier — l'ouverture est automatique dès qu'il est reconnu.</p>
+        <div class="qr-scanner-video-wrap">
+          <video id="qrScannerVideo" playsinline muted autoplay></video>
+          <div class="qr-scanner-frame"></div>
+        </div>
+        <p class="qr-scanner-status" id="qrScannerStatus"></p>
+      </div>
+    </div>
   </main>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script src="./vendor/qrcode.min.js"></script>
+<script src="./vendor/jsqr.min.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
