@@ -454,6 +454,17 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 #captureZoomRange { width: 160px; }
 .capture-zoom-value { font-size: var(--text-sm); color: var(--color-text-muted); min-width: 48px; text-align: right; }
 
+/* Sur mobile, le panneau de propriétés (Couleur/Épaisseur/Taille) passait
+   par-dessus la barre d'outils au lieu de s'empiler dessous (aucune version
+   responsive n'existait pour cette disposition à deux colonnes). */
+@media (max-width: 680px) {
+  .capture-editor-layout { flex-direction: column; overflow-y: auto; }
+  .capture-props-panel { width: 100%; flex-shrink: 0; border-left: none; border-top: 1px solid var(--color-border); padding-left: 0; padding-top: var(--space-4); overflow-y: visible; }
+  .capture-main-column { flex: 0 0 auto; }
+  .capture-canvas-wrap { min-height: 240px; }
+  .capture-toolbar .btn { flex: 1 1 calc(50% - var(--space-2)); }
+}
+
 /* ---------- Visionneuse d'image plein écran (au lieu de la petite fenêtre générique) ---------- */
 .lightbox-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 1100;
