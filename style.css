@@ -1230,6 +1230,18 @@ select.ncextra-gravite {
 .revision-nom { flex: 1; }
 .revision-statut { color: var(--color-text-muted); font-size: var(--text-xs); white-space: nowrap; }
 
+/* Sur mobile, .revision-row (dossier actif du Tableau de bord, liste des
+   révisions) débordait de l'écran — 4 éléments sur une seule ligne sans
+   retour à la ligne possible, texte coupé aux deux bords. Autorise
+   maintenant le retour à la ligne : ID + pastille de statut restent
+   ensemble sur la première ligne (courts), le nom/description et la date
+   prennent chacun leur propre ligne complète en dessous. */
+@media (max-width: 680px) {
+  .revision-row { flex-wrap: wrap; row-gap: var(--space-1); }
+  .revision-nom { flex: 1 1 100%; min-width: 0; }
+  .revision-statut { flex: 1 1 100%; white-space: normal; }
+}
+
 /* ---------- Tableau de bord : dossier actif, état vide ---------- */
 .dash-active-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4) var(--space-5); background: var(--color-surface-2); }
 .dash-status-pill { font-size: var(--text-xs); font-weight: 600; padding: 2px var(--space-2); border-radius: var(--radius-full); background: var(--color-surface-offset); color: var(--color-text-muted); white-space: nowrap; }
