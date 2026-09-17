@@ -139,6 +139,15 @@ const ICONS = {
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   checkCircle: '<circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/>',
   hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  crop: '<path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/>',
+  edit3: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  square: '<rect x="3" y="3" width="18" height="18" rx="2"/>',
+  type: '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+  cornerUpLeft: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
+  refreshCw: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+  circle: '<circle cx="12" cy="12" r="9"/>',
+  lineIcon: '<line x1="5" y1="19" x2="19" y2="5"/>',
+  arrowIcon: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
   alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   messageCircle: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
@@ -4359,6 +4368,25 @@ function showCaptureEditor(file) {
       redrawAll();
     }
 
+    // ---- Barre mobile : 4 catégories (Sélection/Dessin/Formes/Texte) qui
+    // révèlent chacune un sous-menu d'icônes -- les icônes elles-mêmes
+    // utilisent déjà [data-capture-tool] et sont donc câblées par la boucle
+    // générique ci-dessous (onToolClick), aucune logique de sélection d'outil
+    // à dupliquer ici.
+    function onMobileCatClick(e) {
+      const cat = e.currentTarget.dataset.mobileCat;
+      $$('.capture-mobile-cat[data-mobile-cat]').forEach((b) => b.classList.remove('active'));
+      e.currentTarget.classList.add('active');
+      $$('.capture-mobile-tool-group', $('#captureMobileSubmenu')).forEach((g) => g.classList.toggle('hidden', g.dataset.mobileGroup !== cat));
+      // Choisit automatiquement le premier outil du groupe pour que le
+      // sous-menu et l'outil actif restent cohérents.
+      const firstTool = $(`.capture-mobile-tool-group[data-mobile-group="${cat}"] [data-capture-tool]`);
+      if (firstTool) firstTool.click();
+    }
+    function onMobilePropsToggle() {
+      $('#capturePropsPanel').classList.toggle('capture-props-collapsed');
+    }
+
     const zoomRange = $('#captureZoomRange');
     const zoomValueEl = $('#captureZoomValue');
     let baseDisplayWidth = null;
@@ -4419,6 +4447,10 @@ function showCaptureEditor(file) {
       canvas.removeEventListener('touchmove', onMove);
       canvas.removeEventListener('touchend', onUp);
       $$('[data-capture-tool]').forEach((b) => b.removeEventListener('click', onToolClick));
+      $$('.capture-mobile-cat[data-mobile-cat]').forEach((b) => b.removeEventListener('click', onMobileCatClick));
+      $('#btnCaptureMobileProps').removeEventListener('click', onMobilePropsToggle);
+      $('#btnCaptureUndoMobile').removeEventListener('click', onUndo);
+      $('#btnCaptureResetMobile').removeEventListener('click', onReset);
       $('#btnCaptureReset').removeEventListener('click', onReset);
       $('#btnCaptureUndo').removeEventListener('click', onUndo);
       $('#btnCaptureCancel').removeEventListener('click', onCancel);
@@ -4465,6 +4497,9 @@ function showCaptureEditor(file) {
       resetCopyPasteButtons();
       tool = 'select';
       $$('[data-capture-tool]').forEach((b) => b.classList.toggle('active', b.dataset.captureTool === 'select'));
+      $$('.capture-mobile-cat[data-mobile-cat]').forEach((b) => b.classList.toggle('active', b.dataset.mobileCat === 'selection'));
+      $$('.capture-mobile-tool-group', $('#captureMobileSubmenu')).forEach((g) => g.classList.toggle('hidden', g.dataset.mobileGroup !== 'selection'));
+      $('#capturePropsPanel').classList.add('capture-props-collapsed');
       updatePropsPanelForSelection();
       redrawAll();
       canvas.addEventListener('mousedown', onDown);
@@ -4475,6 +4510,10 @@ function showCaptureEditor(file) {
       canvas.addEventListener('touchmove', onMove);
       canvas.addEventListener('touchend', onUp);
       $$('[data-capture-tool]').forEach((b) => b.addEventListener('click', onToolClick));
+      $$('.capture-mobile-cat[data-mobile-cat]').forEach((b) => b.addEventListener('click', onMobileCatClick));
+      $('#btnCaptureMobileProps').addEventListener('click', onMobilePropsToggle);
+      $('#btnCaptureUndoMobile').addEventListener('click', onUndo);
+      $('#btnCaptureResetMobile').addEventListener('click', onReset);
       $('#btnCaptureReset').addEventListener('click', onReset);
       $('#btnCaptureUndo').addEventListener('click', onUndo);
       $('#btnCaptureCancel').addEventListener('click', onCancel);
