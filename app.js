@@ -3207,7 +3207,11 @@ function buildResumeText() {
 $('#btnOuvrirDossier').addEventListener('click', ouvrirDossier);
 $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirDossier(); });
 
-const NUMERO_PATTERN = /^[A-Za-z0-9-]+$/;
+// Format attendu : segments alphanumériques séparés par des tirets (ex.
+// 888-FT-8888, 811-LV-7051A, 12-FT-4407) — deux ou trois segments, jamais
+// vide et jamais de tiret en fin (ex. "888-FT-" reste invalide/rouge tant
+// que le dernier segment n'est pas complété).
+const NUMERO_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+){1,2}$/;
 
 $('#numLoc').addEventListener('input', (e) => {
   const el = $('#numLoc');
@@ -3259,7 +3263,15 @@ async function ouvrirDossier() {
     statusEl.textContent = 'Entrez d\u2019abord le numéro de localisation.';
     return;
   }
-  if (!NUMERO_PATTERN.test(numero)) {
+
+  // Un numéro qui correspond déjà à un dossier existant est toujours
+  // accepté, même s'il ne respecte pas le format strict attendu pour un
+  // NOUVEAU dossier (ex-XXX-XX-XXXX) -- évite de bloquer l'ouverture d'un
+  // ancien dossier créé avant ce resserrement de la validation. Le format
+  // strict ne s'applique donc qu'à la création d'un dossier qui n'existe
+  // pas encore.
+  const dossierExistant = await dbGet(numero);
+  if (!dossierExistant && !NUMERO_PATTERN.test(numero)) {
     statusEl.classList.remove('hidden', 'ok', 'new');
     statusEl.classList.add('err');
     statusEl.textContent = 'Le numéro de localisation ne peut contenir que des lettres, des chiffres et des tirets.';
@@ -3289,7 +3301,7 @@ async function ouvrirDossier() {
   statusEl.classList.remove('hidden', 'ok', 'err');
   statusEl.textContent = 'Ouverture du dossier local…';
 
-  const existing = await dbGet(numero);
+  const existing = dossierExistant;
   if (existing) {
     state.draft = normalizeDraft(existing);
     state.isNewDraft = false;
@@ -6019,7 +6031,12 @@ if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteur
   // Nettoyer l'URL pour ne pas reprendre automatiquement à chaque rechargement futur
   history.replaceState({}, '', location.pathname);
 
-  if (!NUMERO_PATTERN.test(numero)) {
+  // Un dossier déjà existant sur cet appareil est toujours accepté, même si
+  // son numéro ne respecte pas le format strict attendu pour un nouveau
+  // dossier (même principe que dans ouvrirDossier()) -- important puisque
+  // c'est ce chemin qu'emprunte aussi le lecteur de code QR.
+  const dossierExistantAuto = await dbGet(numero);
+  if (!dossierExistantAuto && !NUMERO_PATTERN.test(numero)) {
     toast('Le numéro de localisation contient des caractères invalides.', 4000);
     return;
   }
@@ -6029,7 +6046,7 @@ if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteur
   }
 
   // Sur cet appareil, un brouillon local existe déjà : on l'ouvre directement (le plus rapide).
-  const existing = await dbGet(numero);
+  const existing = dossierExistantAuto;
   if (existing) {
     ouvrirDossier();
     return;

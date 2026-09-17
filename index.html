@@ -56,12 +56,14 @@
         <h1>Tableau de bord</h1>
       </div>
 
-      <div class="tools-row" style="margin-bottom: var(--space-5);">
+      <div class="tools-row" style="margin-bottom: var(--space-3);">
         <button class="btn btn-primary" id="dashBtnNouveau">+ Nouveau dossier</button>
         <button class="btn btn-outline" id="dashBtnOuvrir">Ouvrir un dossier</button>
-        <button class="btn btn-outline" id="dashBtnScanQr"><span class="icon-inline" data-icon="scanQr" style="margin-right:4px;"></span>Scanner un code QR</button>
-        <button class="btn btn-outline hidden" id="dashBtnReprendre">Reprendre le dernier dossier</button>
       </div>
+      <div class="dash-qr-row">
+        <button class="btn btn-outline dash-qr-square" id="dashBtnScanQr" title="Scanner un code QR" aria-label="Scanner un code QR">QR</button>
+      </div>
+      <button class="btn btn-outline hidden" id="dashBtnReprendre" style="margin-bottom: var(--space-5);">Reprendre le dernier dossier</button>
 
       <div id="dashDossierActif"></div>
 
