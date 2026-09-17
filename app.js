@@ -3207,11 +3207,10 @@ function buildResumeText() {
 $('#btnOuvrirDossier').addEventListener('click', ouvrirDossier);
 $('#numLoc').addEventListener('keydown', (e) => { if (e.key === 'Enter') ouvrirDossier(); });
 
-// Format attendu : segments alphanumériques séparés par des tirets (ex.
-// 888-FT-8888, 811-LV-7051A, 12-FT-4407) — deux ou trois segments, jamais
-// vide et jamais de tiret en fin (ex. "888-FT-" reste invalide/rouge tant
-// que le dernier segment n'est pas complété).
-const NUMERO_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+){1,2}$/;
+// Format exact confirmé par Carl : 3 chiffres obligatoires, puis 2 ou 3
+// lettres, puis 4, 5 ou 6 caractères alphanumériques (ex. 888-FT-8888,
+// 811-LV-7051A).
+const NUMERO_PATTERN = /^\d{3}-[A-Za-z]{2,3}-[A-Za-z0-9]{4,6}$/;
 
 $('#numLoc').addEventListener('input', (e) => {
   const el = $('#numLoc');
@@ -3274,7 +3273,7 @@ async function ouvrirDossier() {
   if (!dossierExistant && !NUMERO_PATTERN.test(numero)) {
     statusEl.classList.remove('hidden', 'ok', 'new');
     statusEl.classList.add('err');
-    statusEl.textContent = 'Le numéro de localisation ne peut contenir que des lettres, des chiffres et des tirets.';
+    statusEl.textContent = 'Format attendu : 3 chiffres - 2 ou 3 lettres - 4 à 6 caractères (ex. 888-FT-8888).';
     $('#numLoc').classList.add('invalid');
     $('#numLoc').focus();
     return;
@@ -6037,7 +6036,7 @@ if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteur
   // c'est ce chemin qu'emprunte aussi le lecteur de code QR.
   const dossierExistantAuto = await dbGet(numero);
   if (!dossierExistantAuto && !NUMERO_PATTERN.test(numero)) {
-    toast('Le numéro de localisation contient des caractères invalides.', 4000);
+    toast('Format de numéro de localisation invalide (attendu : 3 chiffres - 2 ou 3 lettres - 4 à 6 caractères).', 4500);
     return;
   }
   if (!bt) {
