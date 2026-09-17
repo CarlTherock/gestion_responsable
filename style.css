@@ -531,6 +531,19 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   border-radius: 50%; width: 44px; height: 44px; font-size: 22px; line-height: 1; cursor: pointer;
 }
 
+/* ---------- Lecteur de code QR (ouvre un dossier via la caméra) ---------- */
+.qr-scanner-box { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); width: 100%; max-width: 480px; }
+.qr-scanner-hint { color: #fff; text-align: center; font-size: var(--text-sm); margin: 0; }
+.qr-scanner-video-wrap { position: relative; width: 100%; max-height: 60vh; overflow: hidden; border-radius: var(--radius-md); background: #000; }
+#qrScannerVideo { width: 100%; max-height: 60vh; display: block; object-fit: cover; }
+.qr-scanner-frame {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 60%; aspect-ratio: 1 / 1; max-width: 240px;
+  border: 3px solid var(--color-primary); border-radius: var(--radius-md);
+  box-shadow: 0 0 0 2000px rgba(0,0,0,0.35); pointer-events: none;
+}
+.qr-scanner-status { color: #fff; text-align: center; font-size: var(--text-sm); min-height: 1.4em; margin: 0; }
+
 /* ---------- Pastille de progression ---------- */
 #wsProgressPill { font-family: var(--font-mono); font-weight: 600; color: #10151b; }
 
@@ -551,8 +564,17 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 
 /* ---------- Validation du champ B.T. ---------- */
 .field-hint { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; }
-.field input.invalid { border-color: var(--color-danger, #d64545) !important; }
-.field input.valid { border-color: var(--color-success) !important; }
+.field input.invalid { border-color: var(--color-danger, #d64545) !important; border-width: 2px !important; }
+.field input.valid { border-color: var(--color-success) !important; border-width: 2px !important; }
+.field-input-row { position: relative; display: flex; align-items: center; }
+.field-input-row input { flex: 1; padding-right: 40px; }
+.field-validity-dot {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; border-radius: 4px; background: var(--color-border);
+  transition: background-color 0.15s, box-shadow 0.15s; pointer-events: none;
+}
+.field-validity-dot.is-valid { background: var(--color-success); box-shadow: 0 0 0 4px rgba(74,222,128,0.28); }
+.field-validity-dot.is-invalid { background: var(--color-danger, #d64545); box-shadow: 0 0 0 4px rgba(214,69,69,0.28); }
 
 /* ---------- Onglet VPO : liste dynamique ---------- */
 .vpo-row { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
