@@ -3680,10 +3680,10 @@ function renderChecklist(group) {
         if (e.target === input || e.target.closest('button')) return;
         input.click();
       });
-      input.addEventListener('change', () => attachFilesMaybeEdited(group, name, input.files));
+      input.addEventListener('change', () => attachFilesToTask(group, name, input.files));
       ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
       ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
-      dz.addEventListener('drop', (e) => attachFilesMaybeEdited(group, name, e.dataTransfer.files));
+      dz.addEventListener('drop', (e) => attachFilesToTask(group, name, e.dataTransfer.files));
       const captureBtn = dz.querySelector('[data-item-capture]');
       if (captureBtn) {
         captureBtn.addEventListener('click', async (e) => {
@@ -4559,26 +4559,6 @@ async function attachFilesToTask(group, name, fileList) {
   updateFilesCount();
   updateProgressPill();
   toast(`${fileList.length} document(s) joint(s) à la tâche.`);
-}
-
-// Fait passer une photo par l'éditeur de capture (mêmes outils de retouche
-// que "Capturer l'écran" : recadrer, flèches, formes, texte, flouter...)
-// avant de l'attacher. IMPORTANT : limité au mobile (largeur d'écran <= 680px,
-// même seuil que le reste de l'app pour distinguer PC/mobile) — sur PC, le
-// clic-pour-parcourir et le glisser-déposer restent inchangés (attachement
-// direct, comme avant), pour ne toucher à AUCUN comportement du PWA web. Sur
-// mobile, une seule photo (caméra ou bibliothèque) passe par l'éditeur; un
-// import groupé de plusieurs fichiers à la fois attache directement, pour
-// éviter d'ouvrir la fenêtre plein écran une fois par fichier.
-async function attachFilesMaybeEdited(group, name, fileList) {
-  if (!fileList || !fileList.length) return;
-  const estMobile = window.innerWidth <= 680;
-  if (estMobile && fileList.length === 1 && isImageFile(fileList[0].name)) {
-    const edited = await showCaptureEditor(fileList[0]);
-    await attachFilesToTask(group, name, [edited || fileList[0]]);
-  } else {
-    await attachFilesToTask(group, name, fileList);
-  }
 }
 
 function renderItemFileList(group, name) {
@@ -6168,7 +6148,7 @@ $('#ivPhotoInput').addEventListener('change', async () => {
   const task = ivTaskList[ivIndex];
   const input = $('#ivPhotoInput');
   if (!task || !input.files || !input.files.length) return;
-  await attachFilesMaybeEdited(task.group, task.name, input.files);
+  await attachFilesToTask(task.group, task.name, input.files);
   input.value = '';
   $('#ivPhotoConfirm').classList.remove('hidden');
 });
