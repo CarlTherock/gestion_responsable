@@ -1110,11 +1110,11 @@ select.ncextra-gravite {
 .tools-row { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-6); }
 .dash-qr-row { display: flex; justify-content: center; margin-bottom: var(--space-3); }
 .dash-qr-square {
-  width: 128px; height: 128px; padding: 0;
+  width: 128px; height: 166px; padding: 0;
   background: none; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
 }
-.dash-qr-icon { width: 128px; height: 128px; display: block; }
+.dash-qr-icon { width: 128px; height: 166px; display: block; }
 
 /* ---------- Recherche interne (PC — Ctrl/Cmd+K) ---------- */
 .search-overlay {
