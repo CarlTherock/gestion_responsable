@@ -4563,13 +4563,17 @@ async function attachFilesToTask(group, name, fileList) {
 
 // Fait passer une photo par l'éditeur de capture (mêmes outils de retouche
 // que "Capturer l'écran" : recadrer, flèches, formes, texte, flouter...)
-// avant de l'attacher — utilisé pour une photo prise à la caméra (mobile)
-// ou déposée/parcourue individuellement. Pour un import groupé de plusieurs
-// fichiers à la fois, attache directement sans passer par l'éditeur (ouvrir
-// la fenêtre plein écran une fois par fichier serait pénible).
+// avant de l'attacher. IMPORTANT : limité au mobile (largeur d'écran <= 680px,
+// même seuil que le reste de l'app pour distinguer PC/mobile) — sur PC, le
+// clic-pour-parcourir et le glisser-déposer restent inchangés (attachement
+// direct, comme avant), pour ne toucher à AUCUN comportement du PWA web. Sur
+// mobile, une seule photo (caméra ou bibliothèque) passe par l'éditeur; un
+// import groupé de plusieurs fichiers à la fois attache directement, pour
+// éviter d'ouvrir la fenêtre plein écran une fois par fichier.
 async function attachFilesMaybeEdited(group, name, fileList) {
   if (!fileList || !fileList.length) return;
-  if (fileList.length === 1 && isImageFile(fileList[0].name)) {
+  const estMobile = window.innerWidth <= 680;
+  if (estMobile && fileList.length === 1 && isImageFile(fileList[0].name)) {
     const edited = await showCaptureEditor(fileList[0]);
     await attachFilesToTask(group, name, [edited || fileList[0]]);
   } else {
@@ -6397,7 +6401,7 @@ function renderTaskPanelBody() {
   });
   $('#tpFileInput').addEventListener('change', async (e) => {
     if (!e.target.files || !e.target.files.length) return;
-    await attachFilesMaybeEdited(group, name, e.target.files);
+    await attachFilesToTask(group, name, e.target.files);
     e.target.value = '';
     renderChecklist(group);
     renderTaskPanelBody();
