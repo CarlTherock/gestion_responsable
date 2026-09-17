@@ -3671,10 +3671,10 @@ function renderChecklist(group) {
         if (e.target === input || e.target.closest('button')) return;
         input.click();
       });
-      input.addEventListener('change', () => attachFilesToTask(group, name, input.files));
+      input.addEventListener('change', () => attachFilesMaybeEdited(group, name, input.files));
       ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
       ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
-      dz.addEventListener('drop', (e) => attachFilesToTask(group, name, e.dataTransfer.files));
+      dz.addEventListener('drop', (e) => attachFilesMaybeEdited(group, name, e.dataTransfer.files));
       const captureBtn = dz.querySelector('[data-item-capture]');
       if (captureBtn) {
         captureBtn.addEventListener('click', async (e) => {
@@ -4520,6 +4520,22 @@ async function attachFilesToTask(group, name, fileList) {
   updateFilesCount();
   updateProgressPill();
   toast(`${fileList.length} document(s) joint(s) à la tâche.`);
+}
+
+// Fait passer une photo par l'éditeur de capture (mêmes outils de retouche
+// que "Capturer l'écran" : recadrer, flèches, formes, texte, flouter...)
+// avant de l'attacher — utilisé pour une photo prise à la caméra (mobile)
+// ou déposée/parcourue individuellement. Pour un import groupé de plusieurs
+// fichiers à la fois, attache directement sans passer par l'éditeur (ouvrir
+// la fenêtre plein écran une fois par fichier serait pénible).
+async function attachFilesMaybeEdited(group, name, fileList) {
+  if (!fileList || !fileList.length) return;
+  if (fileList.length === 1 && isImageFile(fileList[0].name)) {
+    const edited = await showCaptureEditor(fileList[0]);
+    await attachFilesToTask(group, name, [edited || fileList[0]]);
+  } else {
+    await attachFilesToTask(group, name, fileList);
+  }
 }
 
 function renderItemFileList(group, name) {
@@ -6109,7 +6125,7 @@ $('#ivPhotoInput').addEventListener('change', async () => {
   const task = ivTaskList[ivIndex];
   const input = $('#ivPhotoInput');
   if (!task || !input.files || !input.files.length) return;
-  await attachFilesToTask(task.group, task.name, input.files);
+  await attachFilesMaybeEdited(task.group, task.name, input.files);
   input.value = '';
   $('#ivPhotoConfirm').classList.remove('hidden');
 });
@@ -6342,7 +6358,7 @@ function renderTaskPanelBody() {
   });
   $('#tpFileInput').addEventListener('change', async (e) => {
     if (!e.target.files || !e.target.files.length) return;
-    await attachFilesToTask(group, name, e.target.files);
+    await attachFilesMaybeEdited(group, name, e.target.files);
     e.target.value = '';
     renderChecklist(group);
     renderTaskPanelBody();
