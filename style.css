@@ -1049,10 +1049,10 @@ select.ncextra-gravite {
 
   /* Source #2 (résumé mobile consolidé) : seule source visible */
   .ws-summary-mobile {
-    display: block; padding: var(--space-3) var(--space-4);
+    display: block; padding: var(--space-3) max(var(--space-5), env(safe-area-inset-right)) var(--space-3) max(var(--space-5), env(safe-area-inset-left));
     border-bottom: 1px solid var(--color-divider);
   }
-  .ws-summary-line1 { display: flex; align-items: center; gap: var(--space-2); font-family: var(--font-mono); font-size: var(--text-base); font-weight: 700; }
+  .ws-summary-line1 { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-family: var(--font-mono); font-size: var(--text-base); font-weight: 700; }
   .ws-summary-status {
     margin-left: auto; font-family: var(--font-body); font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.03em; color: var(--color-text-muted); background: var(--color-surface-offset);
@@ -1067,7 +1067,7 @@ select.ncextra-gravite {
   .ws-summary-line3 { font-size: 12px; color: var(--color-text-faint); margin-top: 4px; }
 
   .ws-actions-mobile {
-    display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-4);
+    display: flex; gap: var(--space-3); padding: var(--space-3) max(var(--space-5), env(safe-area-inset-right)) var(--space-3) max(var(--space-5), env(safe-area-inset-left));
     border-bottom: 1px solid var(--color-divider);
   }
   .ws-actions-mobile .btn { flex: 1; min-height: 46px; }
@@ -1083,7 +1083,7 @@ select.ncextra-gravite {
 
 /* ---------- Prochaine tâche (info non cliquable) + lignes de contrôle VPO/NC ---------- */
 @media (max-width: 680px) {
-  .mobile-resume-body { padding: var(--space-4); }
+  .mobile-resume-body { padding: var(--space-5) max(var(--space-5), env(safe-area-inset-right)) var(--space-5) max(var(--space-5), env(safe-area-inset-left)); }
   .mobile-next-task {
     border: 1px solid var(--color-border); border-radius: var(--radius-sm);
     padding: var(--space-4); margin-bottom: var(--space-4);
