@@ -116,6 +116,9 @@ const state = {
   // besoin d'être visible pour un collègue qui ouvre le dossier — un bouton
   // permet de l'afficher au besoin. Préférence de session, non persistée.
   activiteRecenteVisible: false,
+  // ---------- Mode consultation — dossier partagé (lecture seule) ----------
+  readOnlyConsultation: false, // true : dossier ouvert via ?partage=, jamais persisté sur cet appareil
+  consultationMeta: null,      // { submittedBy, submittedRole, submittedAt, revisionId, snapshotId } pour le bandeau
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -375,6 +378,12 @@ async function dbGet(numero) {
 }
 
 async function dbPut(draft) {
+  // Mode consultation (dossier partagé, lecture seule) : ne jamais écrire sur
+  // cet appareil. Bloque ici, au point de passage central utilisé par TOUTE
+  // action qui modifie le dossier (cases à cocher, VPO/VPD, photos,
+  // commentaires, révisions...) -- une seule vérification protège tout,
+  // peu importe quel bouton a déclenché l'action.
+  if (state.readOnlyConsultation) return false;
   try {
     const db = await openDb();
     return await new Promise((resolve, reject) => {
@@ -970,6 +979,29 @@ const DOSSIER_IDENTITY_FIELDS = ['bt', 'tag', 'type'];
 // l'historique global (approbations, journal) ne sont jamais touchés.
 // Instantané léger (sans fichiers binaires) utilisé seulement pour comparer
 // une sauvegarde à la précédente — pas pour restaurer les données elles-mêmes.
+// Instantané complet et importable (contrairement à buildLightSnapshot, qui
+// est un résumé compact pour la comparaison d'historique) : reprend TOUT le
+// dossier via un aller-retour JSON, ce qui exclut naturellement les blobs
+// (photos/documents) puisqu'un Blob/File n'a aucune propriété énumérable
+// propre -- JSON.stringify() les réduit à {} automatiquement. On remplace
+// explicitement chaque blob par null ensuite (plutôt que de laisser {}),
+// pour que le reste du code puisse détecter proprement "pas de fichier
+// disponible" plutôt que de risquer un plantage en essayant de créer une
+// URL d'objet à partir d'un {} qui n'est pas un vrai Blob. Utilisé pour
+// permettre au Dashboard exporté d'ouvrir directement le dossier dans
+// l'application sur un nouvel appareil (voir buildDashboardHtml() et le
+// message "suivi-tei-import"), sans que le destinataire ait à choisir
+// manuellement le dossier réseau -- les métadonnées des fichiers (nom,
+// taille, commentaire) restent visibles, mais pas les fichiers eux-mêmes.
+function buildImportableSnapshot(d) {
+  const clone = JSON.parse(JSON.stringify(d));
+  const nullifyBlobs = (arr) => { (arr || []).forEach((f) => { f.blob = null; }); };
+  Object.values(clone.casesFichiers || {}).forEach(nullifyBlobs);
+  Object.values(clone.ncFichiers || {}).forEach(nullifyBlobs);
+  Object.values(clone.files || {}).forEach(nullifyBlobs);
+  return clone;
+}
+
 function buildLightSnapshot(d) {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length;
   const ncFichiersCount = Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
@@ -1525,7 +1557,7 @@ function renderDocuments() {
 
   container.innerHTML = filterBarHtml + (filtered.length ? `<div class="doc-list-rich">${filtered.map((doc, i) => `
     <div class="doc-row-rich" data-share-file-idx="${i}">
-      ${isImageFile(doc.file.name)
+      ${isImageFile(doc.file.name) && hasUsableBlob(doc.file)
         ? `<img src="${URL.createObjectURL(doc.file.blob)}" class="thumb-lg" alt="${escapeHtml(doc.file.name)}" data-doc-enlarge="${i}">`
         : `<span class="ext-badge">${extBadge(doc.file.name)}</span>`}
       <div class="doc-row-info">
@@ -1574,6 +1606,7 @@ function renderDocuments() {
   $$('.doc-dl-btn', container).forEach((btn, i) => {
     btn.addEventListener('click', () => {
       const doc = filtered[i];
+      if (!hasUsableBlob(doc.file)) { toast('Ce fichier n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
       const url = URL.createObjectURL(doc.file.blob);
       const a = document.createElement('a');
       a.href = url; a.download = doc.file.name;
@@ -2066,7 +2099,7 @@ function renderNonConformites() {
   el.innerHTML = rows.map((r) => {
     const files = state.draft.ncFichiers[r.numero] || [];
     const filesHtml = files.length ? `<div class="attachments">${files.map((f, i) => {
-      return isImageFile(f.name)
+      return isImageFile(f.name) && hasUsableBlob(f)
         ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}" data-nc-file-enlarge="${r.numero}::${i}">`
         : `<span class="doc-link"><span class="icon-inline" data-icon="folder" style="margin-right:4px;"></span>${escapeHtml(f.name)}</span>`;
     }).join('')}</div>` : '';
@@ -2647,6 +2680,15 @@ function isImageFile(filename) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename);
 }
 
+// Un fichier importé depuis un Dashboard exporté (voir buildImportableSnapshot)
+// garde son nom/sa taille/son commentaire, mais son blob réel est explicitement
+// mis à null (les photos ne voyagent pas par ce mécanisme, trop volumineuses).
+// Toujours vérifier ceci avant d'appeler URL.createObjectURL(f.blob), sinon
+// plantage garanti sur un dossier importé sans ses fichiers.
+function hasUsableBlob(f) {
+  return !!(f && f.blob && typeof f.blob === 'object' && (f.blob instanceof Blob || typeof f.blob.size === 'number'));
+}
+
 function ringSvg(pct, size, stroke) {
   const clamped = Math.max(0, Math.min(100, pct));
   const r = (size - stroke) / 2;
@@ -3059,9 +3101,30 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" href="../04_NonConformites/"><span class="nav-label">Ouvrir les non-conformités</span><span class="nav-path">04_NonConformites/</span></a>
       <a class="nav-btn" href="../../"><span class="nav-label">Voir l\u2019historique (autres sauvegardes)</span><span class="nav-path">.. (racine du dossier)</span></a>
       <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
-      <a class="nav-btn" href="${appUrl}"><span class="nav-label">Créer une révision</span><span class="nav-path">Ouvre l\u2019application</span></a>
-      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre l\u2019application' : 'Disponible à 100 % seulement'}</span></a>
-    </div>`}
+      <a class="nav-btn" href="${appUrl}" onclick="return ouvrirDansSuiviTei(this.href);"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule, avec les données de cette sauvegarde</span></a>
+      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}" onclick="return ouvrirDansSuiviTei(this.href);"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre Suivi TEI en mode consultation' : 'Disponible à 100 % seulement'}</span></a>
+    </div>
+    <script>
+      // "Ouvrir dans Suivi TEI" : ouvre l'application avec un paramètre
+      // ?partage=<URL du suivi.json de CETTE sauvegarde exacte>. L'application
+      // télécharge et lit ce fichier au démarrage et ouvre le dossier en
+      // MODE CONSULTATION (lecture seule) -- fonctionne même en cliquant un
+      // lien directement depuis un courriel (aucune relation de fenêtre
+      // requise, contrairement à un mécanisme par onglet ouvreur). Le chemin
+      // du suivi.json est calculé au moment du clic, relatif à l'endroit réel
+      // où CE Dashboard est hébergé (OneDrive, SharePoint, réseau...), jamais
+      // un chemin Windows absolu.
+      function ouvrirDansSuiviTei(baseAppUrl) {
+        try {
+          const suiviJsonUrl = new URL('../01_Dossier_actif/suivi.json', document.baseURI).href;
+          const sep = baseAppUrl.indexOf('?') === -1 ? '?' : '&';
+          window.open(baseAppUrl + sep + 'partage=' + encodeURIComponent(suiviJsonUrl), '_blank');
+        } catch (err) {
+          window.open(baseAppUrl, '_blank');
+        }
+        return false;
+      }
+    </script>`}
 
     <div class="hero-ring">
       ${ringSvg(pct, 150, 14)}
@@ -3325,14 +3388,19 @@ async function ouvrirDossier() {
 // ---------- Étape 3 : espace de travail ----------
 function openWorkspace() {
   const d = state.draft;
-  try {
-    localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
-  } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
-  // Tente de retrouver silencieusement l'emplacement de sauvegarde retenu
-  // pour ce dossier (sans bloquer l'affichage ni demander de permission
-  // activement) -- si l'autorisation a expiré, on retombe simplement sur le
-  // choix normal au prochain Enregistrer.
-  if (!state.rootDirHandle && !state.dossierDirHandle) tryRestoreSaveLocation(state.numero);
+  // En mode consultation (dossier partagé, lecture seule), ne jamais toucher
+  // au "dernier dossier actif" de CET appareil, ni tenter de retrouver un
+  // emplacement de sauvegarde -- ce n'est pas un dossier de travail normal.
+  if (!state.readOnlyConsultation) {
+    try {
+      localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
+    } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
+    // Tente de retrouver silencieusement l'emplacement de sauvegarde retenu
+    // pour ce dossier (sans bloquer l'affichage ni demander de permission
+    // activement) -- si l'autorisation a expiré, on retombe simplement sur le
+    // choix normal au prochain Enregistrer.
+    if (!state.rootDirHandle && !state.dossierDirHandle) tryRestoreSaveLocation(state.numero);
+  }
   $('#screenDossier').classList.add('hidden');
   $('#screenDashboard').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
@@ -3382,6 +3450,7 @@ function openWorkspace() {
   renderQrThumb();
   renderLienPartageQr();
   updateOfflineIndicator();
+  afficherBandeauConsultation();
   selectTab('apercu');
 }
 
@@ -4587,7 +4656,7 @@ function renderItemFileList(group, name) {
   if (!listEl) return;
   listEl.innerHTML = files.length ? files.map((f, i) => `
     <div class="file-row file-row-lg" data-share-file-idx="${i}">
-      ${isImageFile(f.name)
+      ${isImageFile(f.name) && hasUsableBlob(f)
         ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" data-file-enlarge="${name}::${i}">`
         : `<span class="ext-badge">${extBadge(f.name)}</span>`}
       <div class="file-row-info">
@@ -4639,6 +4708,7 @@ async function ouvrirImageAttacheePourRetouche(group, name, idx) {
   const files = state.draft.casesFichiers[name] || [];
   const fichier = files[idx];
   if (!fichier) return;
+  if (!hasUsableBlob(fichier)) { toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
   const estMobile = window.innerWidth <= 680;
   if (estMobile || typeof showCaptureEditor !== 'function') {
     openImageLightbox(fichier);
@@ -4660,6 +4730,7 @@ async function ouvrirImageAttacheePourRetouche(group, name, idx) {
 // Visionneuse plein écran (pas la petite fenêtre générique) — appelée quand
 // on clique sur une vignette pour l'agrandir.
 function openImageLightbox(file) {
+  if (!hasUsableBlob(file)) { toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
   const overlay = $('#imageLightboxOverlay');
   const img = $('#lightboxImg');
   const closeBtn = $('#btnLightboxClose');
@@ -4787,6 +4858,7 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
 }
 
 async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
+  if (!hasUsableBlob(file)) { toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
   const confirmed = await showModal({
     title: 'Partager cette photo',
     bodyHtml: `
@@ -6044,7 +6116,209 @@ const btnQrScannerClose = $('#btnQrScannerClose');
 if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteurQr);
 
 // ---------- Reprise automatique via un lien/QR scanné ----------
+// ---------- Mode consultation — dossier partagé (?partage=<URL du suivi.json>) ----------
+// Voir buildDashboardHtml() : le bouton "Ouvrir dans Suivi TEI" construit ce
+// paramètre à partir du suivi.json de la sauvegarde exacte envoyée pour
+// approbation. Fonctionne même en cliquant un lien directement depuis un
+// courriel (contrairement à un mécanisme par fenêtre ouvreuse) puisqu'il ne
+// dépend que d'un fetch() -- mais doit donc composer avec les limites
+// réseau/CORS de l'hébergement réel du fichier (OneDrive, SharePoint...).
+async function tenterOuvertureModeConsultation() {
+  const params = new URLSearchParams(location.search);
+  const partageUrl = params.get('partage');
+  if (!partageUrl) return false;
+  history.replaceState({}, '', location.pathname);
+
+  afficherEcranConsultation('chargement');
+
+  let resp;
+  try {
+    resp = await fetch(partageUrl, { cache: 'no-store' });
+  } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'La sauvegarde partagée n\u2019a pas pu être téléchargée (connexion réseau ou lien bloqué).');
+    return true;
+  }
+  if (!resp || !resp.ok) {
+    afficherEcranConsultation('erreur', partageUrl, `Le fichier n\u2019a pas pu être téléchargé (${resp ? 'code ' + resp.status : 'réponse invalide'}).`);
+    return true;
+  }
+  const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+  let texte;
+  try { texte = await resp.text(); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'Le contenu du fichier n\u2019a pas pu être lu.');
+    return true;
+  }
+  const sembleHtml = contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(texte);
+  let data;
+  try { data = JSON.parse(texte); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, sembleHtml
+      ? 'Ce lien retourne une page de partage (probablement OneDrive) plutôt que le fichier de données brut.'
+      : 'Le fichier reçu n\u2019est pas un JSON valide.');
+    return true;
+  }
+  if (!data || typeof data !== 'object' || !data.localisation || (data.mode !== 'installation' && data.mode !== 'demantelement')) {
+    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier ne correspond pas à un dossier Suivi TEI valide.');
+    return true;
+  }
+
+  let draft;
+  try { draft = normalizeDraft(data); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier n\u2019a pas pu être interprété comme un dossier Suivi TEI (format inattendu).');
+    return true;
+  }
+
+  ouvrirModeConsultation(draft, partageUrl);
+  return true;
+}
+
+// Ouvre un dossier en mode consultation (lecture seule) à partir d'un
+// instantané importé -- ne touche jamais aux dossiers locaux normaux de cet
+// appareil (voir les garde-fous dans openWorkspace() et dbPut()).
+function ouvrirModeConsultation(draft, sourceUrl) {
+  const dernierApprobation = (draft.approbations || [])[draft.approbations.length - 1] || null;
+  state.readOnlyConsultation = true;
+  state.consultationMeta = {
+    submittedBy: (dernierApprobation && dernierApprobation.nom) || draft.champs.employeeName || '',
+    submittedRole: (dernierApprobation && dernierApprobation.role) || draft.champs.employeeRole || '',
+    submittedAt: (dernierApprobation && dernierApprobation.at) || draft.modifieLe || draft.creeLe || '',
+    revisionId: (draft.activeRevision && draft.activeRevision.id) || '',
+    snapshotId: (dernierApprobation && dernierApprobation.id) || '',
+    sourceUrl: sourceUrl || '',
+  };
+  state.draft = draft;
+  state.isNewDraft = false;
+  state.numero = draft.localisation;
+  selectMode(draft.mode);
+  masquerEcranConsultation();
+  openWorkspace();
+}
+
+// Écran plein cadre affiché pendant le chargement / en cas d'échec -- pour ne
+// JAMAIS laisser la personne face à une application vide sans explication
+// (exigence explicite : un lien OneDrive incompatible/bloqué par CORS doit
+// afficher une erreur claire, jamais une PWA vide).
+function afficherEcranConsultation(mode, sourceUrl, message) {
+  let overlay = $('#consultationLoadOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'consultationLoadOverlay';
+    overlay.className = 'consultation-load-overlay';
+    document.body.appendChild(overlay);
+  }
+  if (mode === 'chargement') {
+    overlay.innerHTML = `<div class="consultation-load-box"><p>Chargement de la sauvegarde partagée…</p></div>`;
+  } else {
+    overlay.innerHTML = `
+      <div class="consultation-load-box">
+        <h2>Sauvegarde partagée introuvable</h2>
+        <p>${escapeHtml(message || 'Ce lien de sauvegarde partagée n\u2019a pas pu être ouvert.')}</p>
+        ${sourceUrl ? `<p class="consultation-load-url">${escapeHtml(sourceUrl)}</p>` : ''}
+        <div class="consultation-load-actions">
+          ${sourceUrl ? `<a class="btn btn-outline" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Télécharger le fichier suivi.json pour import manuel</a>` : ''}
+          <button type="button" class="btn btn-primary" id="btnFermerEcranConsultation">Continuer sans la sauvegarde partagée</button>
+        </div>
+      </div>`;
+    const btn = $('#btnFermerEcranConsultation', overlay);
+    if (btn) btn.addEventListener('click', masquerEcranConsultation);
+  }
+  overlay.classList.remove('hidden');
+}
+function masquerEcranConsultation() {
+  const overlay = $('#consultationLoadOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+// Bandeau permanent en haut de l'espace de travail quand le dossier est
+// ouvert en mode consultation (dossier partagé, lecture seule) -- créé
+// dynamiquement (pas besoin de toucher au HTML), inséré juste avant l'en-tête
+// de l'espace de travail.
+function afficherBandeauConsultation() {
+  let banner = $('#consultationBanner');
+  if (!state.readOnlyConsultation) {
+    if (banner) banner.remove();
+    return;
+  }
+  const meta = state.consultationMeta || {};
+  const dateTexte = meta.submittedAt ? new Date(meta.submittedAt).toLocaleString('fr-CA') : 'inconnue';
+  const html = `
+    <div class="consultation-banner-title">Mode consultation \u2014 sauvegarde partagée</div>
+    <div class="consultation-banner-meta">
+      Soumise par : <strong>${escapeHtml(meta.submittedBy || 'inconnu')}${meta.submittedRole ? ' · ' + escapeHtml(meta.submittedRole) : ''}</strong>
+      · Le : ${dateTexte}
+      ${meta.revisionId ? ` · Révision : ${escapeHtml(meta.revisionId)}` : ''}
+      \u2014 Les modifications sont désactivées.
+    </div>
+    <div class="consultation-banner-actions" style="margin-top:var(--space-2);display:flex;gap:var(--space-2);">
+      <button type="button" class="btn btn-primary" id="btnConsultationApprouver">Approuver le dossier</button>
+      <button type="button" class="btn btn-outline" id="btnConsultationRetour">Retourner pour correction</button>
+    </div>`;
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'consultationBanner';
+    banner.className = 'consultation-banner';
+    const app = $('#screenWorkspace');
+    if (app) app.insertBefore(banner, app.firstChild);
+  }
+  banner.innerHTML = html;
+  $('#btnConsultationApprouver', banner).addEventListener('click', () => decisionApprobationConsultation('approuve'));
+  $('#btnConsultationRetour', banner).addEventListener('click', () => decisionApprobationConsultation('retour'));
+}
+
+// ---------- Approbation à distance en mode consultation ----------
+// Le TEI (Carl) doit pouvoir importer cette réponse plus tard pour mettre à
+// jour l'état officiel -- comme il n'y a pas de serveur, la décision voyage
+// par un courriel préformaté et structuré plutôt que par une écriture directe
+// (une page HTML statique ne peut de toute façon jamais écrire dans OneDrive
+// ou modifier les données originales du TEI).
+function construireCourrielDecisionConsultation(decision, commentaire) {
+  const d = state.draft;
+  const meta = state.consultationMeta || {};
+  const sujet = `Décision d\u2019approbation \u2014 ${d.localisation}${d.champs.bt ? ' \u2014 BT' + d.champs.bt : ''} \u2014 ${decision === 'approuve' ? 'Approuvé' : 'Retourné pour correction'}`;
+  const lignes = [
+    `Décision : ${decision === 'approuve' ? 'APPROUVÉ' : 'RETOURNÉ POUR CORRECTION'}`,
+    '',
+    `BT : ${d.champs.bt || '(non précisé)'}`,
+    `Équipement / tag : ${d.champs.tag || '(non précisé)'}`,
+    `Localisation : ${d.localisation}`,
+    `Révision : ${meta.revisionId || '(non précisée)'}`,
+    `Identifiant de sauvegarde : ${meta.snapshotId || '(non précisé)'}`,
+    `Sauvegarde soumise le : ${meta.submittedAt ? new Date(meta.submittedAt).toLocaleString('fr-CA') : '(inconnue)'}`,
+    `Soumise par : ${meta.submittedBy || '(inconnu)'}${meta.submittedRole ? ' (' + meta.submittedRole + ')' : ''}`,
+    '',
+    ...(commentaire ? [`Commentaire :`, commentaire, ''] : []),
+  ];
+  return { sujet, corps: lignes.join('\n') };
+}
+
+async function decisionApprobationConsultation(decision) {
+  let commentaire = '';
+  if (decision === 'retour') {
+    const confirmed = await showModal({
+      title: 'Retourner pour correction',
+      bodyHtml: `
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);">Motif du retour (obligatoire)</label>
+        <textarea id="modalRetourMotif" rows="3" placeholder="Expliquez ce qui doit être corrigé avant de resoumettre."></textarea>`,
+      confirmLabel: 'Retourner pour correction',
+    });
+    if (!confirmed) return;
+    commentaire = ($('#modalRetourMotif').value || '').trim();
+    if (!commentaire) { toast('Un commentaire est requis pour retourner le dossier pour correction.', 4000); return; }
+  } else {
+    const confirmed = await showModal({
+      title: 'Approuver le dossier',
+      bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Un courriel préformaté avec la décision sera préparé. Confirmez pour continuer.</p>`,
+      confirmLabel: 'Approuver',
+    });
+    if (!confirmed) return;
+  }
+  const { sujet, corps } = construireCourrielDecisionConsultation(decision, commentaire);
+  window.location.href = `mailto:?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+}
+
 (async function autoResumeFromUrl() {
+  const consultationOuverte = await tenterOuvertureModeConsultation();
+  if (consultationOuverte) return;
+
   const params = new URLSearchParams(location.search);
   const mode = params.get('mode');
   const numero = params.get('numero');
@@ -6290,8 +6564,10 @@ $('#btnIvViewPhoto').addEventListener('click', () => {
   const files = state.draft.casesFichiers[task.name] || [];
   const last = files[files.length - 1];
   if (!last) return;
-  if (isImageFile(last.name)) {
+  if (isImageFile(last.name) && hasUsableBlob(last)) {
     showModal({ title: last.name, bodyHtml: `<img src="${URL.createObjectURL(last.blob)}" style="max-width:100%;border-radius:8px;">`, confirmLabel: 'Fermer' });
+  } else if (isImageFile(last.name)) {
+    toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500);
   } else {
     toast('Document non visualisable directement (pas une image).');
   }
