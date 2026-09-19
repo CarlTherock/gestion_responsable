@@ -116,6 +116,9 @@ const state = {
   // besoin d'être visible pour un collègue qui ouvre le dossier — un bouton
   // permet de l'afficher au besoin. Préférence de session, non persistée.
   activiteRecenteVisible: false,
+  // ---------- Mode consultation — dossier partagé (lecture seule) ----------
+  readOnlyConsultation: false, // true : dossier ouvert via ?partage=, jamais persisté sur cet appareil
+  consultationMeta: null,      // { submittedBy, submittedRole, submittedAt, revisionId, snapshotId } pour le bandeau
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -375,6 +378,12 @@ async function dbGet(numero) {
 }
 
 async function dbPut(draft) {
+  // Mode consultation (dossier partagé, lecture seule) : ne jamais écrire sur
+  // cet appareil. Bloque ici, au point de passage central utilisé par TOUTE
+  // action qui modifie le dossier (cases à cocher, VPO/VPD, photos,
+  // commentaires, révisions...) -- une seule vérification protège tout,
+  // peu importe quel bouton a déclenché l'action.
+  if (state.readOnlyConsultation) return false;
   try {
     const db = await openDb();
     return await new Promise((resolve, reject) => {
@@ -519,6 +528,7 @@ function normalizeDraft(d) {
   if (d.activeRevision.demandeApprobationLe === undefined) d.activeRevision.demandeApprobationLe = null;
   if (d.activeRevision.demandeDestinataireNom === undefined) d.activeRevision.demandeDestinataireNom = null;
   if (d.activeRevision.demandeDestinataireRole === undefined) d.activeRevision.demandeDestinataireRole = null;
+  if (d.activeRevision.demandeSauvegardeId === undefined) d.activeRevision.demandeSauvegardeId = null;
   if (d.activeRevision.approbation === undefined) d.activeRevision.approbation = null;
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
@@ -970,6 +980,29 @@ const DOSSIER_IDENTITY_FIELDS = ['bt', 'tag', 'type'];
 // l'historique global (approbations, journal) ne sont jamais touchés.
 // Instantané léger (sans fichiers binaires) utilisé seulement pour comparer
 // une sauvegarde à la précédente — pas pour restaurer les données elles-mêmes.
+// Instantané complet et importable (contrairement à buildLightSnapshot, qui
+// est un résumé compact pour la comparaison d'historique) : reprend TOUT le
+// dossier via un aller-retour JSON, ce qui exclut naturellement les blobs
+// (photos/documents) puisqu'un Blob/File n'a aucune propriété énumérable
+// propre -- JSON.stringify() les réduit à {} automatiquement. On remplace
+// explicitement chaque blob par null ensuite (plutôt que de laisser {}),
+// pour que le reste du code puisse détecter proprement "pas de fichier
+// disponible" plutôt que de risquer un plantage en essayant de créer une
+// URL d'objet à partir d'un {} qui n'est pas un vrai Blob. Utilisé pour
+// permettre au Dashboard exporté d'ouvrir directement le dossier dans
+// l'application sur un nouvel appareil (voir buildDashboardHtml() et le
+// message "suivi-tei-import"), sans que le destinataire ait à choisir
+// manuellement le dossier réseau -- les métadonnées des fichiers (nom,
+// taille, commentaire) restent visibles, mais pas les fichiers eux-mêmes.
+function buildImportableSnapshot(d) {
+  const clone = JSON.parse(JSON.stringify(d));
+  const nullifyBlobs = (arr) => { (arr || []).forEach((f) => { f.blob = null; }); };
+  Object.values(clone.casesFichiers || {}).forEach(nullifyBlobs);
+  Object.values(clone.ncFichiers || {}).forEach(nullifyBlobs);
+  Object.values(clone.files || {}).forEach(nullifyBlobs);
+  return clone;
+}
+
 function buildLightSnapshot(d) {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length;
   const ncFichiersCount = Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
@@ -1525,7 +1558,7 @@ function renderDocuments() {
 
   container.innerHTML = filterBarHtml + (filtered.length ? `<div class="doc-list-rich">${filtered.map((doc, i) => `
     <div class="doc-row-rich" data-share-file-idx="${i}">
-      ${isImageFile(doc.file.name)
+      ${isImageFile(doc.file.name) && hasUsableBlob(doc.file)
         ? `<img src="${URL.createObjectURL(doc.file.blob)}" class="thumb-lg" alt="${escapeHtml(doc.file.name)}" data-doc-enlarge="${i}">`
         : `<span class="ext-badge">${extBadge(doc.file.name)}</span>`}
       <div class="doc-row-info">
@@ -1574,6 +1607,7 @@ function renderDocuments() {
   $$('.doc-dl-btn', container).forEach((btn, i) => {
     btn.addEventListener('click', () => {
       const doc = filtered[i];
+      if (!hasUsableBlob(doc.file)) { toast('Ce fichier n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
       const url = URL.createObjectURL(doc.file.blob);
       const a = document.createElement('a');
       a.href = url; a.download = doc.file.name;
@@ -2066,7 +2100,7 @@ function renderNonConformites() {
   el.innerHTML = rows.map((r) => {
     const files = state.draft.ncFichiers[r.numero] || [];
     const filesHtml = files.length ? `<div class="attachments">${files.map((f, i) => {
-      return isImageFile(f.name)
+      return isImageFile(f.name) && hasUsableBlob(f)
         ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}" data-nc-file-enlarge="${r.numero}::${i}">`
         : `<span class="doc-link"><span class="icon-inline" data-icon="folder" style="margin-right:4px;"></span>${escapeHtml(f.name)}</span>`;
     }).join('')}</div>` : '';
@@ -2497,30 +2531,321 @@ $('#numLoc').addEventListener('blur', async () => {
 // Écrit tout le contenu du brouillon (suivi.json, resume.txt, documents par
 // tâche, photos de mise à jour) sur le disque. N'est appelé QUE lors de la
 // sauvegarde officielle (100 % des tâches cochées ou N/A + nom d'employé).
-// Fichier à la racine du dossier exporté : redirige vers le Dashboard de la
-// DERNIÈRE sauvegarde (chaque sauvegarde est maintenant un paquet complet et
-// autonome avec ses propres 00_Dashboard/01_Dossier_actif/02_Documents/
-// 03_Photos/04_NonConformites/06_Exports). Chemin relatif seulement (aucun
-// chemin Windows absolu), pour fonctionner peu importe où le dossier est
-// déplacé, copié sur OneDrive ou une clé USB.
-function buildDashboardRedirectHtml(cibleSauvegarde) {
-  const cible = `${cibleSauvegarde}/00_Dashboard/Dashboard.html`;
+
+// URL officielle de la PWA (GitHub Pages). Utilisée seulement si l'application
+// tourne depuis un contexte sans adresse web (file://, etc.) : dans tous les
+// autres cas, on utilise l'adresse réelle d'où la sauvegarde a été faite
+// (identique à l'URL officielle en production, mais permet aussi de tester une
+// branche en prévisualisation avant fusion).
+const URL_APP_OFFICIELLE = 'https://carltherock.github.io/gestion_responsable/';
+
+// Identifiant de version, inscrit dans chaque Dashboard.html / OUVRIR_DASHBOARD.html
+// généré (balise <meta name="generator"> et pied de page) : un Dashboard est un
+// fichier statique, il ne change jamais après sa génération ; cette marque permet
+// de savoir avec certitude QUELLE version de l'application l'a produit.
+const APP_BUILD = 'consultation-2026-09-19-c';
+
+// Adresse de base de l'application, SANS aucun paramètre (jamais mode/numero/bt :
+// ces paramètres déclenchent le vieux flux « Reprendre ce dossier »).
+function urlAppConsultationBase() {
+  if (location.protocol === 'http:' || location.protocol === 'https:') return location.origin + location.pathname;
+  return URL_APP_OFFICIELLE;
+}
+
+// Nom du sous-dossier d'une sauvegarde S-XXX. Source unique : utilisé à la fois
+// pour créer le dossier sur disque et pour construire les liens (courriel
+// d'approbation, Dashboard racine) afin qu'ils visent toujours CETTE sauvegarde.
+function nomDossierSauvegarde(approbation) {
+  const dt = new Date(approbation.at);
+  const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
+  const motifSlug = slugForFolder((approbation.resume && approbation.resume[0]) || 'Sauvegarde');
+  return `${approbation.id} - ${dateSlug} - ${motifSlug}`;
+}
+
+// ---------- Fichiers : noms écrits sur disque et liens relatifs ----------
+// Nom d'un fichier joint tel qu'il est écrit sur disque ET tel qu'il est lié
+// depuis le Dashboard : SOURCE UNIQUE pour l'écriture et pour les liens.
+function nomFichierSurDisque(f) {
+  return (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+// Nom d'un document de tâche : « <nom de la tâche>__<fichier> ». Le nom de tâche
+// est nettoyé des caractères interdits par Windows (: ? * " etc.), qui
+// empêchaient silencieusement l'écriture de certains fichiers (ex. lignes
+// ajoutées à la main). Pour les tâches prédéfinies, le nom est inchangé.
+function nomDocumentTache(taskName, f) {
+  return `${sanitizeFilename(taskName)}__${nomFichierSurDisque(f)}`;
+}
+
+// Lien relatif encodé segment par segment (espaces, accents, # ? % ...).
+function hrefRelatif(prefix, segments) {
+  return prefix + segments.map((seg) => encodeURIComponent(seg)).join('/');
+}
+
+// ---------- Réponse d'approbation structurée ----------
+// Le planificateur décide dans le Dashboard.html de la sauvegarde (page statique,
+// sans serveur) : la décision voyage sous forme d'un « code de réponse » (JSON
+// encodé en base64, insensible aux retours à la ligne des courriels) placé dans un
+// courriel ou un fichier .json, puis importé par le TEI dans son dossier.
+// Ces fonctions sont SANS dépendance externe : elles sont copiées telles quelles
+// (Function.toString) dans chaque Dashboard.html, pour que la page et
+// l'application utilisent exactement le même code (aucune divergence possible).
+// L'empreinte détecte un code tronqué ou modifié par accident ; ce n'est PAS une
+// signature (aucune authentification du planificateur n'est possible ici).
+function reponseChecksum(str) {
+  var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (var i = 0, ch; i < str.length; i++) {
+    ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+// payload -> { code (base64, lignes de 64), json (texte du fichier de réponse) }
+function reponseVersCode(payload) {
+  var complet = {};
+  for (var k in payload) { if (Object.prototype.hasOwnProperty.call(payload, k)) complet[k] = payload[k]; }
+  complet.empreinte = reponseChecksum(JSON.stringify(payload));
+  var json = JSON.stringify(complet);
+  var octets = new TextEncoder().encode(json);
+  var bin = '';
+  for (var i = 0; i < octets.length; i++) bin += String.fromCharCode(octets[i]);
+  var b64 = btoa(bin);
+  var lignes = [];
+  for (var j = 0; j < b64.length; j += 64) lignes.push(b64.slice(j, j + 64));
+  return { code: lignes.join('\n'), json: json };
+}
+
+// Texte collé (courriel complet, code seul, ou contenu d'un fichier .json)
+// -> { ok: true, data } ou { ok: false, code, message }
+function reponseDepuisTexte(texte) {
+  var t = String(texte || '');
+  var debut = '-----BEGIN SUIVI TEI REPONSE-----', fin = '-----END SUIVI TEI REPONSE-----';
+  var a = t.indexOf(debut), b = t.indexOf(fin);
+  if (a !== -1 && b > a) t = t.slice(a + debut.length, b);
+  t = t.replace(/^[ \t]*>+[ \t]?/gm, ''); // lignes citées d'un courriel de réponse
+  var brut = t.replace(/^\s+|\s+$/g, '');
+  var json;
+  if (brut.charAt(0) === '{') {
+    json = brut;
+  } else {
+    // Un vrai code n'a jamais d'espace À L'INTÉRIEUR d'une ligne (les retours à la
+    // ligne, l'indentation et les marques de citation sont tolérés) : un texte
+    // ordinaire est refusé clairement plutôt que « décodé » en données abîmées.
+    var lignesCode = brut.split(/\r?\n/);
+    var texteOrdinaire = false;
+    for (var n = 0; n < lignesCode.length; n++) {
+      if (/\S\s+\S/.test(lignesCode[n].replace(/^\s+|\s+$/g, ''))) texteOrdinaire = true;
+    }
+    var b64 = brut.replace(/\s+/g, '');
+    if (texteOrdinaire || b64.length < 40 || /[^A-Za-z0-9+\/=]/.test(b64)) {
+      return { ok: false, code: 'CODE_ILLISIBLE', message: 'Aucun code de réponse valide n\u2019a été trouvé dans ce texte. Collez le courriel complet, ou le code situé entre les lignes BEGIN et END.' };
+    }
+    try {
+      var bin = atob(b64);
+      var octets = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) octets[i] = bin.charCodeAt(i);
+      json = new TextDecoder().decode(octets);
+    } catch (err) {
+      return { ok: false, code: 'CODE_ILLISIBLE', message: 'Le code de réponse est incomplet ou abîmé (décodage impossible).' };
+    }
+  }
+  var data;
+  try { data = JSON.parse(json); } catch (err) {
+    return { ok: false, code: 'JSON_INVALIDE', message: 'Le contenu du code de réponse n\u2019est pas lisible (données abîmées).' };
+  }
+  if (!data || data.type !== 'suivi-tei-reponse-approbation') {
+    return { ok: false, code: 'TYPE_INCONNU', message: 'Ce n\u2019est pas une réponse d\u2019approbation Suivi TEI.' };
+  }
+  var sans = {};
+  for (var k in data) { if (Object.prototype.hasOwnProperty.call(data, k) && k !== 'empreinte') sans[k] = data[k]; }
+  if (!data.empreinte || reponseChecksum(JSON.stringify(sans)) !== data.empreinte) {
+    return { ok: false, code: 'EMPREINTE_INVALIDE', message: 'Le code de réponse a été modifié ou tronqué (contrôle d\u2019intégrité échoué). Redemandez la réponse au planificateur.' };
+  }
+  return { ok: true, data: data };
+}
+
+// Texte lisible du courriel de réponse (avec le code de réponse en bas).
+function reponseTexteCourriel(p, code) {
+  var roles = { contremaitre: 'Contremaître', qualite: 'Planificateur' };
+  var quand = function (iso) { var d = new Date(iso); return isNaN(d.getTime()) ? String(iso || '') : d.toLocaleString('fr-CA'); };
+  var dos = p.dossier || {}, rev = p.revision || {}, sv = p.sauvegarde || {}, pl = p.planificateur || {};
+  var L = [];
+  L.push('DÉCISION D\u2019APPROBATION \u2014 Suivi TEI');
+  L.push('');
+  L.push('Décision : ' + (p.decision === 'approuve' ? 'APPROUVÉ' : 'RETOURNÉ POUR CORRECTION'));
+  L.push('B.T. : ' + (dos.bt ? 'BT' + String(dos.bt).replace(/^bt/i, '') : '(non précisé)'));
+  L.push('Localisation : ' + (dos.localisation || ''));
+  L.push('Équipement / tag : ' + (dos.tag || '(non précisé)'));
+  L.push('Révision : ' + (rev.id || '') + (rev.nom ? ' \u2014 ' + rev.nom : ''));
+  L.push('Sauvegarde : ' + (sv.id || '') + ' (' + quand(sv.date) + ')');
+  L.push('Décision prise le : ' + quand(p.decisionLe));
+  L.push('Planificateur : ' + (pl.nom || '') + ' (' + (roles[pl.role] || pl.role || '') + ')');
+  L.push('Commentaire : ' + (p.commentaire ? p.commentaire : '(aucun)'));
+  L.push('');
+  L.push('Le code ci-dessous permet d\u2019importer cette décision dans Suivi TEI. Ne le modifiez pas.');
+  L.push('-----BEGIN SUIVI TEI REPONSE-----');
+  L.push(code);
+  L.push('-----END SUIVI TEI REPONSE-----');
+  return L.join('\n');
+}
+
+// Script inséré dans chaque Dashboard.html / OUVRIR_DASHBOARD.html : à l'ouverture
+// de la page, il donne à chaque élément [data-ouvrir-suivi-tei] l'adresse
+// ${appUrl}?partage=<URL ABSOLUE du suivi.json>, calculée par rapport à l'endroit
+// réel où la page est hébergée (serveur interne, SharePoint...). Jamais de
+// chemin Windows absolu, jamais mode/numero/bt, jamais de stockage local.
+// Le lien est posé dans le href lui-même : il fonctionne aussi avec un clic du
+// milieu ou « Ouvrir dans un nouvel onglet ».
+function buildScriptOuvrirSuiviTei(appUrl, suiviRelatif) {
+  const safe = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
+  return `<script>
+(function () {
+  var APP_URL = ${safe(appUrl)};
+  var SUIVI_RELATIF = ${safe(suiviRelatif)};
+  var snapshotUrl = new URL(SUIVI_RELATIF, window.location.href).href;
+  var consultationUrl = APP_URL + '?partage=' + encodeURIComponent(snapshotUrl);
+  var liens = document.querySelectorAll('[data-ouvrir-suivi-tei]');
+  for (var i = 0; i < liens.length; i++) {
+    liens[i].href = consultationUrl;
+    liens[i].target = '_blank';
+    liens[i].rel = 'noopener';
+    liens[i].title = 'Sauvegarde ouverte : ' + snapshotUrl;
+  }
+})();
+</script>`;
+}
+
+// Comportement du panneau « Décision d'approbation » du Dashboard.html. Écrite
+// comme une vraie fonction (pas dans un gabarit) puis copiée dans la page avec
+// Function.toString : les expressions régulières restent intactes. S'exécute dans
+// le Dashboard, où reponseVersCode() et reponseTexteCourriel() sont aussi copiées.
+function scriptDecisionPlanificateur(META) {
+  function $(id) { return document.getElementById(id); }
+  if (!$('decision') || !$('btnDecApprouver')) return;
+  var courant = null;
+  function nettoyer(v) { return String(v || '').replace(/^\s+|\s+$/g, ''); }
+  function message(txt, type) {
+    var el = $('decMsg');
+    el.textContent = txt || '';
+    el.className = 'dec-msg' + (type ? ' dec-msg-' + type : '');
+  }
+  function preparer(decision) {
+    message('');
+    var nom = nettoyer($('decNom').value);
+    var role = $('decRole').value;
+    var commentaire = nettoyer($('decComment').value);
+    if (!nom) { message('Votre nom est obligatoire.', 'erreur'); $('decNom').focus(); return; }
+    if (decision === 'retourne' && !commentaire) {
+      message('Un commentaire est obligatoire pour retourner le dossier pour correction.', 'erreur');
+      $('decComment').focus();
+      return;
+    }
+    if (decision === 'approuve' && !META.pret && !window.confirm('La vérification avant fermeture indique des éléments encore ouverts. Approuver quand même ?')) return;
+    var payload = {
+      type: 'suivi-tei-reponse-approbation', version: 1, decision: decision, commentaire: commentaire,
+      planificateur: { nom: nom, role: role }, decisionLe: new Date().toISOString(),
+      dossier: META.dossier, revision: META.revision, sauvegarde: META.sauvegarde,
+    };
+    var res = reponseVersCode(payload);
+    var texte = reponseTexteCourriel(payload, res.code);
+    var ident = META.dossier.bt ? 'BT' + String(META.dossier.bt).replace(/^bt/i, '') : META.dossier.localisation;
+    courant = {
+      texte: texte, json: res.json, decision: decision,
+      sujet: 'Décision d\u2019approbation \u2014 ' + ident + ' \u2014 ' + META.sauvegarde.id + ' \u2014 ' + (decision === 'approuve' ? 'Approuvé' : 'Retourné pour correction'),
+    };
+    $('decTexte').value = texte;
+    $('decResultatTitre').textContent = decision === 'approuve' ? 'Réponse prête : APPROUVÉ' : 'Réponse prête : RETOURNÉ POUR CORRECTION';
+    $('decResultat').className = 'dec-resultat';
+    if ($('decResultat').scrollIntoView) $('decResultat').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  $('btnDecApprouver').addEventListener('click', function () { preparer('approuve'); });
+  $('btnDecRetour').addEventListener('click', function () { preparer('retourne'); });
+  $('btnDecMail').addEventListener('click', function () {
+    if (!courant) return;
+    window.location.href = 'mailto:?subject=' + encodeURIComponent(courant.sujet) + '&body=' + encodeURIComponent(courant.texte);
+  });
+  $('btnDecCopier').addEventListener('click', function () {
+    if (!courant) return;
+    var ta = $('decTexte');
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(ta.value); ok = true; }
+    } catch (e) { ok = false; }
+    if (!ok) { try { ok = document.execCommand('copy'); } catch (e2) { ok = false; } }
+    message(ok ? 'Réponse copiée : collez-la dans un courriel.' : 'Copie automatique impossible : le texte est sélectionné, faites Ctrl+C.', ok ? 'ok' : 'info');
+  });
+  $('btnDecTelecharger').addEventListener('click', function () {
+    if (!courant) return;
+    var blob = new Blob([courant.json], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Reponse-approbation-' + META.sauvegarde.id + '-' + (courant.decision === 'approuve' ? 'approuve' : 'retour') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    message('Fichier de réponse téléchargé : joignez-le à votre courriel.', 'ok');
+  });
+}
+
+// Bloc <script> du Dashboard : bibliothèque de réponse + panneau de décision.
+function buildScriptDecisionPlanificateur(meta) {
+  const safe = JSON.stringify(meta).replace(/</g, '\\u003c');
+  return `<script>
+${reponseChecksum.toString()}
+${reponseVersCode.toString()}
+${reponseTexteCourriel.toString()}
+(${scriptDecisionPlanificateur.toString()})(${safe});
+</script>`;
+}
+
+// Fichier à la racine du dossier exporté : page d'accueil qui désigne la
+// DERNIÈRE sauvegarde (identifiant exact, date, révision) et n'a qu'une seule
+// action : ouvrir le Dashboard.html de cette sauvegarde. Régénéré à chaque
+// nouvelle sauvegarde. Aucun scan de sous-dossiers en JavaScript : le nom exact
+// du dossier est écrit ici au moment de la sauvegarde. Chemins relatifs
+// seulement (aucun chemin Windows absolu). Pour consulter ou approuver une
+// sauvegarde PRÉCISE (ex. celle envoyée par courriel), on utilise le lien de
+// son propre Dashboard.html, jamais cette page.
+function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, localisation, bt) {
+  const cibleDashboard = `${encodeURIComponent(nomSauvegarde)}/00_Dashboard/Dashboard.html`;
+  const quand = approbation && approbation.at ? new Date(approbation.at).toLocaleString('fr-CA') : '';
+  const titre = `${localisation || ''}${bt ? ' \u2014 ' + formatBt(bt) : ''}`;
+  const idSauvegarde = (approbation && approbation.id) || '';
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
-<meta http-equiv="refresh" content="0; url=${cible}">
-<title>Ouverture du Dashboard\u2026</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Suivi TEI ${APP_BUILD}">
+<title>Dossier ${escapeHtml(titre)} \u2014 dernière sauvegarde</title>
 <style>
-  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-  .box { text-align:center; max-width:420px; padding:24px; }
-  a.btn { display:inline-block; margin-top:16px; padding:12px 22px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:8px; font-weight:600; }
-  p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:20px; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  .box { max-width:560px; padding:28px; background:#fff; border:1px solid #d9d9d4; border-radius:8px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#5c5c56; font-size:14px; margin:0 0 18px; }
+  dl { margin:0 0 20px; font-size:14px; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
+  dt { color:#5c5c56; } dd { margin:0; font-weight:600; }
+  a.btn { display:block; margin-top:10px; padding:12px 18px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:6px; font-weight:600; text-align:center; }
+  p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:18px; word-break:break-all; }
+  p.note { font-size:12px; color:#5c5c56; margin-top:14px; }
 </style>
 </head><body>
   <div class="box">
-    <p>Ouverture du Dashboard\u2026</p>
-    <p>Si rien ne se passe, cliquez ci-dessous :</p>
-    <a class="btn" href="${cible}">Ouvrir le Dashboard</a>
-    <p class="chemin">Emplacement : ${cible}</p>
+    <h1>${escapeHtml(titre)}</h1>
+    <p class="sub">Cette page désigne la sauvegarde la plus récente de ce dossier.</p>
+    <dl>
+      <dt>Sauvegarde</dt><dd>${escapeHtml(idSauvegarde)}</dd>
+      <dt>Date et heure</dt><dd>${escapeHtml(quand)}</dd>
+      <dt>Révision</dt><dd>${escapeHtml(revisionId || '')}</dd>
+    </dl>
+    <a class="btn" href="${cibleDashboard}">Ouvrir le Dashboard de ${escapeHtml(idSauvegarde || 'cette sauvegarde')}</a>
+    <p class="note">Pour consulter ou approuver une sauvegarde précise (ex. celle envoyée par courriel), utilisez le lien de son propre Dashboard : cette page, elle, désigne toujours la plus récente.</p>
+    <p class="chemin">${escapeHtml(nomSauvegarde)}/00_Dashboard/Dashboard.html</p>
   </div>
 </body></html>`;
 }
@@ -2554,8 +2879,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
       try {
         const categorie = categorizeDocument(groupOfTask[name], name);
         const catDir = await d02.getDirectoryHandle(categorie, { create: true });
-        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        await writeTextFile(catDir, `${name}__${safe}`, f.blob);
+        await writeTextFile(catDir, nomDocumentTache(name, f), f.blob);
       } catch (err) { /* best effort par fichier */ }
     }
   }
@@ -2564,8 +2888,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
   const d03taches = await d03.getDirectoryHandle('Taches', { create: true });
   for (const f of (draft.files['mise-a-jour'] || [])) {
     try {
-      const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-      await writeTextFile(d03taches, safe, f.blob);
+      await writeTextFile(d03taches, nomFichierSurDisque(f), f.blob);
     } catch (err) { /* best effort par fichier */ }
   }
 
@@ -2577,8 +2900,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
       const ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true });
       for (const f of files) {
         try {
-          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          await writeTextFile(ncDir, safe, f.blob);
+          await writeTextFile(ncDir, nomFichierSurDisque(f), f.blob);
         } catch (err) { /* best effort par fichier */ }
       }
     }
@@ -2594,10 +2916,7 @@ async function writeEverythingToDisk(date) {
   // DIRECTEMENT à la racine du dossier — plus de dossiers communs partagés.
   const dernier = state.draft.approbations[state.draft.approbations.length - 1];
   if (!dernier) return; // rien à sauvegarder tant qu'aucune sauvegarde officielle n'a été faite
-  const dt = new Date(dernier.at);
-  const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
-  const motifSlug = slugForFolder((dernier.resume && dernier.resume[0]) || 'Sauvegarde');
-  const nomSauvegarde = `${dernier.id} - ${dateSlug} - ${motifSlug}`;
+  const nomSauvegarde = nomDossierSauvegarde(dernier);
   const dSave = await state.dossierDirHandle.getDirectoryHandle(nomSauvegarde, { create: true });
 
   const dashboardContent = buildDashboardHtml({ docPrefix: '../', estInstantaneHistorique: false });
@@ -2627,7 +2946,7 @@ async function writeEverythingToDisk(date) {
   // OUVRIR_DASHBOARD.html à la racine : pointe toujours vers la sauvegarde
   // la PLUS RÉCENTE.
   try {
-    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml(nomSauvegarde));
+    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml(nomSauvegarde, dernier, (state.draft.activeRevision && state.draft.activeRevision.id) || '', state.draft.localisation, state.draft.champs.bt));
   } catch (err) { /* best effort */ }
 }
 
@@ -2645,6 +2964,15 @@ function toArray(value) {
 
 function isImageFile(filename) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename);
+}
+
+// Un fichier importé depuis un Dashboard exporté (voir buildImportableSnapshot)
+// garde son nom/sa taille/son commentaire, mais son blob réel est explicitement
+// mis à null (les photos ne voyagent pas par ce mécanisme, trop volumineuses).
+// Toujours vérifier ceci avant d'appeler URL.createObjectURL(f.blob), sinon
+// plantage garanti sur un dossier importé sans ses fichiers.
+function hasUsableBlob(f) {
+  return !!(f && f.blob && typeof f.blob === 'object' && (f.blob instanceof Blob || typeof f.blob.size === 'number'));
 }
 
 function ringSvg(pct, size, stroke) {
@@ -2680,14 +3008,16 @@ function buildDashboardHtml(options) {
     return { cls: 'st-pending', icon: '' };
   };
 
-  const attachmentsHtml = (files, baseHref) => {
+  // Pièces jointes : liens relatifs ENCODÉS vers les fichiers de CETTE sauvegarde
+  // (dirHref = dossier relatif ; nomFor(f) = nom réel du fichier sur disque).
+  const attachmentsHtml = (files, dirHref, nomFor) => {
     if (!files || !files.length) return '';
     return `<div class="attachments">${files.map((f) => {
-      const safeStored = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-      const href = `${baseHref}${safeStored}`;
-      return isImageFile(f.name)
+      const href = dirHref + encodeURIComponent(nomFor(f));
+      const lien = isImageFile(f.name)
         ? `<a href="${href}" target="_blank" class="thumb-link" title="${escapeHtml(f.name)}"><img src="${href}" class="thumb" alt="${escapeHtml(f.name)}"></a>`
         : `<a href="${href}" target="_blank" class="doc-link">${escapeHtml(f.name)}</a>`;
+      return `<div class="attachment">${lien}${f.commentaire ? `<div class="file-comment">${escapeHtml(f.commentaire)}</div>` : ''}</div>`;
     }).join('')}</div>`;
   };
 
@@ -2719,22 +3049,38 @@ function buildDashboardHtml(options) {
       <div class="ring-card-count">${g.count} tâches</div>
     </div>`).join('');
 
-  // ---- Sections détaillées par tâche (redessinées, fermées par défaut) ----
-  const taskRowHtml = (label, v, reasonRaw, filesHtml) => {
+  // ---- Sections détaillées par tâche (fermées par défaut, « Tout développer » disponible) ----
+  const GRAVITE_TAG = { critique: 'Critique', majeure: 'Majeure', mineure: 'Mineure' };
+  const detailLigne = (titre, valeur) => (valeur ? `<div class="task-detail"><b>${escapeHtml(titre)}</b> ${escapeHtml(valeur)}</div>` : '');
+  const quandTexte = (iso) => { const dt = new Date(iso); return isNaN(dt.getTime()) ? '' : dt.toLocaleString('fr-CA'); };
+
+  // Le statut est TOUJOURS écrit en texte (jamais seulement une couleur ou une icône).
+  const taskRowHtml = (label, v, reasonRaw, filesHtml, extraHtml, statutTexte) => {
     const st = statusDotFor(v);
+    const texte = statutTexte || (v === true ? 'Fait' : v === 'na' ? 'N/A' : v === 'nc' ? 'Non conforme' : 'À faire');
     const reason = reasonRaw ? `<div class="task-reason">Raison : ${escapeHtml(reasonRaw)}</div>` : '';
     return `<div class="task-row ${st.cls}">
       <div class="task-dot">${st.icon}</div>
       <div class="task-body">
-        <div class="task-label">${escapeHtml(label)}</div>
+        <div class="task-label">${escapeHtml(label)} <span class="task-status-text">${escapeHtml(texte)}</span></div>
         ${reason}
+        ${extraHtml || ''}
         ${filesHtml || ''}
       </div>
     </div>`;
   };
 
+  // Détails d'une non-conformité (tâche, VPO, VPD) : gravité, zone, action corrective, responsable.
+  const ncDetailsHtml = (o) => [
+    o.numero || o.gravite ? `<div class="task-detail">${o.numero ? `<b>${escapeHtml(o.numero)}</b>` : ''}${o.gravite ? ` · gravité ${escapeHtml(GRAVITE_TAG[o.gravite] || o.gravite)}` : ''}${o.resolu ? ' · <span class="tag-ok">Résolue</span>' : ''}</div>` : '',
+    detailLigne('Zone :', o.zone),
+    detailLigne('Action corrective :', o.actionCorrective),
+    detailLigne('Responsable :', o.responsable),
+    o.dateCreation ? detailLigne('Relevée le :', quandTexte(o.dateCreation)) : '',
+  ].join('');
+
   const sectionsHtml = groupStats
-    .filter((g) => Array.isArray(groups[g.group])) // 'vpo' n'a pas d'entrée dans `groups` : sa section est construite séparément plus bas (vpoHtml)
+    .filter((g) => Array.isArray(groups[g.group])) // 'vpo'/'vpd' n'ont pas d'entrée dans `groups` : sections construites plus bas
     .map((g) => {
     const items = groups[g.group];
     const rows = items.map(([name, label]) => {
@@ -2742,8 +3088,14 @@ function buildDashboardHtml(options) {
       const reason = (v === 'na' || v === 'nc') ? d.casesRaisons[name] : '';
       const files = d.casesFichiers[name] || [];
       const categorie = categorizeDocument(g.group, name);
-      const filesHtml = attachmentsHtml(files, `${prefix}02_Documents/${categorie}/${name}__`);
-      return taskRowHtml(label, v, reason, filesHtml);
+      const filesHtml = attachmentsHtml(files, `${prefix}02_Documents/${encodeURIComponent(categorie)}/`, (f) => nomDocumentTache(name, f));
+      const det = d.casesNcDetails[name] || {};
+      const extra = [
+        d.casesPreuveRequise[name] ? `<div class="task-detail"><span class="tag-preuve">Preuve requise</span>${v === true && !files.length ? ' \u2014 <span class="tag-warn">aucun document joint</span>' : ''}</div>` : '',
+        d.casesNotes[name] ? `<div class="task-note"><b>Commentaire :</b> ${escapeHtml(d.casesNotes[name])}</div>` : '',
+        v === 'nc' ? ncDetailsHtml({ numero: det.numero, gravite: d.casesGravites[name], zone: det.zone, actionCorrective: det.actionCorrective, responsable: det.responsable, dateCreation: det.dateCreation, resolu: det.resolu }) : '',
+      ].join('');
+      return taskRowHtml(label, v, reason, filesHtml, extra);
     }).join('');
     return `<details class="section-card" id="sec-${g.group}">
       <summary><span>${g.label}</span><span class="section-pct">${Math.round(g.pct)} %</span></summary>
@@ -2751,71 +3103,66 @@ function buildDashboardHtml(options) {
     </details>`;
   }).join('');
 
-  // ---- VPO détaillé ----
-  const vpoHtml = hasVpo ? (() => {
-    const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
-    const vpoPct = (vpoDone / vpoFilled.length) * 100;
-    const rows = vpoFilled.map((it) => {
-      const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
-      return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '');
-    }).join('');
-    return `<details class="section-card" id="sec-vpo">
-      <summary><span>VPO — Vérification pré-opérationnelle</span><span class="section-pct">${Math.round(vpoPct)} %</span></summary>
-      <div class="task-list">${rows}</div>
+  // ---- VPO / VPD détaillés : même présentation, chacun sa section ----
+  const vpoVpdRowHtml = (it) => {
+    const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
+    const statutTexte = it.statut === 'conforme' ? 'Conforme' : it.statut === 'nc' ? 'Non conforme' : 'Non évalué';
+    const extra = [
+      it.obligatoire ? '<div class="task-detail"><span class="tag-oblig">Obligatoire</span></div>' : '',
+      it.statut && it.dateValidation ? detailLigne(it.statut === 'conforme' ? 'Validé par :' : 'Évalué par :', `${it.validePar || 'inconnu'} le ${quandTexte(it.dateValidation)}`) : '',
+      it.statut === 'nc' ? ncDetailsHtml(it) : '',
+    ].join('');
+    return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '', extra, statutTexte);
+  };
+  const vpoVpdSection = (id, titre, filled) => {
+    const faits = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    const pctSection = (faits / filled.length) * 100;
+    return `<details class="section-card" id="sec-${id}">
+      <summary><span>${titre}</span><span class="section-pct">${Math.round(pctSection)} %</span></summary>
+      <div class="task-list">${filled.map(vpoVpdRowHtml).join('')}</div>
     </details>`;
-  })() : '';
+  };
+  const vpoHtml = hasVpo ? vpoVpdSection('vpo', 'VPO \u2014 Vérification pré-opérationnelle', vpoFilled) : '';
+  const vpdHtml = hasVpd ? vpoVpdSection('vpd', 'VPD \u2014 Vérification post-démarrage', vpdFilled) : '';
 
-  const vpdHtml = hasVpd ? (() => {
-    const vpdDone = vpdFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
-    const vpdPct = (vpdDone / vpdFilled.length) * 100;
-    const rows = vpdFilled.map((it) => {
-      const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
-      return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '');
-    }).join('');
-    return `<details class="section-card" id="sec-vpd">
-      <summary><span>VPD — Vérification post-démarrage</span><span class="section-pct">${Math.round(vpdPct)} %</span></summary>
-      <div class="task-list">${rows}</div>
-    </details>`;
-  })() : '';
-
-  // ---- Non-conformités ----
-  const GRAVITE_TAG = { critique: 'Critique', majeure: 'Majeure', mineure: 'Mineure' };
-  const ncItems = [];
-  let ncResoluesCount = 0;
+  // ---- Non-conformités : ouvertes puis résolues, avec tous les détails et fichiers ----
+  const ncItems = [];     // ouvertes
+  const ncResolues = [];
+  const pushNc = (o) => (o.resolu ? ncResolues : ncItems).push(o);
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
     if (d.casesCochees[name] === 'nc') {
       const det = d.casesNcDetails[name] || {};
-      if (det.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: det.numero || '', section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
+      pushNc({ numero: det.numero || '', section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '', zone: det.zone || '', actionCorrective: det.actionCorrective || '', responsable: det.responsable || '', dateCreation: det.dateCreation || '', resolu: !!det.resolu });
     }
   }));
-  toArray(d.vpoItems).forEach((it) => {
-    if (it.statut === 'nc') {
-      if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: it.numero || '', section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
-    }
-  });
-  toArray(d.vpdItems).forEach((it) => {
-    if (it.statut === 'nc') {
-      if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: it.numero || '', section: 'VPD', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
-    }
-  });
+  [['VPO', d.vpoItems], ['VPD', d.vpdItems]].forEach(([section, liste]) => toArray(liste).forEach((it) => {
+    if (it.statut === 'nc') pushNc({ numero: it.numero || '', section, label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '', zone: it.zone || '', actionCorrective: it.actionCorrective || '', responsable: it.responsable || '', dateCreation: it.dateCreation || '', resolu: !!it.resolu });
+  }));
   toArray(d.ncExtra).forEach((it) => {
-    if (it.texte && it.texte.trim()) {
-      if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: it.numero || '', section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '' });
-    }
+    if (it.texte && it.texte.trim()) pushNc({ numero: it.numero || '', section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '', zone: it.zone || '', actionCorrective: it.actionCorrective || '', responsable: it.responsable || '', dateCreation: it.dateCreation || '', resolu: !!it.resolu });
   });
-  const ncBanner = ncItems.length
+  const ncCardHtml = (r) => {
+    const fichiersNc = r.numero ? toArray(d.ncFichiers && d.ncFichiers[r.numero]) : [];
+    return `<div class="nc-card">
+      <div class="nc-card-head">${r.numero ? `<strong>${escapeHtml(r.numero)}</strong> \u00b7 ` : ''}${escapeHtml(r.section)}${r.gravite ? ` \u00b7 ${escapeHtml(GRAVITE_TAG[r.gravite] || r.gravite)}` : ''}${r.resolu ? ' \u00b7 <span class="tag-ok">Résolue</span>' : ''}</div>
+      <div class="nc-card-label">${escapeHtml(r.label)}</div>
+      ${r.reason ? `<div class="task-detail"><b>Raison :</b> ${escapeHtml(r.reason)}</div>` : ''}
+      ${detailLigne('Zone :', r.zone)}${detailLigne('Action corrective :', r.actionCorrective)}${detailLigne('Responsable :', r.responsable)}
+      ${attachmentsHtml(fichiersNc, `${prefix}04_NonConformites/${encodeURIComponent(sanitizeFilename(r.numero) || 'NC')}/`, nomFichierSurDisque)}
+    </div>`;
+  };
+  const ncBanner = (ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
-        <div class="nc-banner-title">${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}${ncResoluesCount ? ` (+ ${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>
-        <ul class="nc-list">${ncItems.map((r) => `<li>${r.numero ? `<strong>${r.numero}</strong> — ` : ''}${escapeHtml(r.section)}${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
+        <div class="nc-banner-title">${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}</div>
+        ${ncItems.map(ncCardHtml).join('')}
       </div>`
-    : `<div class="nc-banner nc-banner-ok">Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
+    : `<div class="nc-banner nc-banner-ok">Aucune non-conformité ouverte pour ce dossier.</div>`)
+    + (ncResolues.length ? `<details class="nc-resolues"><summary>${ncResolues.length} non-conformité${ncResolues.length > 1 ? 's' : ''} résolue${ncResolues.length > 1 ? 's' : ''}</summary>${ncResolues.map(ncCardHtml).join('')}</details>` : '');
 
+  // ---- Vérification avant fermeture : verdict + éléments concernés ----
   const closureVerdict = computeClosureVerdict();
-  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}</div>`;
+  const closureItems = closureVerdict.ready ? [] : computeClosureItems();
+  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}${closureItems.length ? `<ul class="closure-list">${closureItems.map((it) => `<li>${escapeHtml(it.label)} \u2014 <span class="reason-inline">${escapeHtml(it.detail)}</span></li>`).join('')}</ul>` : ''}</div>`;
 
   // ---- Stamp d'approbation (Phase 7) : uniquement si une décision est réellement enregistrée ----
   const revForStamp = d.activeRevision || {};
@@ -2845,7 +3192,7 @@ function buildDashboardHtml(options) {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = toArray(d.files && d.files['mise-a-jour']);
-  const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`) : '<p class="empty">Aucune image de mise à jour.</p>';
+  const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`, nomFichierSurDisque) : '<p class="empty">Aucune image de mise à jour.</p>';
 
   // ---- Historique ----
   const histHtml = toArray(d.approbations).length
@@ -2877,14 +3224,73 @@ function buildDashboardHtml(options) {
   `;
 
   const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(formatBt(d.champs.bt)) + ')' : ''}`;
-  const appUrl = buildDossierUrl();
+  const appUrl = buildDossierUrl(); // réservé au code QR de reprise (appareil du TEI)
+  const appBase = urlAppConsultationBase(); // consultation : jamais mode/numero/bt
   const qrSvg = generateQrSvg(appUrl);
   const statutLabel = pct >= 100 ? 'Terminé' : pct > 0 ? 'En cours' : 'Non commencé';
   const statutClass = pct >= 100 ? 'status-done' : pct > 0 ? 'status-progress' : 'status-new';
 
+  // ---- Identification de la sauvegarde consultée (auteur, date, révision, statut) ----
+  const sauvegardesListe = toArray(d.approbations);
+  const dernier = sauvegardesListe.length ? sauvegardesListe[sauvegardesListe.length - 1] : null;
+  const roleTexte = (r) => ROLE_LABELS[r] || r || '';
+  const identItems = [
+    ['Sauvegarde', dernier ? dernier.id : '\u2014'],
+    ['Date et heure', dernier ? quandTexte(dernier.at) : '\u2014'],
+    ['Enregistrée par', dernier ? `${dernier.nom || 'inconnu'}${dernier.role ? ' \u00b7 ' + roleTexte(dernier.role) : ''}` : '\u2014'],
+    ['Révision', `${revActive.id || ''}${revActive.nom ? ' \u2014 ' + revActive.nom : ''}`],
+    ['Statut du dossier', computeGlobalStatus().label],
+    ['Localisation', d.localisation],
+    ['B.T.', d.champs.bt ? formatBt(d.champs.bt) : '\u2014'],
+    ['Équipement / tag', d.champs.tag || '\u2014'],
+    ['Type', modeLabel],
+  ];
+  const identHtml = `<div class="ident-grid">${identItems.map(([k, v]) => `<div class="ident-item"><div class="ident-k">${escapeHtml(k)}</div><div class="ident-v">${escapeHtml(v)}</div></div>`).join('')}</div>`;
+
+  // ---- Décision d'approbation (page statique : la décision voyage par courriel/fichier) ----
+  const peutDecider = !!dernier && !apprForStamp;
+  const metaDecision = {
+    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode },
+    revision: { id: revActive.id || '', nom: revActive.nom || '' },
+    sauvegarde: { id: dernier ? dernier.id : '', date: dernier ? dernier.at : '' },
+    pret: closureVerdict.ready,
+  };
+  const decisionHtml = peutDecider ? `
+    <section class="decision-panel" id="decision">
+      <h2 class="section-title" style="margin-top:0;">DÉCISION D\u2019APPROBATION \u2014 SAUVEGARDE ${escapeHtml(dernier.id)}</h2>
+      <p class="decision-intro">Cette page est la sauvegarde exacte qui vous est soumise${dernier.nom ? ` par <strong>${escapeHtml(dernier.nom)}</strong>${dernier.role ? ' (' + escapeHtml(roleTexte(dernier.role)) + ')' : ''}` : ''}. Consultez le dossier ci-dessous, puis indiquez votre décision : une réponse structurée est préparée, à renvoyer par courriel.</p>
+      <div class="decision-verdict ${closureVerdict.ready ? 'decision-verdict-ok' : 'decision-verdict-alert'}">${escapeHtml(closureVerdict.text)}</div>
+      <div class="decision-grid">
+        <label>Votre nom<input type="text" id="decNom" autocomplete="name" placeholder="ex. Marie Tremblay"></label>
+        <label>Votre rôle<select id="decRole"><option value="contremaitre">Contremaître</option><option value="qualite">Planificateur</option></select></label>
+      </div>
+      <label class="decision-comment">Commentaire (obligatoire pour un retour pour correction)<textarea id="decComment" rows="3" placeholder="ex. Plan de boucle manquant"></textarea></label>
+      <div class="decision-actions">
+        <button type="button" id="btnDecApprouver" class="btn-dec btn-dec-ok">Approuver le dossier</button>
+        <button type="button" id="btnDecRetour" class="btn-dec btn-dec-retour">Retourner pour correction</button>
+      </div>
+      <div id="decMsg" class="dec-msg" role="status" aria-live="polite"></div>
+      <div id="decResultat" class="dec-resultat hidden">
+        <div class="dec-resultat-titre" id="decResultatTitre"></div>
+        <p class="decision-intro">Envoyez cette réponse à la personne qui vous a soumis le dossier : elle l\u2019importera dans Suivi TEI. Si votre courriel n\u2019affiche pas le code complet, utilisez « Copier » ou « Télécharger » et joignez le fichier.</p>
+        <textarea id="decTexte" rows="14" readonly spellcheck="false"></textarea>
+        <div class="decision-actions">
+          <button type="button" id="btnDecMail" class="btn-dec btn-dec-neutre">Ouvrir dans le courriel</button>
+          <button type="button" id="btnDecCopier" class="btn-dec btn-dec-neutre">Copier la réponse</button>
+          <button type="button" id="btnDecTelecharger" class="btn-dec btn-dec-neutre">Télécharger le fichier de réponse</button>
+        </div>
+      </div>
+    </section>` : `
+    <section class="decision-panel" id="decision">
+      <h2 class="section-title" style="margin-top:0;">DÉCISION D\u2019APPROBATION</h2>
+      <p class="decision-intro">${apprForStamp ? 'Une décision est déjà enregistrée dans cette sauvegarde (voir l\u2019encadré ci-dessus).' : 'Ce rapport n\u2019a pas été généré par une sauvegarde officielle : aucune décision ne peut être préparée depuis cette page.'}</p>
+    </section>`;
+  const metaScript = peutDecider ? buildScriptDecisionPlanificateur(metaDecision) : '';
+
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Suivi TEI ${APP_BUILD}">
 <title>Rapport de chantier \u2014 ${titre}</title>
 <style>
   :root {
@@ -3014,6 +3420,67 @@ function buildDashboardHtml(options) {
   .approbation-stamp-retour .approbation-stamp-title { color: #b8860b; }
   .approbation-stamp-body { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 
+  .hidden { display: none; }
+  html { scroll-behavior: smooth; }
+  .decision-panel { scroll-margin-top: 16px; }
+  .decision-panel:target { animation: flashHighlight 1.7s ease; }
+  .nav-btn-decision { border-color: var(--accent); }
+  .build-stamp { text-align: center; color: var(--text-muted); font-size: 11px; margin-top: 40px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  .nc-banner-ok .nc-banner-title { color: #4ade80; }
+  .ident-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 24px; }
+  .ident-item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .ident-k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+  .ident-v { font-size: 14px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+
+  .decision-panel { background: var(--surface); border: 2px solid var(--accent); border-radius: 14px; padding: 22px 24px; margin-bottom: 28px; }
+  .decision-intro { font-size: 13.5px; color: var(--text-muted); line-height: 1.55; margin: 0 0 14px; }
+  .decision-verdict { border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 16px; }
+  .decision-verdict-ok { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.35); }
+  .decision-verdict-alert { background: rgba(214,69,69,0.1); border: 1px solid rgba(214,69,69,0.4); }
+  .decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .decision-panel label { display: block; font-size: 12.5px; color: var(--text-muted); }
+  .decision-panel input, .decision-panel select, .decision-panel textarea {
+    display: block; width: 100%; margin-top: 4px; padding: 10px 12px; font: inherit; font-size: 14px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .decision-panel textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
+  .decision-comment { margin-bottom: 16px; }
+  .decision-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  .btn-dec { padding: 12px 22px; border-radius: 8px; border: 1px solid transparent; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .btn-dec-ok { background: #15803d; color: #fff; }
+  .btn-dec-retour { background: #b45309; color: #fff; }
+  .btn-dec-neutre { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-dec:hover { filter: brightness(1.1); }
+  .btn-dec:focus-visible, .decision-panel input:focus-visible, .decision-panel select:focus-visible, .decision-panel textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .dec-msg { min-height: 20px; margin-top: 10px; font-size: 13.5px; font-weight: 600; }
+  .dec-msg-erreur { color: #f87171; }
+  .dec-msg-ok { color: #4ade80; }
+  .dec-msg-info { color: var(--text-muted); }
+  .dec-resultat { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .dec-resultat-titre { font-weight: 700; margin-bottom: 8px; }
+
+  .expand-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .expand-bar button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+  .task-status-text { font-size: 11px; font-weight: 700; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 8px; white-space: nowrap; }
+  .task-detail { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+  .task-detail b { color: var(--text); font-weight: 600; }
+  .task-note { font-size: 12.5px; margin-top: 6px; padding: 6px 10px; background: var(--accent-soft); border-radius: 8px; }
+  .tag-preuve, .tag-oblig { font-size: 11px; font-weight: 700; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 1px 8px; }
+  .tag-warn { color: #f87171; font-weight: 600; }
+  .tag-ok { color: #4ade80; font-weight: 600; }
+  .attachment { display: flex; flex-direction: column; gap: 2px; max-width: 220px; }
+  .file-comment { font-size: 11.5px; color: var(--text-muted); font-style: italic; }
+  .nc-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 10px 0 0; }
+  .nc-card-head { font-size: 12.5px; color: var(--text-muted); }
+  .nc-card-label { font-size: 14px; font-weight: 600; margin: 2px 0 4px; }
+  .nc-resolues { margin-top: 10px; }
+  .nc-resolues summary { cursor: pointer; font-size: 13px; color: var(--text-muted); }
+  .closure-list { margin: 10px 0 0; padding-left: 20px; font-size: 13.5px; }
+  .avance { margin-top: 32px; border: 1px dashed var(--border); border-radius: 12px; padding: 12px 18px; font-size: 13px; color: var(--text-muted); }
+  .avance summary { cursor: pointer; font-weight: 600; }
+  .avance .nav-btn { display: inline-flex; margin-top: 8px; }
+  @media print { .decision-panel, .avance, .expand-bar, .open-app-link { display: none; } }
+
   .revision-list { display: flex; flex-direction: column; gap: 8px; }
   .revision-row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
   .revision-row-active { border-color: var(--accent); background: var(--accent-soft); }
@@ -3038,11 +3505,14 @@ function buildDashboardHtml(options) {
           <div class="qr-card">${qrSvg || ''}</div>
           <div class="qr-caption">Scannez pour rouvrir ce dossier</div>
         </div>
-        <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
       </div>
     </div>
 
     ${stampHtml}
+
+    ${identHtml}
+
+    ${decisionHtml}
 
     ${estInstantaneHistorique ? `
     <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Ceci est un instantané historique — les documents ci-dessous sont ceux de CETTE sauvegarde précisément, indépendants des changements faits depuis.</p>
@@ -3053,14 +3523,13 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" href="../../00_Dashboard/Dashboard.html"><span class="nav-label">Retour au dossier actif</span><span class="nav-path">00_Dashboard/Dashboard.html</span></a>
     </div>` : `
     <div class="nav-grid">
+      <a class="nav-btn nav-btn-decision" href="#decision"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">Aller à la carte « Décision d\u2019approbation »</span></a>
       <a class="nav-btn" href="../01_Dossier_actif/"><span class="nav-label">Ouvrir le dossier actif</span><span class="nav-path">01_Dossier_actif/</span></a>
       <a class="nav-btn" href="../02_Documents/"><span class="nav-label">Ouvrir les documents</span><span class="nav-path">02_Documents/</span></a>
       <a class="nav-btn" href="../03_Photos/"><span class="nav-label">Ouvrir les photos</span><span class="nav-path">03_Photos/</span></a>
       <a class="nav-btn" href="../04_NonConformites/"><span class="nav-label">Ouvrir les non-conformités</span><span class="nav-path">04_NonConformites/</span></a>
       <a class="nav-btn" href="../../"><span class="nav-label">Voir l\u2019historique (autres sauvegardes)</span><span class="nav-path">.. (racine du dossier)</span></a>
       <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
-      <a class="nav-btn" href="${appUrl}"><span class="nav-label">Créer une révision</span><span class="nav-path">Ouvre l\u2019application</span></a>
-      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre l\u2019application' : 'Disponible à 100 % seulement'}</span></a>
     </div>`}
 
     <div class="hero-ring">
@@ -3088,6 +3557,7 @@ function buildDashboardHtml(options) {
     ${ncBanner}
 
     <h2 class="section-title">Détail des tâches</h2>
+    <div class="expand-bar"><button type="button" onclick="toggleAll(true)">Tout développer</button><button type="button" onclick="toggleAll(false)">Tout réduire</button></div>
     ${sectionsHtml}
     ${vpoHtml}
     ${vpdHtml}
@@ -3103,6 +3573,13 @@ function buildDashboardHtml(options) {
 
     ${d.champs.commentaires ? `<h2 class="section-title">Commentaires</h2><div class="comment-box">${escapeHtml(d.champs.commentaires)}</div>` : ''}
 
+    <details class="avance">
+      <summary>Option avancée \u2014 ouvrir dans l\u2019application Suivi TEI</summary>
+      <p>Ouvre cette sauvegarde dans l\u2019application Suivi TEI en mode consultation (lecture seule). Cela fonctionne seulement si le serveur qui héberge ce dossier est en HTTPS et autorise l\u2019accès (CORS), ou si l\u2019application est hébergée sur le même réseau interne. Sinon, l\u2019application affiche un message de diagnostic (par exemple CONTENU_MIXTE) et vous pouvez revenir à cette page. <strong>Cette page reste la façon complète et officielle de consulter et d\u2019approuver.</strong></p>
+      <a class="nav-btn" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule</span></a>
+    </details>
+
+    <div class="build-stamp" id="buildStamp">Dashboard généré par Suivi TEI \u00b7 version ${APP_BUILD}</div>
     <div class="footer-note"><b>\u00a9 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
   </div>
 
@@ -3117,7 +3594,22 @@ function buildDashboardHtml(options) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       setTimeout(function () { el.classList.remove('flash'); }, 1700);
     }
+    function toggleAll(ouvert) {
+      var liste = document.querySelectorAll('details.section-card');
+      for (var i = 0; i < liste.length; i++) liste[i].open = ouvert;
+    }
+    window.addEventListener('beforeprint', function () { toggleAll(true); });
+    (function () {
+      var liens = document.querySelectorAll('a[href="#decision"]');
+      for (var i = 0; i < liens.length; i++) {
+        liens[i].addEventListener('click', function () {
+          setTimeout(function () { var n = document.getElementById('decNom'); if (n && n.focus) n.focus({ preventScroll: true }); }, 500);
+        });
+      }
+    })();
   </script>
+  ${metaScript}
+  ${buildScriptOuvrirSuiviTei(appBase, '../01_Dossier_actif/suivi.json')}
 </body></html>`;
 }
 
@@ -3325,14 +3817,19 @@ async function ouvrirDossier() {
 // ---------- Étape 3 : espace de travail ----------
 function openWorkspace() {
   const d = state.draft;
-  try {
-    localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
-  } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
-  // Tente de retrouver silencieusement l'emplacement de sauvegarde retenu
-  // pour ce dossier (sans bloquer l'affichage ni demander de permission
-  // activement) -- si l'autorisation a expiré, on retombe simplement sur le
-  // choix normal au prochain Enregistrer.
-  if (!state.rootDirHandle && !state.dossierDirHandle) tryRestoreSaveLocation(state.numero);
+  // En mode consultation (dossier partagé, lecture seule), ne jamais toucher
+  // au "dernier dossier actif" de CET appareil, ni tenter de retrouver un
+  // emplacement de sauvegarde -- ce n'est pas un dossier de travail normal.
+  if (!state.readOnlyConsultation) {
+    try {
+      localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
+    } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
+    // Tente de retrouver silencieusement l'emplacement de sauvegarde retenu
+    // pour ce dossier (sans bloquer l'affichage ni demander de permission
+    // activement) -- si l'autorisation a expiré, on retombe simplement sur le
+    // choix normal au prochain Enregistrer.
+    if (!state.rootDirHandle && !state.dossierDirHandle) tryRestoreSaveLocation(state.numero);
+  }
   $('#screenDossier').classList.add('hidden');
   $('#screenDashboard').classList.add('hidden');
   $('#screenWorkspace').classList.remove('hidden');
@@ -3382,6 +3879,7 @@ function openWorkspace() {
   renderQrThumb();
   renderLienPartageQr();
   updateOfflineIndicator();
+  afficherBandeauConsultation();
   selectTab('apercu');
 }
 
@@ -4587,7 +5085,7 @@ function renderItemFileList(group, name) {
   if (!listEl) return;
   listEl.innerHTML = files.length ? files.map((f, i) => `
     <div class="file-row file-row-lg" data-share-file-idx="${i}">
-      ${isImageFile(f.name)
+      ${isImageFile(f.name) && hasUsableBlob(f)
         ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" data-file-enlarge="${name}::${i}">`
         : `<span class="ext-badge">${extBadge(f.name)}</span>`}
       <div class="file-row-info">
@@ -4639,6 +5137,7 @@ async function ouvrirImageAttacheePourRetouche(group, name, idx) {
   const files = state.draft.casesFichiers[name] || [];
   const fichier = files[idx];
   if (!fichier) return;
+  if (!hasUsableBlob(fichier)) { toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
   const estMobile = window.innerWidth <= 680;
   if (estMobile || typeof showCaptureEditor !== 'function') {
     openImageLightbox(fichier);
@@ -4660,6 +5159,7 @@ async function ouvrirImageAttacheePourRetouche(group, name, idx) {
 // Visionneuse plein écran (pas la petite fenêtre générique) — appelée quand
 // on clique sur une vignette pour l'agrandir.
 function openImageLightbox(file) {
+  if (!hasUsableBlob(file)) { toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
   const overlay = $('#imageLightboxOverlay');
   const img = $('#lightboxImg');
   const closeBtn = $('#btnLightboxClose');
@@ -4787,6 +5287,7 @@ function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
 }
 
 async function sharePhoto(file, contextLabel, onUpdate, subjectLabel) {
+  if (!hasUsableBlob(file)) { toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500); return; }
   const confirmed = await showModal({
     title: 'Partager cette photo',
     bodyHtml: `
@@ -5475,7 +5976,8 @@ function renderApprobationFinaleCard() {
         <div class="approbation-finale-title">${iconSvg('clock')} En attente d'approbation</div>
         <div class="approbation-finale-meta">Demande préparée le ${new Date(rev.demandeApprobationLe).toLocaleString('fr-CA')}${rev.demandeDestinataireNom ? ` pour <strong>${escapeHtml(rev.demandeDestinataireNom)}</strong> (${escapeHtml(ROLE_LABELS[rev.demandeDestinataireRole] || rev.demandeDestinataireRole || '')})` : ''}. Enregistrez la décision dès qu'elle est connue.</div>
         <div class="approbation-finale-actions">
-          <button type="button" class="btn btn-primary" id="btnEnregistrerDecision">Enregistrer la décision</button>
+          ${state.readOnlyConsultation ? '' : '<button type="button" class="btn btn-primary" id="btnImporterReponse">Importer la réponse du planificateur</button>'}
+          <button type="button" class="btn btn-outline" id="btnEnregistrerDecision">Enregistrer la décision manuellement</button>
           <button type="button" class="btn btn-tertiary" id="btnAnnulerDemandeApprobation">Annuler la demande</button>
         </div>
       </div>`;
@@ -5492,6 +5994,7 @@ function renderApprobationFinaleCard() {
         </div>
         <div class="approbation-finale-actions">
           <button type="button" class="btn btn-primary" id="btnDemanderApprobation">Demander l'approbation finale</button>
+          ${state.readOnlyConsultation ? '' : '<button type="button" class="btn btn-outline" id="btnImporterReponse">Importer la réponse du planificateur</button>'}
         </div>
       </div>`;
   } else {
@@ -5507,6 +6010,8 @@ function renderApprobationFinaleCard() {
   if (btnDemander) btnDemander.addEventListener('click', demanderApprobationFinale);
   const btnRedemander = $('#btnRedemanderApprobation', container);
   if (btnRedemander) btnRedemander.addEventListener('click', demanderApprobationFinale);
+  const btnImporter = $('#btnImporterReponse', container);
+  if (btnImporter) btnImporter.addEventListener('click', importerReponseApprobation);
   const btnEnregistrer = $('#btnEnregistrerDecision', container);
   if (btnEnregistrer) btnEnregistrer.addEventListener('click', showApprobationDecisionModal);
   const btnAnnuler = $('#btnAnnulerDemandeApprobation', container);
@@ -5565,6 +6070,9 @@ async function demanderApprobationFinale() {
   state.draft.activeRevision.demandeApprobationLe = maintenant.toISOString();
   state.draft.activeRevision.demandeDestinataireNom = destNom;
   state.draft.activeRevision.demandeDestinataireRole = destRole;
+  // Sauvegarde précise soumise (S-XXX) : le lien du courriel vise CELLE-LÀ, jamais « la plus récente ».
+  const sauvegardeSoumise = (state.draft.approbations && state.draft.approbations.length) ? state.draft.approbations[state.draft.approbations.length - 1] : null;
+  state.draft.activeRevision.demandeSauvegardeId = sauvegardeSoumise ? sauvegardeSoumise.id : null;
   state.draft.activeRevision.approbation = null;
   state.draft.champs.lienDossierPartage = lienPartage;
   logActivity(`Demande d'approbation finale préparée pour la révision ${state.draft.activeRevision.id} — destinataire : ${destNom} (${ROLE_LABELS[destRole] || destRole})`);
@@ -5579,7 +6087,7 @@ async function demanderApprobationFinale() {
   const vpd = computeVpdStats();
   const nc = computeNcStats();
   const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
-  const lienDashboard = buildLienDashboardPartage(lienPartage);
+  const lienDashboard = buildLienDashboardSauvegarde(lienPartage, sauvegardeSoumise);
   const sujet = `Demande d'approbation — ${bt} — ${state.draft.activeRevision.id} ${state.draft.activeRevision.nom}`;
   const prenomDest = destNom.split(' ')[0] || destNom;
   const corps = [
@@ -5590,8 +6098,10 @@ async function demanderApprobationFinale() {
     `Checklist : ${done} / ${total} tâches complétées`,
     `VPO ouvertes : ${vpo.pending}`,
     `VPD ouvertes : ${vpd.pending}`,
-    `Non-conformités ouvertes : ${nc.total}`, '',
-    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard du dossier ici : ${lienDashboard}`, ''] : []),
+    `Non-conformités ouvertes : ${nc.total}`,
+    ...(sauvegardeSoumise ? [`Sauvegarde soumise : ${sauvegardeSoumise.id} (${new Date(sauvegardeSoumise.at).toLocaleString('fr-CA')})`] : []),
+    '',
+    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard ${sauvegardeSoumise ? 'de cette sauvegarde (' + sauvegardeSoumise.id + ')' : 'du dossier'} ici : ${lienDashboard}`, '', 'Tu y trouveras le dossier complet (tâches, VPO/VPD, non-conformités, documents et photos) et les boutons « Approuver le dossier » / « Retourner pour correction » (commentaire obligatoire en cas de retour). Ils préparent une réponse à me renvoyer par courriel.', ''] : []),
     "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
     'Merci beaucoup et bonne journée !',
   ].join('\n');
@@ -5618,6 +6128,7 @@ function annulerDemandeApprobation() {
   state.draft.activeRevision.demandeApprobationLe = null;
   state.draft.activeRevision.demandeDestinataireNom = null;
   state.draft.activeRevision.demandeDestinataireRole = null;
+  state.draft.activeRevision.demandeSauvegardeId = null;
   logActivity(`Demande d'approbation annulée pour la révision ${state.draft.activeRevision.id}`);
   schedulePersist();
   refreshApprovals();
@@ -5628,6 +6139,115 @@ function annulerDemandeApprobation() {
 // Formulaire d'approbation finale : redemande les champs tant qu'ils sont
 // invalides (nom obligatoire; commentaire obligatoire si retourné), sans
 // fermer la fenêtre sur une saisie incomplète.
+// Enregistre une décision d'approbation sur la révision active : point de passage
+// UNIQUE (saisie manuelle et import d'une réponse). Une approbation verrouille le dossier.
+async function enregistrerDecisionApprobation(record, journalTexte) {
+  state.draft.activeRevision.approbation = record;
+  logActivity(journalTexte);
+  schedulePersist();
+  await dbPut(state.draft);
+  refreshApprovals();
+  updateProgressPill();
+  return record;
+}
+
+// Vérifie qu'une réponse de planificateur (code décodé) correspond bien à CE
+// dossier, à sa révision active et à sa DERNIÈRE sauvegarde officielle. Retourne
+// la liste des raisons de refus (vide = importable).
+function verifierReponseApprobation(rep) {
+  const erreurs = [];
+  const d = state.draft;
+  const rev = d.activeRevision || {};
+  const bareBt = (v) => String(v || '').replace(/^bt/i, '').trim();
+  if (state.readOnlyConsultation) erreurs.push('Ce dossier est ouvert en consultation : aucune décision ne peut y être enregistrée.');
+  if (rep.version !== 1) erreurs.push(`Version de réponse non prise en charge (${rep.version}).`);
+  if (rep.decision !== 'approuve' && rep.decision !== 'retourne') erreurs.push('La décision indiquée est inconnue.');
+  const pl = rep.planificateur || {};
+  if (!pl.nom || !String(pl.nom).trim()) erreurs.push('Le nom du planificateur est absent.');
+  if (!APPROBATEUR_ROLES.includes(pl.role)) erreurs.push('Le rôle du planificateur doit être Contremaître ou Planificateur.');
+  if (rep.decision === 'retourne' && !String(rep.commentaire || '').trim()) erreurs.push('Un retour pour correction doit contenir un commentaire.');
+  const dos = rep.dossier || {};
+  if ((dos.localisation || '') !== d.localisation) erreurs.push(`Cette réponse concerne la localisation ${dos.localisation || '(inconnue)'}, pas ${d.localisation}.`);
+  if (bareBt(dos.bt) !== bareBt(d.champs.bt)) erreurs.push(`Cette réponse concerne le B.T. ${dos.bt ? formatBt(String(dos.bt)) : '(inconnu)'}, pas ${d.champs.bt ? formatBt(d.champs.bt) : '(non renseigné)'}.`);
+  const rv = rep.revision || {};
+  if (rv.id !== rev.id) erreurs.push(`Cette réponse concerne la révision ${rv.id || '(inconnue)'}, mais la révision active est ${rev.id}.`);
+  const sv = rep.sauvegarde || {};
+  const sauvegardes = toArray(d.approbations);
+  const trouvee = sauvegardes.find((a) => a.id === sv.id);
+  if (!trouvee) erreurs.push(`La sauvegarde ${sv.id || '(inconnue)'} n\u2019existe pas dans ce dossier.`);
+  else if (trouvee.at !== sv.date) erreurs.push(`La sauvegarde ${sv.id} de cette réponse n\u2019a pas la même date que celle de ce dossier : ce n\u2019est pas la même sauvegarde.`);
+  else if (sauvegardes[sauvegardes.length - 1].id !== trouvee.id) {
+    erreurs.push(`Cette réponse concerne la sauvegarde ${trouvee.id}, mais une sauvegarde plus récente existe (${sauvegardes[sauvegardes.length - 1].id}). La décision ne couvre pas les modifications faites depuis : demandez une nouvelle approbation pour la dernière sauvegarde.`);
+  }
+  const dl = new Date(rep.decisionLe);
+  if (isNaN(dl.getTime())) erreurs.push('La date de la décision est invalide.');
+  else if (trouvee && dl.getTime() < new Date(trouvee.at).getTime()) erreurs.push('La date de la décision est antérieure à la sauvegarde : réponse incohérente.');
+  if (rev.approbation) erreurs.push(`Une décision est déjà enregistrée pour la révision ${rev.id} (${rev.approbation.decision === 'approuve' ? 'approuvé' : 'retourné pour correction'} par ${rev.approbation.nom}).`);
+  return { erreurs, sauvegarde: trouvee || null };
+}
+
+// Importe la réponse d'un planificateur (courriel collé, code, ou fichier .json)
+// et l'enregistre comme décision officielle de la révision active, après vérification
+// et confirmation. Ne demande JAMAIS de choisir un dossier réseau.
+async function importerReponseApprobation() {
+  if (!state.draft) return null;
+  let texteSaisi = '';
+  let messageErreur = '';
+  for (;;) {
+    const confirme = await showModal({
+      title: 'Importer la réponse du planificateur',
+      bodyHtml: `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Collez le courriel de réponse reçu (ou seulement le code entre les lignes BEGIN et END), ou choisissez le fichier de réponse (.json) téléchargé depuis le Dashboard.</p>
+        ${messageErreur ? `<div class="import-erreur" role="alert" style="border:1px solid #d64545;border-radius:var(--radius-md);padding:var(--space-3);margin:var(--space-2) 0;color:#f0a8a8;font-size:var(--text-sm);">${messageErreur}</div>` : ''}
+        <textarea id="modalImportTexte" rows="8" placeholder="Collez ici le courriel de réponse…" style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(texteSaisi)}</textarea>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;margin-top:var(--space-3);">Ou fichier de réponse</label>
+        <input type="file" id="modalImportFichier" accept=".json,.txt,application/json,text/plain">`,
+      confirmLabel: 'Vérifier la réponse',
+    });
+    if (!confirme) return null;
+    texteSaisi = $('#modalImportTexte').value;
+    const fichier = $('#modalImportFichier').files && $('#modalImportFichier').files[0];
+    let source = texteSaisi;
+    if (fichier) {
+      try { source = await fichier.text(); } catch (err) { messageErreur = 'Le fichier choisi n\u2019a pas pu être lu.'; continue; }
+    }
+    if (!source.trim()) { messageErreur = 'Rien à importer : collez le courriel de réponse ou choisissez le fichier.'; continue; }
+    const lu = reponseDepuisTexte(source);
+    if (!lu.ok) { messageErreur = escapeHtml(lu.message); continue; }
+    const rep = lu.data;
+    const verif = verifierReponseApprobation(rep);
+    if (verif.erreurs.length) {
+      const infoComm = String(rep.commentaire || '').trim() ? `<br><br><strong>Commentaire du planificateur :</strong> ${escapeHtml(rep.commentaire)}` : '';
+      messageErreur = `<strong>Cette réponse ne peut pas être enregistrée :</strong><br>${verif.erreurs.map((e) => '\u2022 ' + escapeHtml(e)).join('<br>')}${infoComm}`;
+      continue;
+    }
+    const pl = rep.planificateur;
+    const approuve = rep.decision === 'approuve';
+    const ok = await showModal({
+      title: approuve ? 'Enregistrer l\u2019approbation ?' : 'Enregistrer le retour pour correction ?',
+      bodyHtml: `
+        <div style="font-size:var(--text-sm);line-height:1.6;">
+          <div><strong>Décision :</strong> ${approuve ? 'APPROUVÉ' : 'RETOURNÉ POUR CORRECTION'}</div>
+          <div><strong>Planificateur :</strong> ${escapeHtml(pl.nom)} (${escapeHtml(ROLE_LABELS[pl.role] || pl.role)})</div>
+          <div><strong>Décision prise le :</strong> ${new Date(rep.decisionLe).toLocaleString('fr-CA')}</div>
+          <div><strong>Sauvegarde :</strong> ${escapeHtml(rep.sauvegarde.id)} \u00b7 <strong>Révision :</strong> ${escapeHtml(rep.revision.id)}</div>
+          <div><strong>Dossier :</strong> ${escapeHtml(rep.dossier.localisation)}${rep.dossier.bt ? ' \u00b7 ' + escapeHtml(formatBt(String(rep.dossier.bt))) : ''}</div>
+          ${String(rep.commentaire || '').trim() ? `<div style="margin-top:var(--space-2);"><strong>Commentaire :</strong> ${escapeHtml(rep.commentaire)}</div>` : ''}
+        </div>
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);">${approuve ? 'Le dossier sera verrouillé en lecture seule (nouvelle révision nécessaire pour continuer).' : 'Le dossier reviendra en correction ; vous pourrez redemander l\u2019approbation une fois les corrections faites.'} Cette réponse n\u2019est pas signée : vérifiez qu\u2019elle provient bien de la personne indiquée.</p>`,
+      confirmLabel: approuve ? 'Enregistrer l\u2019approbation' : 'Enregistrer le retour',
+    });
+    if (!ok) return null;
+    const record = {
+      decision: rep.decision, nom: String(pl.nom).trim(), role: pl.role, commentaire: String(rep.commentaire || '').trim(),
+      date: rep.decisionLe, sauvegardeId: rep.sauvegarde.id, source: 'reponse-importee', importeLe: new Date().toISOString(),
+    };
+    await enregistrerDecisionApprobation(record, `Réponse d\u2019approbation importée : ${approuve ? 'approuvé' : 'retourné pour correction'} par ${record.nom} (${ROLE_LABELS[record.role] || record.role}), sauvegarde ${rep.sauvegarde.id}, révision ${rep.revision.id}`);
+    toast(approuve ? 'Approbation importée : dossier verrouillé.' : 'Retour pour correction importé.', 4500);
+    return record;
+  }
+}
+
 async function showApprobationDecisionModal() {
   if (!state.draft) return null;
   let nomVal = '', roleVal = 'contremaitre', decisionVal = 'approuve', commentVal = '';
@@ -5663,12 +6283,7 @@ async function showApprobationDecisionModal() {
     break;
   }
   const record = { decision: decisionVal, nom: nomVal, role: roleVal, commentaire: commentVal, date: new Date().toISOString() };
-  state.draft.activeRevision.approbation = record;
-  logActivity(`${decisionVal === 'approuve' ? 'Approbation finale' : 'Retour pour correction'} de la révision ${state.draft.activeRevision.id} par ${nomVal} (${ROLE_LABELS[roleVal] || roleVal})`);
-  schedulePersist();
-  await dbPut(state.draft);
-  refreshApprovals();
-  updateProgressPill();
+  await enregistrerDecisionApprobation(record, `${decisionVal === 'approuve' ? 'Approbation finale' : 'Retour pour correction'} de la révision ${state.draft.activeRevision.id} par ${nomVal} (${ROLE_LABELS[roleVal] || roleVal})`);
   toast(decisionVal === 'approuve' ? 'Dossier approuvé et verrouillé.' : 'Dossier retourné pour correction.', 4500);
   return record;
 }
@@ -5750,6 +6365,23 @@ function buildLienDashboardPartage(lienPartage) {
   // ".../OUVRIR_DASHBOARD.html/OUVRIR_DASHBOARD.html".
   if (/\/OUVRIR_DASHBOARD\.html$/i.test(lien)) return lien;
   return lien + '/OUVRIR_DASHBOARD.html';
+}
+
+// Lien vers le Dashboard.html d'UNE sauvegarde précise (ex. S-003), construit à
+// partir du lien du dossier partagé. Sert au courriel d'approbation : si S-003
+// est soumise puis que S-004 est créée ensuite, l'ancien courriel reste lié à
+// S-003 (jamais de bascule automatique vers la plus récente). Le nom du dossier
+// vient de nomDossierSauvegarde() -- la même fonction qui l'a créé sur disque.
+// Repli sur le lien racine si aucune sauvegarde officielle n'existe, ou si le
+// lien fourni est un lien-jeton opaque (paramètres ?/# : impossible d'y ajouter
+// un chemin de sous-dossier).
+function buildLienDashboardSauvegarde(lienPartage, approbation) {
+  const lien = (lienPartage || '').trim().replace(/\/+$/, '');
+  if (!lien) return '';
+  if (!approbation || !approbation.id) return buildLienDashboardPartage(lienPartage);
+  const racine = lien.replace(/\/OUVRIR_DASHBOARD\.html$/i, '');
+  if (/[?#]/.test(racine)) return buildLienDashboardPartage(lienPartage);
+  return `${racine}/${encodeURIComponent(nomDossierSauvegarde(approbation))}/00_Dashboard/Dashboard.html`;
 }
 
 // Code QR généré à partir du lien de dossier partagé fourni par l'utilisateur
@@ -6044,7 +6676,277 @@ const btnQrScannerClose = $('#btnQrScannerClose');
 if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteurQr);
 
 // ---------- Reprise automatique via un lien/QR scanné ----------
+// ---------- Mode consultation — dossier partagé (?partage=<URL du suivi.json>) ----------
+// Voir buildDashboardHtml() : le bouton "Ouvrir dans Suivi TEI" construit ce
+// paramètre à partir du suivi.json de la sauvegarde exacte envoyée pour
+// approbation. Fonctionne même en cliquant un lien directement depuis un
+// courriel (contrairement à un mécanisme par fenêtre ouvreuse) puisqu'il ne
+// dépend que d'un fetch() -- mais doit donc composer avec les limites
+// réseau/CORS de l'hébergement réel du fichier (OneDrive, SharePoint...).
+async function tenterOuvertureModeConsultation() {
+  const params = new URLSearchParams(location.search);
+  // Dès que le paramètre ?partage est présent (même vide), on NE passe JAMAIS par
+  // le vieux flux « Reprendre ce dossier » : soit la sauvegarde s'ouvre, soit une
+  // erreur explicite s'affiche. On garde ?partage= dans la barre d'adresse pour
+  // pouvoir vérifier/copier l'adresse exacte demandée (retiré seulement si la
+  // personne choisit « Continuer sans la sauvegarde partagée »).
+  if (!params.has('partage')) return false;
+  const partageUrl = (params.get('partage') || '').trim();
+
+  afficherEcranConsultation('chargement');
+
+  if (!partageUrl) {
+    afficherEcranConsultation('erreur', '', 'Le lien est incomplet : aucune adresse de sauvegarde n\u2019a été transmise.', { code: 'LIEN_VIDE' });
+    return true;
+  }
+  let cible;
+  try { cible = new URL(partageUrl); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'L\u2019adresse de la sauvegarde n\u2019est pas une URL valide.', { code: 'URL_INVALIDE' });
+    return true;
+  }
+  if (cible.protocol !== 'http:' && cible.protocol !== 'https:') {
+    afficherEcranConsultation('erreur', partageUrl, 'Seules les adresses http:// et https:// sont acceptées pour une sauvegarde partagée.', { code: 'PROTOCOLE_REFUSE' });
+    return true;
+  }
+
+  let resp;
+  try {
+    resp = await fetch(partageUrl, { cache: 'no-store' });
+  } catch (err) {
+    const diag = diagnostiquerEchecFetch(cible, err);
+    afficherEcranConsultation('erreur', partageUrl, diag.message, { code: diag.code, technique: diag.technique });
+    return true;
+  }
+  if (!resp || !resp.ok) {
+    const statut = resp ? resp.status : 0;
+    const message = statut === 404 ? 'Fichier introuvable sur le serveur (404) : la sauvegarde a été déplacée, renommée ou supprimée.'
+      : (statut === 401 || statut === 403) ? `Accès refusé par le serveur (${statut}) : ce compte n\u2019a pas le droit de lire ce fichier.`
+      : `Le serveur a répondu avec une erreur (${statut || 'réponse invalide'}).`;
+    afficherEcranConsultation('erreur', partageUrl, message, { code: statut === 404 ? 'INTROUVABLE' : `HTTP_${statut || 'INVALIDE'}`, technique: resp ? `HTTP ${statut} ${resp.statusText || ''}`.trim() : '' });
+    return true;
+  }
+  const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+  let texte;
+  try { texte = await resp.text(); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'Le contenu du fichier n\u2019a pas pu être lu.', { code: 'LECTURE_IMPOSSIBLE', technique: `${err.name}: ${err.message}` });
+    return true;
+  }
+  const sembleHtml = contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(texte);
+  let data;
+  try { data = JSON.parse(texte); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, sembleHtml
+      ? 'Cette adresse retourne une page web (page de partage OneDrive/SharePoint, page de connexion ou page d\u2019erreur du serveur) plutôt que le fichier de données brut.'
+      : 'Le fichier reçu n\u2019est pas un JSON valide.',
+    { code: sembleHtml ? 'REPONSE_HTML' : 'JSON_INVALIDE', technique: `Type de contenu : ${contentType || 'inconnu'}` });
+    return true;
+  }
+  if (!data || typeof data !== 'object' || !data.localisation || (data.mode !== 'installation' && data.mode !== 'demantelement')) {
+    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier ne correspond pas à un dossier Suivi TEI valide.', { code: 'STRUCTURE_INVALIDE' });
+    return true;
+  }
+
+  let draft;
+  try { draft = normalizeDraft(data); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier n\u2019a pas pu être interprété comme un dossier Suivi TEI (format inattendu).', { code: 'FORMAT_INATTENDU', technique: `${err.name}: ${err.message}` });
+    return true;
+  }
+
+  ouvrirModeConsultation(draft, partageUrl);
+  return true;
+}
+
+// Explique POURQUOI un fetch() a échoué, sans prétendre en savoir plus que ce
+// que le navigateur révèle : pour un blocage CORS ou réseau, le navigateur ne
+// donne volontairement aucun détail à la page (même message d'erreur générique).
+// Le seul cas identifiable avec certitude est le contenu mixte (app en HTTPS
+// qui tente de lire une adresse HTTP) -- toujours bloqué par le navigateur.
+function diagnostiquerEchecFetch(cible, err) {
+  const technique = err ? `${err.name || 'Erreur'}: ${err.message || ''}`.trim() : '';
+  if (location.protocol === 'https:' && cible.protocol === 'http:') {
+    return {
+      code: 'CONTENU_MIXTE',
+      message: 'Le navigateur bloque cette lecture : l\u2019application est servie en HTTPS et le fichier se trouve à une adresse HTTP (contenu mixte). Ce blocage est imposé par le navigateur et ne peut pas être contourné par l\u2019application.',
+      technique,
+    };
+  }
+  return {
+    code: 'RESEAU_OU_CORS',
+    message: 'Le fichier n\u2019a pas pu être lu. Causes possibles : serveur inaccessible depuis cet appareil, serveur qui n\u2019autorise pas la lecture depuis un autre site (CORS), ou accès d\u2019un site public vers un serveur interne bloqué par le navigateur. Le navigateur ne permet pas de distinguer ces cas.',
+    technique,
+  };
+}
+
+// Déduit l'adresse du Dashboard.html d'une sauvegarde à partir de l'adresse de
+// son suivi.json (structure fixe : .../S-XXX/01_Dossier_actif/suivi.json ->
+// .../S-XXX/00_Dashboard/Dashboard.html). Vide si l'adresse ne suit pas cette structure.
+function urlDashboardDepuisSuivi(partageUrl) {
+  const re = /\/01_Dossier_actif\/suivi\.json(\?.*)?$/i;
+  return re.test(partageUrl || '') ? partageUrl.replace(re, '/00_Dashboard/Dashboard.html') : '';
+}
+
+// Ouvre un dossier en mode consultation (lecture seule) à partir d'un
+// instantané importé -- ne touche jamais aux dossiers locaux normaux de cet
+// appareil (voir les garde-fous dans openWorkspace() et dbPut()).
+function ouvrirModeConsultation(draft, sourceUrl) {
+  const dernierApprobation = (draft.approbations || [])[draft.approbations.length - 1] || null;
+  state.readOnlyConsultation = true;
+  state.consultationMeta = {
+    submittedBy: (dernierApprobation && dernierApprobation.nom) || draft.champs.employeeName || '',
+    submittedRole: (dernierApprobation && dernierApprobation.role) || draft.champs.employeeRole || '',
+    submittedAt: (dernierApprobation && dernierApprobation.at) || draft.modifieLe || draft.creeLe || '',
+    revisionId: (draft.activeRevision && draft.activeRevision.id) || '',
+    snapshotId: (dernierApprobation && dernierApprobation.id) || '',
+    sourceUrl: sourceUrl || '',
+  };
+  state.draft = draft;
+  state.isNewDraft = false;
+  state.numero = draft.localisation;
+  selectMode(draft.mode);
+  masquerEcranConsultation();
+  openWorkspace();
+}
+
+// Écran plein cadre affiché pendant le chargement / en cas d'échec -- pour ne
+// JAMAIS laisser la personne face à une application vide sans explication
+// (exigence explicite : un lien OneDrive incompatible/bloqué par CORS doit
+// afficher une erreur claire, jamais une PWA vide).
+function afficherEcranConsultation(mode, sourceUrl, message, details) {
+  let overlay = $('#consultationLoadOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'consultationLoadOverlay';
+    overlay.className = 'consultation-load-overlay';
+    document.body.appendChild(overlay);
+  }
+  if (mode === 'chargement') {
+    overlay.innerHTML = `<div class="consultation-load-box"><p>Chargement de la sauvegarde partagée…</p></div>`;
+  } else {
+    const det = details || {};
+    const dashboardUrl = urlDashboardDepuisSuivi(sourceUrl);
+    overlay.innerHTML = `
+      <div class="consultation-load-box">
+        <h2>Impossible de charger la sauvegarde partagée</h2>
+        <p>${escapeHtml(message || 'Ce lien de sauvegarde partagée n\u2019a pas pu être ouvert.')}</p>
+        ${sourceUrl ? `<p class="consultation-load-url"><strong>Adresse demandée :</strong><br>${escapeHtml(sourceUrl)}</p>` : ''}
+        ${det.code ? `<p class="consultation-load-url"><strong>Diagnostic :</strong> ${escapeHtml(det.code)}${det.technique ? '<br>' + escapeHtml(det.technique) : ''}</p>` : ''}
+        <div class="consultation-load-actions">
+          ${dashboardUrl ? `<a class="btn btn-primary" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener">Ouvrir le Dashboard de cette sauvegarde</a>` : ''}
+          ${sourceUrl ? `<a class="btn btn-outline" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Tester l\u2019accès au fichier suivi.json</a>` : ''}
+          <button type="button" class="btn btn-outline" id="btnFermerEcranConsultation">Continuer sans la sauvegarde partagée</button>
+        </div>
+      </div>`;
+    const btn = $('#btnFermerEcranConsultation', overlay);
+    if (btn) btn.addEventListener('click', () => {
+      history.replaceState({}, '', location.pathname);
+      masquerEcranConsultation();
+    });
+  }
+  overlay.classList.remove('hidden');
+}
+function masquerEcranConsultation() {
+  const overlay = $('#consultationLoadOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+// Bandeau permanent en haut de l'espace de travail quand le dossier est
+// ouvert en mode consultation (dossier partagé, lecture seule) -- créé
+// dynamiquement (pas besoin de toucher au HTML), inséré juste avant l'en-tête
+// de l'espace de travail.
+function hoteDe(url) {
+  try { return new URL(url).host; } catch (err) { return url; }
+}
+
+function afficherBandeauConsultation() {
+  let banner = $('#consultationBanner');
+  if (!state.readOnlyConsultation) {
+    if (banner) banner.remove();
+    return;
+  }
+  const meta = state.consultationMeta || {};
+  const dateTexte = meta.submittedAt ? new Date(meta.submittedAt).toLocaleString('fr-CA') : 'inconnue';
+  const html = `
+    <div class="consultation-banner-title">Mode consultation \u2014 sauvegarde partagée</div>
+    <div class="consultation-banner-meta">
+      Soumise par : <strong>${escapeHtml(meta.submittedBy || 'inconnu')}${meta.submittedRole ? ' · ' + escapeHtml(meta.submittedRole) : ''}</strong>
+      · Le : ${dateTexte}
+      ${meta.revisionId ? ` · Révision : ${escapeHtml(meta.revisionId)}` : ''}
+      ${meta.snapshotId ? ` · Sauvegarde : <strong>${escapeHtml(meta.snapshotId)}</strong>` : ''}
+      ${meta.sourceUrl ? ` · Source : ${escapeHtml(hoteDe(meta.sourceUrl))}` : ''}
+      \u2014 Les modifications sont désactivées.
+    </div>
+    <div class="consultation-banner-actions" style="margin-top:var(--space-2);display:flex;gap:var(--space-2);">
+      <button type="button" class="btn btn-primary" id="btnConsultationApprouver">Approuver le dossier</button>
+      <button type="button" class="btn btn-outline" id="btnConsultationRetour">Retourner pour correction</button>
+    </div>`;
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'consultationBanner';
+    banner.className = 'consultation-banner';
+    const app = $('#screenWorkspace');
+    if (app) app.insertBefore(banner, app.firstChild);
+  }
+  banner.innerHTML = html;
+  $('#btnConsultationApprouver', banner).addEventListener('click', () => decisionApprobationConsultation('approuve'));
+  $('#btnConsultationRetour', banner).addEventListener('click', () => decisionApprobationConsultation('retour'));
+}
+
+// ---------- Approbation à distance en mode consultation ----------
+// Le TEI (Carl) doit pouvoir importer cette réponse plus tard pour mettre à
+// jour l'état officiel -- comme il n'y a pas de serveur, la décision voyage
+// par un courriel préformaté et structuré plutôt que par une écriture directe
+// (une page HTML statique ne peut de toute façon jamais écrire dans OneDrive
+// ou modifier les données originales du TEI).
+async function decisionApprobationConsultation(decisionBrute) {
+  const decision = decisionBrute === 'approuve' ? 'approuve' : 'retourne';
+  const d = state.draft;
+  const meta = state.consultationMeta || {};
+  let nom = '', role = 'contremaitre', commentaire = '';
+  for (;;) {
+    const confirme = await showModal({
+      title: decision === 'approuve' ? 'Approuver le dossier' : 'Retourner pour correction',
+      bodyHtml: `
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;">Votre nom</label>
+        <input type="text" id="modalConsNom" value="${escapeHtml(nom)}" placeholder="ex. Marie Tremblay">
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Votre rôle</label>
+        <select id="modalConsRole" style="width:100%;margin-top:4px;">
+          <option value="contremaitre" ${role === 'contremaitre' ? 'selected' : ''}>Contremaître</option>
+          <option value="qualite" ${role === 'qualite' ? 'selected' : ''}>Planificateur</option>
+        </select>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Commentaire${decision === 'retourne' ? ' (obligatoire)' : ' (facultatif)'}</label>
+        <textarea id="modalConsComment" rows="3" placeholder="${decision === 'retourne' ? 'Expliquez ce qui doit être corrigé avant de resoumettre.' : ''}">${escapeHtml(commentaire)}</textarea>`,
+      confirmLabel: 'Préparer la réponse',
+    });
+    if (!confirme) return;
+    nom = $('#modalConsNom').value.trim();
+    role = $('#modalConsRole').value;
+    commentaire = $('#modalConsComment').value.trim();
+    if (!nom) { toast('Votre nom est obligatoire.', 4000); continue; }
+    if (decision === 'retourne' && !commentaire) { toast('Un commentaire est requis pour retourner le dossier pour correction.', 4000); continue; }
+    break;
+  }
+  const payload = {
+    type: 'suivi-tei-reponse-approbation', version: 1, decision, commentaire,
+    planificateur: { nom, role }, decisionLe: new Date().toISOString(),
+    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode },
+    revision: { id: meta.revisionId || (d.activeRevision && d.activeRevision.id) || '', nom: (d.activeRevision && d.activeRevision.nom) || '' },
+    sauvegarde: { id: meta.snapshotId || '', date: meta.submittedAt || '' },
+  };
+  const res = reponseVersCode(payload);
+  const texte = reponseTexteCourriel(payload, res.code);
+  const sujet = `Décision d\u2019approbation \u2014 ${d.champs.bt ? formatBt(d.champs.bt) : d.localisation} \u2014 ${payload.sauvegarde.id} \u2014 ${decision === 'approuve' ? 'Approuvé' : 'Retourné pour correction'}`;
+  const envoyer = await showModal({
+    title: 'Réponse prête',
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Voici la réponse structurée à renvoyer par courriel. Si votre courriel n\u2019affiche pas le code complet, copiez ce texte.</p>
+      <textarea rows="12" readonly onclick="this.select()" style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(texte)}</textarea>`,
+    confirmLabel: 'Ouvrir dans le courriel',
+  });
+  if (envoyer) window.location.href = `mailto:?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(texte)}`;
+}
+
 (async function autoResumeFromUrl() {
+  const consultationOuverte = await tenterOuvertureModeConsultation();
+  if (consultationOuverte) return;
+
   const params = new URLSearchParams(location.search);
   const mode = params.get('mode');
   const numero = params.get('numero');
@@ -6290,8 +7192,10 @@ $('#btnIvViewPhoto').addEventListener('click', () => {
   const files = state.draft.casesFichiers[task.name] || [];
   const last = files[files.length - 1];
   if (!last) return;
-  if (isImageFile(last.name)) {
+  if (isImageFile(last.name) && hasUsableBlob(last)) {
     showModal({ title: last.name, bodyHtml: `<img src="${URL.createObjectURL(last.blob)}" style="max-width:100%;border-radius:8px;">`, confirmLabel: 'Fermer' });
+  } else if (isImageFile(last.name)) {
+    toast('Cette photo n\u2019est pas disponible sur cet appareil (dossier importé sans les fichiers joints).', 4500);
   } else {
     toast('Document non visualisable directement (pas une image).');
   }

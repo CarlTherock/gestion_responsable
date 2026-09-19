@@ -21,6 +21,12 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   if (e.request.url.includes('/api/')) return;
+  // Sauvegardes partagées (mode consultation) : le suivi.json d'un autre site est
+  // lu directement par la page. Le service worker ne l'intercepte pas et ne le
+  // copie jamais dans le cache de cet appareil (données d'un dossier partagé
+  // qui ne doivent pas y rester, et évite de masquer la vraie cause d'un échec).
+  const urlRequete = new URL(e.request.url);
+  if (urlRequete.origin !== self.location.origin && urlRequete.pathname.toLowerCase().endsWith('.json')) return;
   e.respondWith(
     fetch(e.request, { cache: 'no-store' })
       .then((res) => {
