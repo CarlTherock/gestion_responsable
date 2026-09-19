@@ -528,6 +528,7 @@ function normalizeDraft(d) {
   if (d.activeRevision.demandeApprobationLe === undefined) d.activeRevision.demandeApprobationLe = null;
   if (d.activeRevision.demandeDestinataireNom === undefined) d.activeRevision.demandeDestinataireNom = null;
   if (d.activeRevision.demandeDestinataireRole === undefined) d.activeRevision.demandeDestinataireRole = null;
+  if (d.activeRevision.demandeSauvegardeId === undefined) d.activeRevision.demandeSauvegardeId = null;
   if (d.activeRevision.approbation === undefined) d.activeRevision.approbation = null;
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
@@ -2530,31 +2531,100 @@ $('#numLoc').addEventListener('blur', async () => {
 // Écrit tout le contenu du brouillon (suivi.json, resume.txt, documents par
 // tâche, photos de mise à jour) sur le disque. N'est appelé QUE lors de la
 // sauvegarde officielle (100 % des tâches cochées ou N/A + nom d'employé).
-// Fichier à la racine du dossier exporté : redirige vers le Dashboard de la
-// DERNIÈRE sauvegarde (chaque sauvegarde est maintenant un paquet complet et
-// autonome avec ses propres 00_Dashboard/01_Dossier_actif/02_Documents/
-// 03_Photos/04_NonConformites/06_Exports). Chemin relatif seulement (aucun
-// chemin Windows absolu), pour fonctionner peu importe où le dossier est
-// déplacé, copié sur OneDrive ou une clé USB.
-function buildDashboardRedirectHtml(cibleSauvegarde) {
-  const cible = `${cibleSauvegarde}/00_Dashboard/Dashboard.html`;
+
+// URL officielle de la PWA (GitHub Pages). Utilisée seulement si l'application
+// tourne depuis un contexte sans adresse web (file://, etc.) : dans tous les
+// autres cas, on utilise l'adresse réelle d'où la sauvegarde a été faite
+// (identique à l'URL officielle en production, mais permet aussi de tester une
+// branche en prévisualisation avant fusion).
+const URL_APP_OFFICIELLE = 'https://carltherock.github.io/gestion_responsable/';
+
+// Adresse de base de l'application, SANS aucun paramètre (jamais mode/numero/bt :
+// ces paramètres déclenchent le vieux flux « Reprendre ce dossier »).
+function urlAppConsultationBase() {
+  if (location.protocol === 'http:' || location.protocol === 'https:') return location.origin + location.pathname;
+  return URL_APP_OFFICIELLE;
+}
+
+// Nom du sous-dossier d'une sauvegarde S-XXX. Source unique : utilisé à la fois
+// pour créer le dossier sur disque et pour construire les liens (courriel
+// d'approbation, Dashboard racine) afin qu'ils visent toujours CETTE sauvegarde.
+function nomDossierSauvegarde(approbation) {
+  const dt = new Date(approbation.at);
+  const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
+  const motifSlug = slugForFolder((approbation.resume && approbation.resume[0]) || 'Sauvegarde');
+  return `${approbation.id} - ${dateSlug} - ${motifSlug}`;
+}
+
+// Script inséré dans chaque Dashboard.html / OUVRIR_DASHBOARD.html : à l'ouverture
+// de la page, il donne à chaque élément [data-ouvrir-suivi-tei] l'adresse
+// ${appUrl}?partage=<URL ABSOLUE du suivi.json>, calculée par rapport à l'endroit
+// réel où la page est hébergée (serveur interne, SharePoint...). Jamais de
+// chemin Windows absolu, jamais mode/numero/bt, jamais de stockage local.
+// Le lien est posé dans le href lui-même : il fonctionne aussi avec un clic du
+// milieu ou « Ouvrir dans un nouvel onglet ».
+function buildScriptOuvrirSuiviTei(appUrl, suiviRelatif) {
+  const safe = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
+  return `<script>
+(function () {
+  var APP_URL = ${safe(appUrl)};
+  var SUIVI_RELATIF = ${safe(suiviRelatif)};
+  var snapshotUrl = new URL(SUIVI_RELATIF, window.location.href).href;
+  var consultationUrl = APP_URL + '?partage=' + encodeURIComponent(snapshotUrl);
+  var liens = document.querySelectorAll('[data-ouvrir-suivi-tei]');
+  for (var i = 0; i < liens.length; i++) {
+    liens[i].href = consultationUrl;
+    liens[i].target = '_blank';
+    liens[i].rel = 'noopener';
+    liens[i].title = 'Sauvegarde ouverte : ' + snapshotUrl;
+  }
+})();
+</script>`;
+}
+
+// Fichier à la racine du dossier exporté : page d'accueil qui désigne la
+// DERNIÈRE sauvegarde (identifiant exact, date, révision) et donne deux
+// actions : ouvrir son Dashboard.html, ou l'ouvrir dans Suivi TEI (consultation).
+// Régénéré à chaque nouvelle sauvegarde. Aucun scan de sous-dossiers en
+// JavaScript : le nom exact du dossier est écrit ici au moment de la sauvegarde.
+// Chemins relatifs seulement (aucun chemin Windows absolu).
+function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, localisation, bt) {
+  const segments = encodeURIComponent(nomSauvegarde);
+  const cibleDashboard = `${segments}/00_Dashboard/Dashboard.html`;
+  const suiviRelatif = `./${nomSauvegarde}/01_Dossier_actif/suivi.json`;
+  const quand = approbation && approbation.at ? new Date(approbation.at).toLocaleString('fr-CA') : '';
+  const titre = `${localisation || ''}${bt ? ' \u2014 ' + formatBt(bt) : ''}`;
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
-<meta http-equiv="refresh" content="0; url=${cible}">
-<title>Ouverture du Dashboard\u2026</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dossier ${escapeHtml(titre)} \u2014 dernière sauvegarde</title>
 <style>
-  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-  .box { text-align:center; max-width:420px; padding:24px; }
-  a.btn { display:inline-block; margin-top:16px; padding:12px 22px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:8px; font-weight:600; }
-  p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:20px; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  .box { max-width:560px; padding:28px; background:#fff; border:1px solid #d9d9d4; border-radius:8px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#5c5c56; font-size:14px; margin:0 0 18px; }
+  dl { margin:0 0 20px; font-size:14px; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
+  dt { color:#5c5c56; } dd { margin:0; font-weight:600; }
+  a.btn { display:block; margin-top:10px; padding:12px 18px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:6px; font-weight:600; text-align:center; }
+  a.btn.secondaire { background:#fff; color:#b85a1f; border:1px solid #b85a1f; }
+  p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:18px; word-break:break-all; }
+  p.note { font-size:12px; color:#5c5c56; margin-top:14px; }
 </style>
 </head><body>
   <div class="box">
-    <p>Ouverture du Dashboard\u2026</p>
-    <p>Si rien ne se passe, cliquez ci-dessous :</p>
-    <a class="btn" href="${cible}">Ouvrir le Dashboard</a>
-    <p class="chemin">Emplacement : ${cible}</p>
+    <h1>${escapeHtml(titre)}</h1>
+    <p class="sub">Cette page désigne la sauvegarde la plus récente de ce dossier.</p>
+    <dl>
+      <dt>Sauvegarde</dt><dd>${escapeHtml((approbation && approbation.id) || '')}</dd>
+      <dt>Date et heure</dt><dd>${escapeHtml(quand)}</dd>
+      <dt>Révision</dt><dd>${escapeHtml(revisionId || '')}</dd>
+    </dl>
+    <a class="btn" href="${cibleDashboard}">Ouvrir le Dashboard de ${escapeHtml((approbation && approbation.id) || 'cette sauvegarde')}</a>
+    <a class="btn secondaire" data-ouvrir-suivi-tei href="${escapeHtml(urlAppConsultationBase())}">Ouvrir dans Suivi TEI</a>
+    <p class="note">Pour consulter une sauvegarde précise (ex. celle envoyée pour approbation), utilisez le lien de son propre Dashboard : cette page, elle, désigne toujours la plus récente.</p>
+    <p class="chemin">${escapeHtml(nomSauvegarde)}/00_Dashboard/Dashboard.html</p>
   </div>
+${buildScriptOuvrirSuiviTei(urlAppConsultationBase(), suiviRelatif)}
 </body></html>`;
 }
 
@@ -2627,10 +2697,7 @@ async function writeEverythingToDisk(date) {
   // DIRECTEMENT à la racine du dossier — plus de dossiers communs partagés.
   const dernier = state.draft.approbations[state.draft.approbations.length - 1];
   if (!dernier) return; // rien à sauvegarder tant qu'aucune sauvegarde officielle n'a été faite
-  const dt = new Date(dernier.at);
-  const dateSlug = dt.toISOString().slice(0, 16).replace('T', ' ').replace(/:/g, '-');
-  const motifSlug = slugForFolder((dernier.resume && dernier.resume[0]) || 'Sauvegarde');
-  const nomSauvegarde = `${dernier.id} - ${dateSlug} - ${motifSlug}`;
+  const nomSauvegarde = nomDossierSauvegarde(dernier);
   const dSave = await state.dossierDirHandle.getDirectoryHandle(nomSauvegarde, { create: true });
 
   const dashboardContent = buildDashboardHtml({ docPrefix: '../', estInstantaneHistorique: false });
@@ -2660,7 +2727,7 @@ async function writeEverythingToDisk(date) {
   // OUVRIR_DASHBOARD.html à la racine : pointe toujours vers la sauvegarde
   // la PLUS RÉCENTE.
   try {
-    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml(nomSauvegarde));
+    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml(nomSauvegarde, dernier, (state.draft.activeRevision && state.draft.activeRevision.id) || '', state.draft.localisation, state.draft.champs.bt));
   } catch (err) { /* best effort */ }
 }
 
@@ -2919,7 +2986,8 @@ function buildDashboardHtml(options) {
   `;
 
   const titre = `${escapeHtml(d.localisation)}${d.champs.bt ? ' (' + escapeHtml(formatBt(d.champs.bt)) + ')' : ''}`;
-  const appUrl = buildDossierUrl();
+  const appUrl = buildDossierUrl(); // réservé au code QR de reprise (appareil du TEI)
+  const appBase = urlAppConsultationBase(); // consultation : jamais mode/numero/bt
   const qrSvg = generateQrSvg(appUrl);
   const statutLabel = pct >= 100 ? 'Terminé' : pct > 0 ? 'En cours' : 'Non commencé';
   const statutClass = pct >= 100 ? 'status-done' : pct > 0 ? 'status-progress' : 'status-new';
@@ -3080,7 +3148,7 @@ function buildDashboardHtml(options) {
           <div class="qr-card">${qrSvg || ''}</div>
           <div class="qr-caption">Scannez pour rouvrir ce dossier</div>
         </div>
-        <a class="open-app-link" href="${appUrl}">\u21a9 Ouvrir dans l\u2019application</a>
+        <a class="open-app-link" data-ouvrir-suivi-tei href="${appBase}">\u21a9 Ouvrir dans Suivi TEI</a>
       </div>
     </div>
 
@@ -3101,30 +3169,10 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" href="../04_NonConformites/"><span class="nav-label">Ouvrir les non-conformités</span><span class="nav-path">04_NonConformites/</span></a>
       <a class="nav-btn" href="../../"><span class="nav-label">Voir l\u2019historique (autres sauvegardes)</span><span class="nav-path">.. (racine du dossier)</span></a>
       <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
-      <a class="nav-btn" href="${appUrl}" onclick="return ouvrirDansSuiviTei(this.href);"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule, avec les données de cette sauvegarde</span></a>
-      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" href="${appUrl}" onclick="return ouvrirDansSuiviTei(this.href);"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre Suivi TEI en mode consultation' : 'Disponible à 100 % seulement'}</span></a>
-    </div>
-    <script>
-      // "Ouvrir dans Suivi TEI" : ouvre l'application avec un paramètre
-      // ?partage=<URL du suivi.json de CETTE sauvegarde exacte>. L'application
-      // télécharge et lit ce fichier au démarrage et ouvre le dossier en
-      // MODE CONSULTATION (lecture seule) -- fonctionne même en cliquant un
-      // lien directement depuis un courriel (aucune relation de fenêtre
-      // requise, contrairement à un mécanisme par onglet ouvreur). Le chemin
-      // du suivi.json est calculé au moment du clic, relatif à l'endroit réel
-      // où CE Dashboard est hébergé (OneDrive, SharePoint, réseau...), jamais
-      // un chemin Windows absolu.
-      function ouvrirDansSuiviTei(baseAppUrl) {
-        try {
-          const suiviJsonUrl = new URL('../01_Dossier_actif/suivi.json', document.baseURI).href;
-          const sep = baseAppUrl.indexOf('?') === -1 ? '?' : '&';
-          window.open(baseAppUrl + sep + 'partage=' + encodeURIComponent(suiviJsonUrl), '_blank');
-        } catch (err) {
-          window.open(baseAppUrl, '_blank');
-        }
-        return false;
-      }
-    </script>`}
+      <a class="nav-btn" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule, avec les données de cette sauvegarde</span></a>
+      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre Suivi TEI en mode consultation' : 'Disponible à 100 % seulement'}</span></a>
+    </div>`}
+    ${buildScriptOuvrirSuiviTei(appBase, '../01_Dossier_actif/suivi.json')}
 
     <div class="hero-ring">
       ${ringSvg(pct, 150, 14)}
@@ -5637,6 +5685,9 @@ async function demanderApprobationFinale() {
   state.draft.activeRevision.demandeApprobationLe = maintenant.toISOString();
   state.draft.activeRevision.demandeDestinataireNom = destNom;
   state.draft.activeRevision.demandeDestinataireRole = destRole;
+  // Sauvegarde précise soumise (S-XXX) : le lien du courriel vise CELLE-LÀ, jamais « la plus récente ».
+  const sauvegardeSoumise = (state.draft.approbations && state.draft.approbations.length) ? state.draft.approbations[state.draft.approbations.length - 1] : null;
+  state.draft.activeRevision.demandeSauvegardeId = sauvegardeSoumise ? sauvegardeSoumise.id : null;
   state.draft.activeRevision.approbation = null;
   state.draft.champs.lienDossierPartage = lienPartage;
   logActivity(`Demande d'approbation finale préparée pour la révision ${state.draft.activeRevision.id} — destinataire : ${destNom} (${ROLE_LABELS[destRole] || destRole})`);
@@ -5651,7 +5702,7 @@ async function demanderApprobationFinale() {
   const vpd = computeVpdStats();
   const nc = computeNcStats();
   const bt = d.champs.bt ? formatBt(d.champs.bt) : 'BT non renseigné';
-  const lienDashboard = buildLienDashboardPartage(lienPartage);
+  const lienDashboard = buildLienDashboardSauvegarde(lienPartage, sauvegardeSoumise);
   const sujet = `Demande d'approbation — ${bt} — ${state.draft.activeRevision.id} ${state.draft.activeRevision.nom}`;
   const prenomDest = destNom.split(' ')[0] || destNom;
   const corps = [
@@ -5662,8 +5713,10 @@ async function demanderApprobationFinale() {
     `Checklist : ${done} / ${total} tâches complétées`,
     `VPO ouvertes : ${vpo.pending}`,
     `VPD ouvertes : ${vpd.pending}`,
-    `Non-conformités ouvertes : ${nc.total}`, '',
-    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard du dossier ici : ${lienDashboard}`, ''] : []),
+    `Non-conformités ouvertes : ${nc.total}`,
+    ...(sauvegardeSoumise ? [`Sauvegarde soumise : ${sauvegardeSoumise.id} (${new Date(sauvegardeSoumise.at).toLocaleString('fr-CA')})`] : []),
+    '',
+    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard ${sauvegardeSoumise ? 'de cette sauvegarde (' + sauvegardeSoumise.id + ')' : 'du dossier'} ici : ${lienDashboard}`, ''] : []),
     "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
     'Merci beaucoup et bonne journée !',
   ].join('\n');
@@ -5690,6 +5743,7 @@ function annulerDemandeApprobation() {
   state.draft.activeRevision.demandeApprobationLe = null;
   state.draft.activeRevision.demandeDestinataireNom = null;
   state.draft.activeRevision.demandeDestinataireRole = null;
+  state.draft.activeRevision.demandeSauvegardeId = null;
   logActivity(`Demande d'approbation annulée pour la révision ${state.draft.activeRevision.id}`);
   schedulePersist();
   refreshApprovals();
@@ -5822,6 +5876,23 @@ function buildLienDashboardPartage(lienPartage) {
   // ".../OUVRIR_DASHBOARD.html/OUVRIR_DASHBOARD.html".
   if (/\/OUVRIR_DASHBOARD\.html$/i.test(lien)) return lien;
   return lien + '/OUVRIR_DASHBOARD.html';
+}
+
+// Lien vers le Dashboard.html d'UNE sauvegarde précise (ex. S-003), construit à
+// partir du lien du dossier partagé. Sert au courriel d'approbation : si S-003
+// est soumise puis que S-004 est créée ensuite, l'ancien courriel reste lié à
+// S-003 (jamais de bascule automatique vers la plus récente). Le nom du dossier
+// vient de nomDossierSauvegarde() -- la même fonction qui l'a créé sur disque.
+// Repli sur le lien racine si aucune sauvegarde officielle n'existe, ou si le
+// lien fourni est un lien-jeton opaque (paramètres ?/# : impossible d'y ajouter
+// un chemin de sous-dossier).
+function buildLienDashboardSauvegarde(lienPartage, approbation) {
+  const lien = (lienPartage || '').trim().replace(/\/+$/, '');
+  if (!lien) return '';
+  if (!approbation || !approbation.id) return buildLienDashboardPartage(lienPartage);
+  const racine = lien.replace(/\/OUVRIR_DASHBOARD\.html$/i, '');
+  if (/[?#]/.test(racine)) return buildLienDashboardPartage(lienPartage);
+  return `${racine}/${encodeURIComponent(nomDossierSauvegarde(approbation))}/00_Dashboard/Dashboard.html`;
 }
 
 // Code QR généré à partir du lien de dossier partagé fourni par l'utilisateur
@@ -6125,50 +6196,103 @@ if (btnQrScannerClose) btnQrScannerClose.addEventListener('click', fermerLecteur
 // réseau/CORS de l'hébergement réel du fichier (OneDrive, SharePoint...).
 async function tenterOuvertureModeConsultation() {
   const params = new URLSearchParams(location.search);
-  const partageUrl = params.get('partage');
-  if (!partageUrl) return false;
-  history.replaceState({}, '', location.pathname);
+  // Dès que le paramètre ?partage est présent (même vide), on NE passe JAMAIS par
+  // le vieux flux « Reprendre ce dossier » : soit la sauvegarde s'ouvre, soit une
+  // erreur explicite s'affiche. On garde ?partage= dans la barre d'adresse pour
+  // pouvoir vérifier/copier l'adresse exacte demandée (retiré seulement si la
+  // personne choisit « Continuer sans la sauvegarde partagée »).
+  if (!params.has('partage')) return false;
+  const partageUrl = (params.get('partage') || '').trim();
 
   afficherEcranConsultation('chargement');
+
+  if (!partageUrl) {
+    afficherEcranConsultation('erreur', '', 'Le lien est incomplet : aucune adresse de sauvegarde n\u2019a été transmise.', { code: 'LIEN_VIDE' });
+    return true;
+  }
+  let cible;
+  try { cible = new URL(partageUrl); } catch (err) {
+    afficherEcranConsultation('erreur', partageUrl, 'L\u2019adresse de la sauvegarde n\u2019est pas une URL valide.', { code: 'URL_INVALIDE' });
+    return true;
+  }
+  if (cible.protocol !== 'http:' && cible.protocol !== 'https:') {
+    afficherEcranConsultation('erreur', partageUrl, 'Seules les adresses http:// et https:// sont acceptées pour une sauvegarde partagée.', { code: 'PROTOCOLE_REFUSE' });
+    return true;
+  }
 
   let resp;
   try {
     resp = await fetch(partageUrl, { cache: 'no-store' });
   } catch (err) {
-    afficherEcranConsultation('erreur', partageUrl, 'La sauvegarde partagée n\u2019a pas pu être téléchargée (connexion réseau ou lien bloqué).');
+    const diag = diagnostiquerEchecFetch(cible, err);
+    afficherEcranConsultation('erreur', partageUrl, diag.message, { code: diag.code, technique: diag.technique });
     return true;
   }
   if (!resp || !resp.ok) {
-    afficherEcranConsultation('erreur', partageUrl, `Le fichier n\u2019a pas pu être téléchargé (${resp ? 'code ' + resp.status : 'réponse invalide'}).`);
+    const statut = resp ? resp.status : 0;
+    const message = statut === 404 ? 'Fichier introuvable sur le serveur (404) : la sauvegarde a été déplacée, renommée ou supprimée.'
+      : (statut === 401 || statut === 403) ? `Accès refusé par le serveur (${statut}) : ce compte n\u2019a pas le droit de lire ce fichier.`
+      : `Le serveur a répondu avec une erreur (${statut || 'réponse invalide'}).`;
+    afficherEcranConsultation('erreur', partageUrl, message, { code: statut === 404 ? 'INTROUVABLE' : `HTTP_${statut || 'INVALIDE'}`, technique: resp ? `HTTP ${statut} ${resp.statusText || ''}`.trim() : '' });
     return true;
   }
   const contentType = (resp.headers.get('content-type') || '').toLowerCase();
   let texte;
   try { texte = await resp.text(); } catch (err) {
-    afficherEcranConsultation('erreur', partageUrl, 'Le contenu du fichier n\u2019a pas pu être lu.');
+    afficherEcranConsultation('erreur', partageUrl, 'Le contenu du fichier n\u2019a pas pu être lu.', { code: 'LECTURE_IMPOSSIBLE', technique: `${err.name}: ${err.message}` });
     return true;
   }
   const sembleHtml = contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(texte);
   let data;
   try { data = JSON.parse(texte); } catch (err) {
     afficherEcranConsultation('erreur', partageUrl, sembleHtml
-      ? 'Ce lien retourne une page de partage (probablement OneDrive) plutôt que le fichier de données brut.'
-      : 'Le fichier reçu n\u2019est pas un JSON valide.');
+      ? 'Cette adresse retourne une page web (page de partage OneDrive/SharePoint, page de connexion ou page d\u2019erreur du serveur) plutôt que le fichier de données brut.'
+      : 'Le fichier reçu n\u2019est pas un JSON valide.',
+    { code: sembleHtml ? 'REPONSE_HTML' : 'JSON_INVALIDE', technique: `Type de contenu : ${contentType || 'inconnu'}` });
     return true;
   }
   if (!data || typeof data !== 'object' || !data.localisation || (data.mode !== 'installation' && data.mode !== 'demantelement')) {
-    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier ne correspond pas à un dossier Suivi TEI valide.');
+    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier ne correspond pas à un dossier Suivi TEI valide.', { code: 'STRUCTURE_INVALIDE' });
     return true;
   }
 
   let draft;
   try { draft = normalizeDraft(data); } catch (err) {
-    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier n\u2019a pas pu être interprété comme un dossier Suivi TEI (format inattendu).');
+    afficherEcranConsultation('erreur', partageUrl, 'Ce fichier n\u2019a pas pu être interprété comme un dossier Suivi TEI (format inattendu).', { code: 'FORMAT_INATTENDU', technique: `${err.name}: ${err.message}` });
     return true;
   }
 
   ouvrirModeConsultation(draft, partageUrl);
   return true;
+}
+
+// Explique POURQUOI un fetch() a échoué, sans prétendre en savoir plus que ce
+// que le navigateur révèle : pour un blocage CORS ou réseau, le navigateur ne
+// donne volontairement aucun détail à la page (même message d'erreur générique).
+// Le seul cas identifiable avec certitude est le contenu mixte (app en HTTPS
+// qui tente de lire une adresse HTTP) -- toujours bloqué par le navigateur.
+function diagnostiquerEchecFetch(cible, err) {
+  const technique = err ? `${err.name || 'Erreur'}: ${err.message || ''}`.trim() : '';
+  if (location.protocol === 'https:' && cible.protocol === 'http:') {
+    return {
+      code: 'CONTENU_MIXTE',
+      message: 'Le navigateur bloque cette lecture : l\u2019application est servie en HTTPS et le fichier se trouve à une adresse HTTP (contenu mixte). Ce blocage est imposé par le navigateur et ne peut pas être contourné par l\u2019application.',
+      technique,
+    };
+  }
+  return {
+    code: 'RESEAU_OU_CORS',
+    message: 'Le fichier n\u2019a pas pu être lu. Causes possibles : serveur inaccessible depuis cet appareil, serveur qui n\u2019autorise pas la lecture depuis un autre site (CORS), ou accès d\u2019un site public vers un serveur interne bloqué par le navigateur. Le navigateur ne permet pas de distinguer ces cas.',
+    technique,
+  };
+}
+
+// Déduit l'adresse du Dashboard.html d'une sauvegarde à partir de l'adresse de
+// son suivi.json (structure fixe : .../S-XXX/01_Dossier_actif/suivi.json ->
+// .../S-XXX/00_Dashboard/Dashboard.html). Vide si l'adresse ne suit pas cette structure.
+function urlDashboardDepuisSuivi(partageUrl) {
+  const re = /\/01_Dossier_actif\/suivi\.json(\?.*)?$/i;
+  return re.test(partageUrl || '') ? partageUrl.replace(re, '/00_Dashboard/Dashboard.html') : '';
 }
 
 // Ouvre un dossier en mode consultation (lecture seule) à partir d'un
@@ -6197,7 +6321,7 @@ function ouvrirModeConsultation(draft, sourceUrl) {
 // JAMAIS laisser la personne face à une application vide sans explication
 // (exigence explicite : un lien OneDrive incompatible/bloqué par CORS doit
 // afficher une erreur claire, jamais une PWA vide).
-function afficherEcranConsultation(mode, sourceUrl, message) {
+function afficherEcranConsultation(mode, sourceUrl, message, details) {
   let overlay = $('#consultationLoadOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -6208,18 +6332,25 @@ function afficherEcranConsultation(mode, sourceUrl, message) {
   if (mode === 'chargement') {
     overlay.innerHTML = `<div class="consultation-load-box"><p>Chargement de la sauvegarde partagée…</p></div>`;
   } else {
+    const det = details || {};
+    const dashboardUrl = urlDashboardDepuisSuivi(sourceUrl);
     overlay.innerHTML = `
       <div class="consultation-load-box">
-        <h2>Sauvegarde partagée introuvable</h2>
+        <h2>Impossible de charger la sauvegarde partagée</h2>
         <p>${escapeHtml(message || 'Ce lien de sauvegarde partagée n\u2019a pas pu être ouvert.')}</p>
-        ${sourceUrl ? `<p class="consultation-load-url">${escapeHtml(sourceUrl)}</p>` : ''}
+        ${sourceUrl ? `<p class="consultation-load-url"><strong>Adresse demandée :</strong><br>${escapeHtml(sourceUrl)}</p>` : ''}
+        ${det.code ? `<p class="consultation-load-url"><strong>Diagnostic :</strong> ${escapeHtml(det.code)}${det.technique ? '<br>' + escapeHtml(det.technique) : ''}</p>` : ''}
         <div class="consultation-load-actions">
-          ${sourceUrl ? `<a class="btn btn-outline" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Télécharger le fichier suivi.json pour import manuel</a>` : ''}
-          <button type="button" class="btn btn-primary" id="btnFermerEcranConsultation">Continuer sans la sauvegarde partagée</button>
+          ${dashboardUrl ? `<a class="btn btn-primary" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener">Ouvrir le Dashboard de cette sauvegarde</a>` : ''}
+          ${sourceUrl ? `<a class="btn btn-outline" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Tester l\u2019accès au fichier suivi.json</a>` : ''}
+          <button type="button" class="btn btn-outline" id="btnFermerEcranConsultation">Continuer sans la sauvegarde partagée</button>
         </div>
       </div>`;
     const btn = $('#btnFermerEcranConsultation', overlay);
-    if (btn) btn.addEventListener('click', masquerEcranConsultation);
+    if (btn) btn.addEventListener('click', () => {
+      history.replaceState({}, '', location.pathname);
+      masquerEcranConsultation();
+    });
   }
   overlay.classList.remove('hidden');
 }
@@ -6232,6 +6363,10 @@ function masquerEcranConsultation() {
 // ouvert en mode consultation (dossier partagé, lecture seule) -- créé
 // dynamiquement (pas besoin de toucher au HTML), inséré juste avant l'en-tête
 // de l'espace de travail.
+function hoteDe(url) {
+  try { return new URL(url).host; } catch (err) { return url; }
+}
+
 function afficherBandeauConsultation() {
   let banner = $('#consultationBanner');
   if (!state.readOnlyConsultation) {
@@ -6246,6 +6381,8 @@ function afficherBandeauConsultation() {
       Soumise par : <strong>${escapeHtml(meta.submittedBy || 'inconnu')}${meta.submittedRole ? ' · ' + escapeHtml(meta.submittedRole) : ''}</strong>
       · Le : ${dateTexte}
       ${meta.revisionId ? ` · Révision : ${escapeHtml(meta.revisionId)}` : ''}
+      ${meta.snapshotId ? ` · Sauvegarde : <strong>${escapeHtml(meta.snapshotId)}</strong>` : ''}
+      ${meta.sourceUrl ? ` · Source : ${escapeHtml(hoteDe(meta.sourceUrl))}` : ''}
       \u2014 Les modifications sont désactivées.
     </div>
     <div class="consultation-banner-actions" style="margin-top:var(--space-2);display:flex;gap:var(--space-2);">
