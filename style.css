@@ -1343,3 +1343,15 @@ select.ncextra-gravite {
 /* ---------- Actions de fichier (Partager/Commentaire) et commentaire affiché ---------- */
 .file-row-actions { display: flex; flex-direction: column; gap: var(--space-1); }
 .file-comment-text { font-size: var(--text-xs); color: var(--color-text-muted); font-style: italic; margin-top: 2px; }
+
+/* ---------- Écran de reprise du dossier actif (bouton « Continuer le travail » du Dashboard racine) ---------- */
+.reprise-overlay {
+  position: fixed; inset: 0; background: var(--color-bg); z-index: 900; /* sous les fenêtres modales (1000) */
+  display: flex; align-items: center; justify-content: center; padding: var(--space-5);
+}
+.reprise-overlay.hidden { display: none; }
+.reprise-box { max-width: 560px; text-align: center; }
+.reprise-box h2 { margin-bottom: var(--space-3); }
+.reprise-box p { color: var(--color-text-muted); margin-bottom: var(--space-3); line-height: 1.5; }
+.reprise-actions { display: flex; gap: var(--space-3); justify-content: center; flex-wrap: wrap; margin-top: var(--space-4); }
+.reprise-aide { font-size: var(--text-sm); }
