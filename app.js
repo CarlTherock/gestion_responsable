@@ -435,8 +435,9 @@ async function tryRestoreSaveLocation(numero) {
   try {
     const dossierMemorise = saved.dossierHandle || saved.dossierDirHandle;
     if (dossierMemorise && estRacine(dossierMemorise)) {
+      // « prompt » = le navigateur redemandera l'autorisation d'un clic à l'Enregistrer (pas de nouveau choix de dossier).
       const perm = await dossierMemorise.queryPermission({ mode: 'readwrite' });
-      if (perm === 'granted') {
+      if (perm === 'granted' || perm === 'prompt') {
         state.dossierDirHandle = dossierMemorise;
         state.rootDirHandle = saved.rootHandle || null;
         return;
@@ -444,7 +445,7 @@ async function tryRestoreSaveLocation(numero) {
     }
     if (saved.rootHandle) {
       const perm = await saved.rootHandle.queryPermission({ mode: 'readwrite' });
-      if (perm === 'granted') state.rootDirHandle = saved.rootHandle;
+      if (perm === 'granted' || perm === 'prompt') state.rootDirHandle = saved.rootHandle;
     }
   } catch (err) { /* permission expirée ou poignée invalide -- on ignore */ }
 }
@@ -827,15 +828,17 @@ $('#btnMoreMenuPc').addEventListener('click', async () => {
       <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">${iconSvg('printer')}Imprimer</button>
       <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Historique / activité récente</button>
       <button type="button" class="btn btn-outline" id="menuCopiesSecours" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Copies de secours locales</button>
+      <button type="button" class="btn btn-outline" id="menuChangerDossier" style="width:100%;justify-content:flex-start;">${iconSvg('folder')}Changer de dossier de travail</button>
       <button type="button" class="btn btn-outline" id="menuRaccourcis" style="width:100%;justify-content:flex-start;">${iconSvg('keyboard')}Raccourcis clavier</button>
     </div>
-  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuCopiesSecours', 'menuRaccourcis']);
+  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuCopiesSecours', 'menuChangerDossier', 'menuRaccourcis']);
   if (choice === 'menuQr') showQrModal();
   else if (choice === 'menuExporter') exportDashboardFile();
   else if (choice === 'menuPartager') shareDossierLink();
   else if (choice === 'menuImprimer') window.print();
   else if (choice === 'menuHistorique') selectTab('apercu');
   else if (choice === 'menuCopiesSecours') showCopiesSecours();
+  else if (choice === 'menuChangerDossier') changerDossierDeTravail();
   else if (choice === 'menuRaccourcis') showShortcutsHelp();
 });
 
@@ -885,7 +888,7 @@ function describeWriteError(err, hasHandle) {
   if (!hasHandle) return "Aucun dossier de travail n\u2019est sélectionné. Cliquez sur Enregistrer pour en choisir un.";
   const name = err && err.name;
   if (name === 'NotAllowedError' || name === 'SecurityError') {
-    return "Autorisation d\u2019écriture requise. Cliquez sur Enregistrer et sélectionnez de nouveau le dossier de travail.";
+    return "Autorisation d\u2019écriture refusée. Cliquez sur Enregistrer et acceptez la demande du navigateur, ou utilisez le menu \u22ef, « Changer de dossier de travail ».";
   }
   if (name === 'NotFoundError') {
     return "Dossier introuvable — vérifiez qu\u2019il est bien disponible localement (dans OneDrive : \u00ab Toujours conserver sur cet appareil \u00bb).";
@@ -904,6 +907,7 @@ async function pickSaveFolder() {
   try {
     const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
     state.rootDirHandle = handle;
+    state.dossierDirHandle = null; // choisir un dossier = changer volontairement la destination des prochains enregistrements
     $('#folderStatus').classList.remove('err');
     $('#folderStatus').classList.add('ok');
     $('#folderStatus').textContent = `Emplacement choisi : ${handle.name}.`;
@@ -2194,45 +2198,18 @@ async function attachFilesToNc(numero, fileList) {
 // (nouvelle sauvegarde S-XXX au même endroit) ou ailleurs (nouvel
 // emplacement à choisir). Réutilise l'infrastructure de showModal en
 // déclenchant son propre bouton Annuler pour un nettoyage propre.
-function showSaveLocationChoice() {
-  return new Promise((resolve) => {
-    let choix = 'annuler';
-    const emplacementActuel = state.dossierDirHandle
-      ? state.dossierDirHandle.name
-      : (state.rootDirHandle ? `${state.rootDirHandle.name} / ${nomRacineStable()}` : '');
-    showModal({
-      title: 'Où enregistrer cette sauvegarde ?',
-      bodyHtml: `
-        <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-3);">Emplacement actuel : <strong>${escapeHtml(emplacementActuel)}</strong></p>
-        <div style="display:flex;flex-direction:column;gap:var(--space-2);">
-          <button type="button" class="btn btn-primary" id="btnSaveIci" style="justify-content:flex-start;">Enregistrer ici (nouvelle sauvegarde au même endroit)</button>
-          <button type="button" class="btn btn-outline" id="btnSaveAilleurs" style="justify-content:flex-start;">Choisir un autre emplacement</button>
-        </div>
-      `,
-      confirmLabel: 'Annuler',
-    }).then(() => resolve(choix));
-    $('#btnSaveIci').addEventListener('click', () => { choix = 'ici'; $('#modalCancel').click(); });
-    $('#btnSaveAilleurs').addEventListener('click', () => { choix = 'ailleurs'; $('#modalCancel').click(); });
-  });
-}
-
-$('#btnSaveFolder').addEventListener('click', async () => {
+// Enregistrer : UNE seule action. Le dossier de travail autorisé est mémorisé sur cet ordinateur : après la
+// première fois, aucune question sur le dossier n'est posée (changement volontaire : menu ⋯, « Changer de dossier de travail »).
+async function enregistrerDossier(opts) {
+  const o = opts || {};
   if (!FS_ACCESS_SUPPORTED) {
     toast('La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.', 4000);
     return;
   }
   if (!state.rootDirHandle && !state.dossierDirHandle) {
+    // Première sauvegarde (ou premier accès sur ce PC) : le TEI choisit/autorise le dossier de travail.
     const chosen = await pickSaveFolder();
     if (!chosen) return; // l'utilisateur a fermé le sélecteur sans choisir
-  } else {
-    const choix = await showSaveLocationChoice();
-    if (choix === 'annuler') return;
-    if (choix === 'ailleurs') {
-      state.rootDirHandle = null;
-      state.dossierDirHandle = null;
-      const chosen = await pickSaveFolder();
-      if (!chosen) return;
-    }
   }
 
   // Vérifie la permission readwrite AVANT de construire quoi que ce soit
@@ -2244,7 +2221,7 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     return;
   }
   const { done, total, pct } = computeProgress();
-  if (pct < 100) {
+  if (pct < 100 && !o.sansConfirmationIncomplet) {
     const confirmed = await showModal({
       title: 'Dossier incomplet',
       bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Il reste <strong>${total - done}</strong> tâche(s) non cochée(s) ou non marquée(s) N/A. Dans le cadre de la gestion du changement, chaque tâche doit normalement être complétée avant la fermeture du dossier.</p><p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);">Vous pouvez tout de même sauvegarder ce dossier partiel.</p>`,
@@ -2321,7 +2298,13 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     await dbPutHandles(state.numero, state.rootDirHandle, state.dossierDirHandle);
     refreshApprovals();
     updateApprobationBadge();
-    toast(`Dossier ${state.dossierDirHandle.name} sauvegardé avec succès (${idSauvegarde}).`);
+    if (bilan && bilan.partielle) {
+      // Sauvegarde PARTIELLE : jamais annoncée comme un succès complet.
+      toast(`Dossier ${state.dossierDirHandle.name} sauvegardé PARTIELLEMENT (${idSauvegarde}) : voir le détail.`, 9000);
+      await afficherSauvegardePartielle(bilan, idSauvegarde);
+    } else {
+      toast(`Dossier ${state.dossierDirHandle.name} sauvegardé avec succès (${idSauvegarde}).`);
+    }
     if (bilan && bilan.avertissements && bilan.avertissements.length) toast(bilan.avertissements.join(' '), 9000);
   } catch (err) {
     // Une sauvegarde qui n'a pas pu être écrite sur le réseau n'existe pas : on retire son entrée
@@ -2333,13 +2316,17 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     try { await dbPut(state.draft); } catch (dbErr) { console.error('Échec persistance locale (IndexedDB)', dbErr); }
     refreshApprovals();
     updateApprobationBadge();
-    if (err && err.name === 'ErreurReprise') {
+    if (err && err.name === 'ErreurEcritureIncomplete') {
+      const reessayer = await afficherEnregistrementIncomplet(err);
+      if (reessayer) await enregistrerDossier({ sansConfirmationIncomplet: true });
+    } else if (err && err.name === 'ErreurReprise') {
       await showModal({ title: 'Enregistrement arrêté', bodyHtml: `<p style="font-size:var(--text-sm);line-height:1.6;">${escapeHtml(err.message)}</p>`, confirmLabel: 'Compris' });
     } else {
       toast(describeWriteError(err, !!(state.rootDirHandle || state.dossierDirHandle)), 6500);
     }
   }
-});
+}
+$('#btnSaveFolder').addEventListener('click', () => enregistrerDossier());
 
 // Bouton Enregistrer version mobile : déclenche exactement la même action
 // (même confirmation, même écriture sur disque) que le bouton du haut.
@@ -2711,10 +2698,14 @@ async function resoudreRacineDeSauvegarde() {
 }
 
 // Pointeur : petit fichier à la racine qui désigne la dernière sauvegarde officielle.
-function construirePointeur(nomSauvegarde, dernier, dashboardEcrit) {
+function construirePointeur(nomSauvegarde, dernier, dashboardEcrit, partiel) {
   const d = state.draft;
   const { done, total, pct } = computeProgress();
   const st = computeGlobalStatus();
+  // Sauvegarde partielle : jamais présentée comme « prête à fermer / en validation / en attente d'approbation ».
+  const statutPret = ['pret', 'validation', 'termine', 'attente-approbation'].includes(st.key);
+  const statut = (partiel && statutPret) ? { cle: st.key, libelle: 'Sauvegarde partielle (à vérifier)' } : { cle: st.key, libelle: st.label };
+  const manquants = partiel ? [...partiel.fichiersNonEcrits.map((f) => f.chemin), ...partiel.fichiersAbsents.map((f) => f.chemin)] : [];
   const vpo = computeVpoStats();
   const vpd = typeof computeVpdStats === 'function' ? computeVpdStats() : { pending: 0 };
   const nc = computeNcStats();
@@ -2736,9 +2727,11 @@ function construirePointeur(nomSauvegarde, dernier, dashboardEcrit) {
       auteur: dernier.nom,
       role: dernier.role,
       revision: { id: rev.id || dernier.revisionId || '', nom: rev.nom || '' },
+      partielle: !!partiel,
+      ...(partiel ? { fichiersManquants: { total: manquants.length, liste: manquants.slice(0, 30) } } : {}),
     },
     progression: { faites: done, total, pct: Math.round(pct) },
-    statut: { cle: st.key, libelle: st.label },
+    statut,
     ouvertes: { vpo: vpo.pending, vpd: vpd.pending, nc: nc.total },
     restantes: { total: restantes.length, liste: restantes.slice(0, 30) },
     ecritLe: new Date().toISOString(),
@@ -2763,6 +2756,10 @@ function htmlCorpsRacine(p, appUrl) {
   H.push('<div class="r-sous">' + (dos.tag ? 'Équipement / tag : <strong>' + e(dos.tag) + '</strong> \u00b7 ' : '') + (dos.mode === 'installation' ? 'Installation' : 'Démantèlement') + ' <span class="r-pastille">' + e(st.libelle || '') + '</span></div></header>');
   H.push('<section class="r-progression" aria-label="Progression"><div class="r-barre"><div class="r-barre-remplie" style="width:' + pct + '%"></div></div>');
   H.push('<div class="r-progression-texte">' + e(pr.faites) + ' / ' + e(pr.total) + ' tâches \u2014 ' + pct + ' %</div></section>');
+  if (sv.partielle) {
+    var fm = sv.fichiersManquants || {};
+    H.push('<div class="r-alerte" role="alert"><strong>Sauvegarde partielle.</strong> ' + e(fm.total || 0) + ' fichier(s) manquent (' + e((fm.liste || []).slice(0, 5).join(', ')) + ((fm.liste || []).length > 5 || (fm.total || 0) > 5 ? '\u2026' : '') + '). Ce dossier n\u2019est pas présenté comme prêt à fermer tant qu\u2019il n\u2019a pas été réenregistré complètement.</div>');
+  }
   H.push('<section class="r-action"><a class="r-bouton" href="' + e(lienApp) + '" target="_blank" rel="noopener">Continuer le travail</a>');
   H.push('<p class="r-note">Ouvre Gestion responsable sur le dernier dossier enregistré. Première utilisation sur cet ordinateur : le navigateur demande d\u2019autoriser l\u2019accès au dossier de travail (le dossier qui contient ce fichier).</p></section>');
   H.push('<dl class="r-grille">');
@@ -2817,6 +2814,7 @@ function buildDashboardRacineHtml(pointeur) {
   .r-bouton:hover { filter:brightness(1.08); }
   .r-bouton:focus-visible, a:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
   .r-note { font-size:13px; color:var(--muted); line-height:1.5; margin:10px 0 0; }
+  .r-alerte { margin:18px 0 0; padding:12px 16px; border:2px solid #d97706; border-radius:10px; font-size:14px; line-height:1.5; }
   .r-grille { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:20px 0; }
   .r-grille > div { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; }
   .r-grille dt { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
@@ -2937,9 +2935,11 @@ async function chargerDossierDepuisRacine(folder, opts) {
     if (o.strict) throw new ErreurReprise('AUTRE_DOSSIER', `Ce dossier est celui de ${json.localisation}, et non de ${o.numeroAttendu}. Sélectionnez le bon dossier racine.`);
     avertissements.push(`Attention : ce dossier correspond à ${json.localisation}, pas à ${o.numeroAttendu}.`);
   }
+  const partielle = json.sauvegardePartielle || null;
+  delete json.sauvegardePartielle; // information de la sauvegarde, pas une donnée de travail
   const draft = normalizeDraft(json);
   const manquants = await restaurerFichiersDepuis(base, draft);
-  return { draft, base, source, sauvegarde, avertissements, manquants };
+  return { draft, base, source, sauvegarde, avertissements, manquants, partielle };
 }
 
 function messageErreurReprise(err) {
@@ -3067,6 +3067,82 @@ async function showCopiesSecours() {
     const ok = await showModal({ title: 'Supprimer cette copie de secours ?', bodyHtml: '<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Cette copie locale sera définitivement supprimée.</p>', confirmLabel: 'Supprimer' });
     if (ok) { await supprimerCopieSecours(liste[i].cle); toast('Copie de secours supprimée.', 3000); }
   }
+}
+
+// ---------- Changer de dossier de travail (action volontaire, secondaire) ----------
+async function changerDossierDeTravail() {
+  if (!state.draft) return;
+  const actuel = state.dossierDirHandle ? state.dossierDirHandle.name : (state.rootDirHandle ? `${state.rootDirHandle.name} / ${nomRacineStable()}` : 'aucun');
+  const ok = await showModal({
+    title: 'Changer de dossier de travail',
+    bodyHtml: `<p style="font-size:var(--text-sm);line-height:1.6;">Dossier de travail actuel : <strong>${escapeHtml(actuel)}</strong>.</p>
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);line-height:1.6;">Les prochains Enregistrer iront dans le dossier que vous allez choisir. Le dossier actuel et ses sauvegardes ne sont pas modifiés. Pour <strong>continuer</strong> un dossier existant, ouvrez plutôt son OUVRIR_DASHBOARD.html et cliquez « Continuer le travail ».</p>`,
+    confirmLabel: 'Choisir un autre dossier',
+  });
+  if (!ok) return;
+  const ancienParent = state.rootDirHandle, ancienDossier = state.dossierDirHandle;
+  const choisi = await pickSaveFolder(); // remplace la destination seulement si un dossier est réellement choisi
+  if (!choisi) { state.rootDirHandle = ancienParent; state.dossierDirHandle = ancienDossier; return; }
+  await dbPutHandles(state.numero, state.rootDirHandle, null);
+  toast(`Dossier de travail changé : « ${state.rootDirHandle.name} ». Le prochain Enregistrer y utilisera « ${nomRacineStable()} ».`, 7000);
+}
+
+// ---------- Fichiers obligatoires / non obligatoires ----------
+// Règle (STRUCTURE PRÉPARÉE, aucune nouvelle exigence métier) :
+//  - OBLIGATOIRES : les données de la sauvegarde (suivi.json, resume.txt, changements.txt), le Dashboard.html du snapshot
+//    (porte d'entrée de l'approbation) et les pièces jointes des tâches marquées « preuve requise » (règle EXISTANTE :
+//    casesPreuveRequise, la même que la vérification avant fermeture).
+//  - NON OBLIGATOIRES : les autres documents, les photos, les fichiers de non-conformité, le rapport exporté, le registre des NC.
+// Pour rendre une catégorie obligatoire plus tard, il suffit d'étendre estPreuveRequise() ou de passer `true` à l'écriture concernée.
+function estPreuveRequise(draft, nomTache) { return !!(draft && draft.casesPreuveRequise && draft.casesPreuveRequise[nomTache]); }
+
+class ErreurEcritureIncomplete extends Error {
+  constructor(obligatoires, optionnels, absents) {
+    super('Écriture incomplète : fichier(s) obligatoire(s) non écrit(s)');
+    this.name = 'ErreurEcritureIncomplete';
+    this.obligatoires = obligatoires || [];
+    this.optionnels = optionnels || [];
+    this.absents = absents || [];
+  }
+}
+
+function libelleRaisonEcriture(r) {
+  const m = {
+    NoModificationAllowedError: 'fichier bloqué (synchronisation OneDrive ou fichier ouvert ailleurs)',
+    InvalidStateError: 'fichier bloqué (synchronisation OneDrive ou fichier ouvert ailleurs)',
+    NotAllowedError: 'accès refusé',
+    QuotaExceededError: 'espace disque insuffisant',
+    NotFoundError: 'dossier introuvable',
+    TypeError: 'nom ou contenu refusé',
+  };
+  return m[r] || (r ? `erreur (${r})` : 'erreur inconnue');
+}
+const listeFichiersHtml = (liste) => `<ul style="margin:var(--space-2) 0 var(--space-2) var(--space-4);font-size:var(--text-sm);line-height:1.6;">${liste.map((f) => `<li><code>${escapeHtml(f.chemin)}</code>${f.raison ? ' \u2014 ' + escapeHtml(libelleRaisonEcriture(f.raison)) : ''}${f.obligatoire === true && !f.raison ? ' \u2014 données absentes sur cet ordinateur' : ''}</li>`).join('')}</ul>`;
+
+// Un fichier obligatoire n'a pas pu être écrit : RIEN n'est validé.
+function afficherEnregistrementIncomplet(err) {
+  return showModal({
+    title: 'Enregistrement incomplet \u2014 rien n\u2019a été validé',
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);line-height:1.6;"><strong>Fichier(s) obligatoire(s) non écrit(s) :</strong></p>
+      ${listeFichiersHtml(err.obligatoires)}
+      ${err.optionnels.length ? `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Autre(s) fichier(s) non écrit(s) : ${err.optionnels.length}.</p>` : ''}
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);line-height:1.6;">Cette sauvegarde n\u2019a <strong>pas</strong> été validée : le pointeur et le Dashboard racine n\u2019ont pas été mis à jour, et les sauvegardes existantes sont intactes. <strong>Vos données locales sont conservées.</strong> Le dossier partiel créé sur le réseau est marqué « incomplet » (il peut être supprimé sans risque).</p>`,
+    confirmLabel: 'Réessayer',
+  });
+}
+
+// La sauvegarde a été validée, mais des fichiers NON obligatoires manquent : avertissement très clair.
+function afficherSauvegardePartielle(bilan, idSauvegarde) {
+  const manquants = [...bilan.fichiersNonEcrits, ...bilan.fichiersAbsents.map((a) => ({ chemin: a.chemin, obligatoire: a.obligatoire }))];
+  return showModal({
+    title: `Sauvegarde ${idSauvegarde} enregistrée, mais PARTIELLE`,
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);line-height:1.6;"><strong>${manquants.length} fichier(s) manquent dans cette sauvegarde :</strong></p>
+      ${listeFichiersHtml(manquants)}
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);line-height:1.6;">La sauvegarde est marquée « partielle » (fichier SAUVEGARDE_PARTIELLE.txt, Dashboard racine, données). Le Dashboard racine <strong>n\u2019affichera pas le dossier comme prêt à fermer</strong> tant qu\u2019il n\u2019a pas été réenregistré complètement. Cliquez de nouveau sur Enregistrer pour réessayer d\u2019écrire ces fichiers.</p>`,
+    confirmLabel: 'Compris',
+  });
 }
 
 // ---------- Protection légère au moment d'Enregistrer ----------
@@ -3238,6 +3314,7 @@ async function lancerReprise(racine, ctx, saved) {
   masquerEcranReprise();
   history.replaceState({}, '', location.pathname);
   if (res.manquants) toast(`${res.manquants} fichier(s) référencé(s) n\u2019ont pas été retrouvés dans la sauvegarde.`, 7000);
+  if (res.partielle) toast(`La dernière sauvegarde était PARTIELLE : ${(res.partielle.fichiersNonEcrits || []).length + (res.partielle.fichiersAbsents || []).length} fichier(s) manquaient. Rattachez-les puis réenregistrez.`, 9000);
   if (infoCopie) toast(`Copie de secours de votre travail local créée le ${new Date(infoCopie.creeLe).toLocaleString('fr-CA')}.`, 8000);
   await ouvrirDossier();
   return true;
@@ -3285,7 +3362,7 @@ const URL_APP_OFFICIELLE = 'https://carltherock.github.io/gestion_responsable/';
 // généré (balise <meta name="generator"> et pied de page) : un Dashboard est un
 // fichier statique, il ne change jamais après sa génération ; cette marque permet
 // de savoir avec certitude QUELLE version de l'application l'a produit.
-const APP_BUILD = 'reprise-p1-2026-09-19-a';
+const APP_BUILD = 'reprise-p1-2026-09-19-b';
 
 // Adresse de base de l'application, SANS aucun paramètre (jamais mode/numero/bt :
 // ces paramètres déclenchent le vieux flux « Reprendre ce dossier »).
@@ -3567,44 +3644,60 @@ function slugForFolder(text, maxLen) {
 // et autonome à la racine du dossier — avec ses propres fichiers tels qu'ils
 // étaient à ce moment, sans dépendre d'aucun dossier commun partagé.
 async function writeDocumentsPhotosNc(destHandle, draft) {
-  const echecs = []; // noms des fichiers qui n'ont pas pu être écrits
+  const echecs = [];  // { chemin, obligatoire, raison } : écriture tentée et ratée
+  const absents = []; // { chemin, obligatoire } : données du fichier indisponibles sur cet ordinateur (rien à écrire)
   const groupOfTask = {};
   Object.entries(getEffectiveChecklists(draft.mode, draft.customTasks)).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
+  const echec = (chemin, obligatoire, err) => echecs.push({ chemin, obligatoire, raison: (err && err.name) || 'erreur' });
 
-  const d02 = await destHandle.getDirectoryHandle('02_Documents', { create: true });
+  // La structure des dossiers existe même sans fichier.
+  let d02 = null, d03taches = null, d04 = null;
+  try { d02 = await destHandle.getDirectoryHandle('02_Documents', { create: true }); } catch (err) { /* signalé fichier par fichier */ }
+  try { const d03 = await destHandle.getDirectoryHandle('03_Photos', { create: true }); d03taches = await d03.getDirectoryHandle('Taches', { create: true }); } catch (err) { /* idem */ }
+  try { d04 = await destHandle.getDirectoryHandle('04_NonConformites', { create: true }); } catch (err) { /* idem */ }
+
   for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
+    const obligatoire = estPreuveRequise(draft, name);
     for (const f of files) {
+      const categorie = categorizeDocument(groupOfTask[name], name);
+      const chemin = `02_Documents/${categorie}/${nomDocumentTache(name, f)}`;
+      if (!f.blob) { absents.push({ chemin, obligatoire }); continue; }
       try {
-        const categorie = categorizeDocument(groupOfTask[name], name);
+        if (!d02) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
         const catDir = await d02.getDirectoryHandle(categorie, { create: true });
         await writeTextFile(catDir, nomDocumentTache(name, f), f.blob);
-      } catch (err) { echecs.push(f.name); }
+      } catch (err) { echec(chemin, obligatoire, err); }
     }
   }
 
-  const d03 = await destHandle.getDirectoryHandle('03_Photos', { create: true });
-  const d03taches = await d03.getDirectoryHandle('Taches', { create: true });
   for (const f of (draft.files['mise-a-jour'] || [])) {
+    const chemin = `03_Photos/Taches/${nomFichierSurDisque(f)}`;
+    if (!f.blob) { absents.push({ chemin, obligatoire: false }); continue; }
     try {
+      if (!d03taches) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
       await writeTextFile(d03taches, nomFichierSurDisque(f), f.blob);
-    } catch (err) { echecs.push(f.name); }
+    } catch (err) { echec(chemin, false, err); }
   }
 
-  try {
-    const d04 = await destHandle.getDirectoryHandle('04_NonConformites', { create: true });
-    const registreLignes = [];
-    for (const [numero, files] of Object.entries(draft.ncFichiers || {})) {
-      registreLignes.push(`${numero} — ${files.length} fichier(s)`);
-      const ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true });
-      for (const f of files) {
-        try {
-          await writeTextFile(ncDir, nomFichierSurDisque(f), f.blob);
-        } catch (err) { echecs.push(f.name); }
-      }
+  const registreLignes = [];
+  for (const [numero, files] of Object.entries(draft.ncFichiers || {})) {
+    registreLignes.push(`${numero} \u2014 ${files.length} fichier(s)`);
+    let ncDir = null;
+    try { if (d04) ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true }); } catch (err) { /* signalé fichier par fichier */ }
+    for (const f of files) {
+      const chemin = `04_NonConformites/${sanitizeFilename(numero) || 'NC'}/${nomFichierSurDisque(f)}`;
+      if (!f.blob) { absents.push({ chemin, obligatoire: false }); continue; }
+      try {
+        if (!ncDir) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
+        await writeTextFile(ncDir, nomFichierSurDisque(f), f.blob);
+      } catch (err) { echec(chemin, false, err); }
     }
+  }
+  try {
+    if (!d04) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
     await writeTextFile(d04, 'registre.txt', registreLignes.length ? registreLignes.join('\n') : 'Aucune non-conformité avec fichier joint.');
-  } catch (err) { /* best effort */ }
-  return echecs;
+  } catch (err) { echec('04_NonConformites/registre.txt', false, err); }
+  return { echecs, absents };
 }
 
 async function writeEverythingToDisk(date) {
@@ -3617,9 +3710,8 @@ async function writeEverythingToDisk(date) {
   if (!estRacine(racine)) {
     throw new ErreurReprise('SNAPSHOT_CHOISI', 'Le dossier de destination est une sauvegarde S-xxx, pas la racine du dossier. Rien n\u2019a été écrit.');
   }
-  const jsonContent = JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2);
-  const resumeContent = buildResumeText();
-  const avertissements = [];
+  const resumeBase = buildResumeText();
+  const remplaceurBlob = (k, v) => (k === 'blob' ? undefined : v);
   // Nom du sous-dossier de cette sauvegarde (S-001 - date - motif), créé
   // DIRECTEMENT à la racine du dossier — plus de dossiers communs partagés.
   const nomSauvegarde = nomDossierSauvegarde(dernier);
@@ -3629,41 +3721,77 @@ async function writeEverythingToDisk(date) {
   }
   const dSave = await racine.getDirectoryHandle(nomSauvegarde, { create: true });
 
+  const echecs = []; // { chemin, obligatoire, raison }
+  const echec = (chemin, obligatoire, err) => echecs.push({ chemin, obligatoire, raison: (err && err.name) || 'erreur' });
+  const ecrire = async (dir, nom, contenu, chemin, obligatoire) => {
+    try { await writeTextFile(dir, nom, contenu); return true; } catch (err) { echec(chemin, obligatoire, err); return false; }
+  };
+  const sousDossier = async (parent, nom, obligatoire) => {
+    try { return await parent.getDirectoryHandle(nom, { create: true }); } catch (err) { echec(nom, obligatoire, err); return null; }
+  };
   const dashboardContent = buildDashboardHtml({ docPrefix: '../', estInstantaneHistorique: false });
 
-  // 01_Dossier_actif : les données brutes du dossier, propres à cette sauvegarde.
-  const d01 = await dSave.getDirectoryHandle('01_Dossier_actif', { create: true });
-  await writeTextFile(d01, 'suivi.json', jsonContent);
-  await writeTextFile(d01, 'resume.txt', resumeContent);
+  // 1) 02_Documents / 03_Photos / 04_NonConformites : copie complète telle qu'elle était à ce moment précis
+  //    (chaque sauvegarde est autonome). Les pièces d'une tâche « preuve requise » sont OBLIGATOIRES.
+  const bilanFichiers = await writeDocumentsPhotosNc(dSave, state.draft);
+  echecs.push(...bilanFichiers.echecs);
+  const absents = bilanFichiers.absents;
 
-  // 00_Dashboard : point d'entrée de CETTE sauvegarde (utilisé par le contremaître).
-  let dashboardEcrit = false;
-  try {
-    const d00 = await dSave.getDirectoryHandle('00_Dashboard', { create: true });
-    await writeTextFile(d00, 'Dashboard.html', dashboardContent);
-    dashboardEcrit = true;
-  } catch (err) { avertissements.push('Le Dashboard de cette sauvegarde n\u2019a pas pu être écrit.'); }
+  // 2) 06_Exports : copie du rapport de chantier de cette sauvegarde (non obligatoire).
+  const d06 = await sousDossier(dSave, '06_Exports', false);
+  if (d06) await ecrire(d06, 'Rapport_de_chantier.html', dashboardContent, '06_Exports/Rapport_de_chantier.html', false);
 
-  // 06_Exports : copie du rapport de chantier de cette sauvegarde, prête à partager.
-  try {
-    const d06 = await dSave.getDirectoryHandle('06_Exports', { create: true });
-    await writeTextFile(d06, 'Rapport_de_chantier.html', dashboardContent);
-  } catch (err) { avertissements.push('Le Rapport de chantier de cette sauvegarde n\u2019a pas pu être écrit.'); }
+  // 3) Données obligatoires : seulement si aucune pièce obligatoire n'a échoué.
+  const nonEcrits = () => echecs.filter((e) => !e.obligatoire);
+  const partielle = () => nonEcrits().length > 0 || absents.length > 0;
+  if (!echecs.some((e) => e.obligatoire)) {
+    const infoPartielle = partielle() ? {
+      fichiersNonEcrits: nonEcrits().map((e) => ({ chemin: e.chemin, raison: e.raison })),
+      fichiersAbsents: absents.map((a) => ({ chemin: a.chemin, obligatoire: a.obligatoire })),
+      ecritLe: new Date().toISOString(),
+    } : null;
+    const json = JSON.stringify(infoPartielle ? { ...state.draft, sauvegardePartielle: infoPartielle } : state.draft, remplaceurBlob, 2);
+    const resumeContent = infoPartielle
+      ? `${resumeBase}\n\n*** SAUVEGARDE PARTIELLE : ${infoPartielle.fichiersNonEcrits.length + infoPartielle.fichiersAbsents.length} fichier(s) manquent. Voir SAUVEGARDE_PARTIELLE.txt. ***`
+      : resumeBase;
+    // 01_Dossier_actif : les données brutes du dossier, propres à cette sauvegarde.
+    const d01 = await sousDossier(dSave, '01_Dossier_actif', true);
+    if (d01) {
+      await ecrire(d01, 'suivi.json', json, '01_Dossier_actif/suivi.json', true);
+      await ecrire(d01, 'resume.txt', resumeContent, '01_Dossier_actif/resume.txt', true);
+    }
+    // 00_Dashboard : point d'entrée de CETTE sauvegarde (utilisé par le contremaître).
+    const d00 = await sousDossier(dSave, '00_Dashboard', true);
+    if (d00) await ecrire(d00, 'Dashboard.html', dashboardContent, '00_Dashboard/Dashboard.html', true);
+  }
 
-  // 02_Documents / 03_Photos / 04_NonConformites : copie complète telle
-  // qu'elle était à ce moment précis — chaque sauvegarde est autonome.
-  const echecs = await writeDocumentsPhotosNc(dSave, state.draft);
-  if (echecs.length) avertissements.push(`${echecs.length} fichier(s) n\u2019ont pas pu être écrits dans cette sauvegarde : ${echecs.slice(0, 5).join(', ')}${echecs.length > 5 ? '\u2026' : ''}.`);
-  // changements.txt = dernier fichier de la sauvegarde : sert de marqueur « sauvegarde complète ».
-  await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n') || 'Sauvegarde ' + dernier.id + ' terminée.');
+  // Fichier obligatoire en échec : RIEN n'est validé (ni changements.txt, ni pointeur, ni Dashboard racine).
+  const abandon = async () => {
+    const lignes = ['SAUVEGARDE INCOMPLÈTE \u2014 non validée.', 'Ce dossier peut être supprimé sans risque ; il n\u2019est jamais utilisé pour reprendre le travail.', '', 'Fichiers obligatoires non écrits :', ...echecs.filter((e) => e.obligatoire).map((e) => `- ${e.chemin} (${libelleRaisonEcriture(e.raison)})`)];
+    try { await writeTextFile(dSave, 'SAUVEGARDE_INCOMPLETE.txt', lignes.join('\n')); } catch (err) { /* déjà en échec : on ne masque pas l'erreur principale */ }
+    throw new ErreurEcritureIncomplete(echecs.filter((e) => e.obligatoire), nonEcrits(), absents);
+  };
+  if (echecs.some((e) => e.obligatoire)) await abandon();
 
-  // ---- Sauvegarde complète réussie : SEULEMENT maintenant, on met à jour la racine. ----
-  const pointeur = construirePointeur(nomSauvegarde, dernier, dashboardEcrit);
+  // Sauvegarde marquée PARTIELLE (fichiers non obligatoires manquants) : marqueur lisible dans le dossier.
+  if (partielle()) {
+    const lignes = ['SAUVEGARDE PARTIELLE \u2014 validée, mais des fichiers manquent.', 'Le Dashboard racine ne présente pas ce dossier comme prêt à fermer. Enregistrez de nouveau pour réessayer.', ''];
+    nonEcrits().forEach((e) => lignes.push(`- non écrit : ${e.chemin} (${libelleRaisonEcriture(e.raison)})`));
+    absents.forEach((a) => lignes.push(`- données absentes${a.obligatoire ? ' (PREUVE REQUISE)' : ''} : ${a.chemin}`));
+    await ecrire(dSave, 'SAUVEGARDE_PARTIELLE.txt', lignes.join('\n'), 'SAUVEGARDE_PARTIELLE.txt', false);
+  }
+  // changements.txt = dernier fichier de la sauvegarde : marqueur « sauvegarde complète » (non vide).
+  if (!(await ecrire(dSave, 'changements.txt', (dernier.resume || []).join('\n') || 'Sauvegarde ' + dernier.id + ' terminée.', 'changements.txt', true))) await abandon();
+
+  // ---- Sauvegarde validée : SEULEMENT maintenant, on met à jour la racine. ----
+  const avertissements = [];
+  const partiel = partielle() ? { fichiersNonEcrits: nonEcrits().map((e) => ({ chemin: e.chemin, raison: e.raison })), fichiersAbsents: absents.map((a) => ({ chemin: a.chemin, obligatoire: a.obligatoire })) } : null;
+  const pointeur = construirePointeur(nomSauvegarde, dernier, true, partiel);
   await writeTextFile(racine, POINTEUR_NOM, JSON.stringify(pointeur, null, 2));
   try {
     await writeTextFile(racine, 'OUVRIR_DASHBOARD.html', buildDashboardRacineHtml(pointeur));
   } catch (err) { avertissements.push('Le Dashboard racine (OUVRIR_DASHBOARD.html) n\u2019a pas pu être mis à jour.'); }
-  return { nomSauvegarde, pointeur, avertissements };
+  return { nomSauvegarde, pointeur, partielle: !!partiel, fichiersNonEcrits: partiel ? partiel.fichiersNonEcrits.map((f) => ({ chemin: f.chemin, raison: f.raison, obligatoire: false })) : [], fichiersAbsents: partiel ? partiel.fichiersAbsents : [], avertissements };
 }
 
 
@@ -7221,6 +7349,7 @@ async function importDossierFromPickedFolder(expectedNumero) {
 
     res.avertissements.forEach((m) => toast(m, 5500));
     if (res.manquants) toast(`${res.manquants} fichier(s) référencé(s) n\u2019ont pas été retrouvés dans la sauvegarde.`, 7000);
+    if (res.partielle) toast(`La dernière sauvegarde était PARTIELLE : ${(res.partielle.fichiersNonEcrits || []).length + (res.partielle.fichiersAbsents || []).length} fichier(s) manquaient. Rattachez-les puis réenregistrez.`, 9000);
     if (infoCopie) toast(`Copie de secours de votre travail local créée le ${new Date(infoCopie.creeLe).toLocaleString('fr-CA')}.`, 8000);
 
     const statusEl = $('#dossierStatus');
