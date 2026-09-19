@@ -2556,6 +2556,137 @@ function nomDossierSauvegarde(approbation) {
   return `${approbation.id} - ${dateSlug} - ${motifSlug}`;
 }
 
+// ---------- Fichiers : noms écrits sur disque et liens relatifs ----------
+// Nom d'un fichier joint tel qu'il est écrit sur disque ET tel qu'il est lié
+// depuis le Dashboard : SOURCE UNIQUE pour l'écriture et pour les liens.
+function nomFichierSurDisque(f) {
+  return (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+// Nom d'un document de tâche : « <nom de la tâche>__<fichier> ». Le nom de tâche
+// est nettoyé des caractères interdits par Windows (: ? * " etc.), qui
+// empêchaient silencieusement l'écriture de certains fichiers (ex. lignes
+// ajoutées à la main). Pour les tâches prédéfinies, le nom est inchangé.
+function nomDocumentTache(taskName, f) {
+  return `${sanitizeFilename(taskName)}__${nomFichierSurDisque(f)}`;
+}
+
+// Lien relatif encodé segment par segment (espaces, accents, # ? % ...).
+function hrefRelatif(prefix, segments) {
+  return prefix + segments.map((seg) => encodeURIComponent(seg)).join('/');
+}
+
+// ---------- Réponse d'approbation structurée ----------
+// Le planificateur décide dans le Dashboard.html de la sauvegarde (page statique,
+// sans serveur) : la décision voyage sous forme d'un « code de réponse » (JSON
+// encodé en base64, insensible aux retours à la ligne des courriels) placé dans un
+// courriel ou un fichier .json, puis importé par le TEI dans son dossier.
+// Ces fonctions sont SANS dépendance externe : elles sont copiées telles quelles
+// (Function.toString) dans chaque Dashboard.html, pour que la page et
+// l'application utilisent exactement le même code (aucune divergence possible).
+// L'empreinte détecte un code tronqué ou modifié par accident ; ce n'est PAS une
+// signature (aucune authentification du planificateur n'est possible ici).
+function reponseChecksum(str) {
+  var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (var i = 0, ch; i < str.length; i++) {
+    ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+// payload -> { code (base64, lignes de 64), json (texte du fichier de réponse) }
+function reponseVersCode(payload) {
+  var complet = {};
+  for (var k in payload) { if (Object.prototype.hasOwnProperty.call(payload, k)) complet[k] = payload[k]; }
+  complet.empreinte = reponseChecksum(JSON.stringify(payload));
+  var json = JSON.stringify(complet);
+  var octets = new TextEncoder().encode(json);
+  var bin = '';
+  for (var i = 0; i < octets.length; i++) bin += String.fromCharCode(octets[i]);
+  var b64 = btoa(bin);
+  var lignes = [];
+  for (var j = 0; j < b64.length; j += 64) lignes.push(b64.slice(j, j + 64));
+  return { code: lignes.join('\n'), json: json };
+}
+
+// Texte collé (courriel complet, code seul, ou contenu d'un fichier .json)
+// -> { ok: true, data } ou { ok: false, code, message }
+function reponseDepuisTexte(texte) {
+  var t = String(texte || '');
+  var debut = '-----BEGIN SUIVI TEI REPONSE-----', fin = '-----END SUIVI TEI REPONSE-----';
+  var a = t.indexOf(debut), b = t.indexOf(fin);
+  if (a !== -1 && b > a) t = t.slice(a + debut.length, b);
+  t = t.replace(/^[ \t]*>+[ \t]?/gm, ''); // lignes citées d'un courriel de réponse
+  var brut = t.replace(/^\s+|\s+$/g, '');
+  var json;
+  if (brut.charAt(0) === '{') {
+    json = brut;
+  } else {
+    // Un vrai code n'a jamais d'espace À L'INTÉRIEUR d'une ligne (les retours à la
+    // ligne, l'indentation et les marques de citation sont tolérés) : un texte
+    // ordinaire est refusé clairement plutôt que « décodé » en données abîmées.
+    var lignesCode = brut.split(/\r?\n/);
+    var texteOrdinaire = false;
+    for (var n = 0; n < lignesCode.length; n++) {
+      if (/\S\s+\S/.test(lignesCode[n].replace(/^\s+|\s+$/g, ''))) texteOrdinaire = true;
+    }
+    var b64 = brut.replace(/\s+/g, '');
+    if (texteOrdinaire || b64.length < 40 || /[^A-Za-z0-9+\/=]/.test(b64)) {
+      return { ok: false, code: 'CODE_ILLISIBLE', message: 'Aucun code de réponse valide n\u2019a été trouvé dans ce texte. Collez le courriel complet, ou le code situé entre les lignes BEGIN et END.' };
+    }
+    try {
+      var bin = atob(b64);
+      var octets = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) octets[i] = bin.charCodeAt(i);
+      json = new TextDecoder().decode(octets);
+    } catch (err) {
+      return { ok: false, code: 'CODE_ILLISIBLE', message: 'Le code de réponse est incomplet ou abîmé (décodage impossible).' };
+    }
+  }
+  var data;
+  try { data = JSON.parse(json); } catch (err) {
+    return { ok: false, code: 'JSON_INVALIDE', message: 'Le contenu du code de réponse n\u2019est pas lisible (données abîmées).' };
+  }
+  if (!data || data.type !== 'suivi-tei-reponse-approbation') {
+    return { ok: false, code: 'TYPE_INCONNU', message: 'Ce n\u2019est pas une réponse d\u2019approbation Suivi TEI.' };
+  }
+  var sans = {};
+  for (var k in data) { if (Object.prototype.hasOwnProperty.call(data, k) && k !== 'empreinte') sans[k] = data[k]; }
+  if (!data.empreinte || reponseChecksum(JSON.stringify(sans)) !== data.empreinte) {
+    return { ok: false, code: 'EMPREINTE_INVALIDE', message: 'Le code de réponse a été modifié ou tronqué (contrôle d\u2019intégrité échoué). Redemandez la réponse au planificateur.' };
+  }
+  return { ok: true, data: data };
+}
+
+// Texte lisible du courriel de réponse (avec le code de réponse en bas).
+function reponseTexteCourriel(p, code) {
+  var roles = { contremaitre: 'Contremaître', qualite: 'Planificateur' };
+  var quand = function (iso) { var d = new Date(iso); return isNaN(d.getTime()) ? String(iso || '') : d.toLocaleString('fr-CA'); };
+  var dos = p.dossier || {}, rev = p.revision || {}, sv = p.sauvegarde || {}, pl = p.planificateur || {};
+  var L = [];
+  L.push('DÉCISION D\u2019APPROBATION \u2014 Suivi TEI');
+  L.push('');
+  L.push('Décision : ' + (p.decision === 'approuve' ? 'APPROUVÉ' : 'RETOURNÉ POUR CORRECTION'));
+  L.push('B.T. : ' + (dos.bt ? 'BT' + String(dos.bt).replace(/^bt/i, '') : '(non précisé)'));
+  L.push('Localisation : ' + (dos.localisation || ''));
+  L.push('Équipement / tag : ' + (dos.tag || '(non précisé)'));
+  L.push('Révision : ' + (rev.id || '') + (rev.nom ? ' \u2014 ' + rev.nom : ''));
+  L.push('Sauvegarde : ' + (sv.id || '') + ' (' + quand(sv.date) + ')');
+  L.push('Décision prise le : ' + quand(p.decisionLe));
+  L.push('Planificateur : ' + (pl.nom || '') + ' (' + (roles[pl.role] || pl.role || '') + ')');
+  L.push('Commentaire : ' + (p.commentaire ? p.commentaire : '(aucun)'));
+  L.push('');
+  L.push('Le code ci-dessous permet d\u2019importer cette décision dans Suivi TEI. Ne le modifiez pas.');
+  L.push('-----BEGIN SUIVI TEI REPONSE-----');
+  L.push(code);
+  L.push('-----END SUIVI TEI REPONSE-----');
+  return L.join('\n');
+}
+
 // Script inséré dans chaque Dashboard.html / OUVRIR_DASHBOARD.html : à l'ouverture
 // de la page, il donne à chaque élément [data-ouvrir-suivi-tei] l'adresse
 // ${appUrl}?partage=<URL ABSOLUE du suivi.json>, calculée par rapport à l'endroit
@@ -2582,18 +2713,105 @@ function buildScriptOuvrirSuiviTei(appUrl, suiviRelatif) {
 </script>`;
 }
 
+// Comportement du panneau « Décision d'approbation » du Dashboard.html. Écrite
+// comme une vraie fonction (pas dans un gabarit) puis copiée dans la page avec
+// Function.toString : les expressions régulières restent intactes. S'exécute dans
+// le Dashboard, où reponseVersCode() et reponseTexteCourriel() sont aussi copiées.
+function scriptDecisionPlanificateur(META) {
+  function $(id) { return document.getElementById(id); }
+  if (!$('decision') || !$('btnDecApprouver')) return;
+  var courant = null;
+  function nettoyer(v) { return String(v || '').replace(/^\s+|\s+$/g, ''); }
+  function message(txt, type) {
+    var el = $('decMsg');
+    el.textContent = txt || '';
+    el.className = 'dec-msg' + (type ? ' dec-msg-' + type : '');
+  }
+  function preparer(decision) {
+    message('');
+    var nom = nettoyer($('decNom').value);
+    var role = $('decRole').value;
+    var commentaire = nettoyer($('decComment').value);
+    if (!nom) { message('Votre nom est obligatoire.', 'erreur'); $('decNom').focus(); return; }
+    if (decision === 'retourne' && !commentaire) {
+      message('Un commentaire est obligatoire pour retourner le dossier pour correction.', 'erreur');
+      $('decComment').focus();
+      return;
+    }
+    if (decision === 'approuve' && !META.pret && !window.confirm('La vérification avant fermeture indique des éléments encore ouverts. Approuver quand même ?')) return;
+    var payload = {
+      type: 'suivi-tei-reponse-approbation', version: 1, decision: decision, commentaire: commentaire,
+      planificateur: { nom: nom, role: role }, decisionLe: new Date().toISOString(),
+      dossier: META.dossier, revision: META.revision, sauvegarde: META.sauvegarde,
+    };
+    var res = reponseVersCode(payload);
+    var texte = reponseTexteCourriel(payload, res.code);
+    var ident = META.dossier.bt ? 'BT' + String(META.dossier.bt).replace(/^bt/i, '') : META.dossier.localisation;
+    courant = {
+      texte: texte, json: res.json, decision: decision,
+      sujet: 'Décision d\u2019approbation \u2014 ' + ident + ' \u2014 ' + META.sauvegarde.id + ' \u2014 ' + (decision === 'approuve' ? 'Approuvé' : 'Retourné pour correction'),
+    };
+    $('decTexte').value = texte;
+    $('decResultatTitre').textContent = decision === 'approuve' ? 'Réponse prête : APPROUVÉ' : 'Réponse prête : RETOURNÉ POUR CORRECTION';
+    $('decResultat').className = 'dec-resultat';
+    if ($('decResultat').scrollIntoView) $('decResultat').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  $('btnDecApprouver').addEventListener('click', function () { preparer('approuve'); });
+  $('btnDecRetour').addEventListener('click', function () { preparer('retourne'); });
+  $('btnDecMail').addEventListener('click', function () {
+    if (!courant) return;
+    window.location.href = 'mailto:?subject=' + encodeURIComponent(courant.sujet) + '&body=' + encodeURIComponent(courant.texte);
+  });
+  $('btnDecCopier').addEventListener('click', function () {
+    if (!courant) return;
+    var ta = $('decTexte');
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(ta.value); ok = true; }
+    } catch (e) { ok = false; }
+    if (!ok) { try { ok = document.execCommand('copy'); } catch (e2) { ok = false; } }
+    message(ok ? 'Réponse copiée : collez-la dans un courriel.' : 'Copie automatique impossible : le texte est sélectionné, faites Ctrl+C.', ok ? 'ok' : 'info');
+  });
+  $('btnDecTelecharger').addEventListener('click', function () {
+    if (!courant) return;
+    var blob = new Blob([courant.json], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Reponse-approbation-' + META.sauvegarde.id + '-' + (courant.decision === 'approuve' ? 'approuve' : 'retour') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    message('Fichier de réponse téléchargé : joignez-le à votre courriel.', 'ok');
+  });
+}
+
+// Bloc <script> du Dashboard : bibliothèque de réponse + panneau de décision.
+function buildScriptDecisionPlanificateur(meta) {
+  const safe = JSON.stringify(meta).replace(/</g, '\\u003c');
+  return `<script>
+${reponseChecksum.toString()}
+${reponseVersCode.toString()}
+${reponseTexteCourriel.toString()}
+(${scriptDecisionPlanificateur.toString()})(${safe});
+</script>`;
+}
+
 // Fichier à la racine du dossier exporté : page d'accueil qui désigne la
-// DERNIÈRE sauvegarde (identifiant exact, date, révision) et donne deux
-// actions : ouvrir son Dashboard.html, ou l'ouvrir dans Suivi TEI (consultation).
-// Régénéré à chaque nouvelle sauvegarde. Aucun scan de sous-dossiers en
-// JavaScript : le nom exact du dossier est écrit ici au moment de la sauvegarde.
-// Chemins relatifs seulement (aucun chemin Windows absolu).
+// DERNIÈRE sauvegarde (identifiant exact, date, révision) et n'a qu'une seule
+// action : ouvrir le Dashboard.html de cette sauvegarde. Régénéré à chaque
+// nouvelle sauvegarde. Aucun scan de sous-dossiers en JavaScript : le nom exact
+// du dossier est écrit ici au moment de la sauvegarde. Chemins relatifs
+// seulement (aucun chemin Windows absolu). Pour consulter ou approuver une
+// sauvegarde PRÉCISE (ex. celle envoyée par courriel), on utilise le lien de
+// son propre Dashboard.html, jamais cette page.
 function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, localisation, bt) {
-  const segments = encodeURIComponent(nomSauvegarde);
-  const cibleDashboard = `${segments}/00_Dashboard/Dashboard.html`;
-  const suiviRelatif = `./${nomSauvegarde}/01_Dossier_actif/suivi.json`;
+  const cibleDashboard = `${encodeURIComponent(nomSauvegarde)}/00_Dashboard/Dashboard.html`;
   const quand = approbation && approbation.at ? new Date(approbation.at).toLocaleString('fr-CA') : '';
   const titre = `${localisation || ''}${bt ? ' \u2014 ' + formatBt(bt) : ''}`;
+  const idSauvegarde = (approbation && approbation.id) || '';
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2606,7 +2824,6 @@ function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, loca
   dl { margin:0 0 20px; font-size:14px; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
   dt { color:#5c5c56; } dd { margin:0; font-weight:600; }
   a.btn { display:block; margin-top:10px; padding:12px 18px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:6px; font-weight:600; text-align:center; }
-  a.btn.secondaire { background:#fff; color:#b85a1f; border:1px solid #b85a1f; }
   p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:18px; word-break:break-all; }
   p.note { font-size:12px; color:#5c5c56; margin-top:14px; }
 </style>
@@ -2615,16 +2832,14 @@ function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, loca
     <h1>${escapeHtml(titre)}</h1>
     <p class="sub">Cette page désigne la sauvegarde la plus récente de ce dossier.</p>
     <dl>
-      <dt>Sauvegarde</dt><dd>${escapeHtml((approbation && approbation.id) || '')}</dd>
+      <dt>Sauvegarde</dt><dd>${escapeHtml(idSauvegarde)}</dd>
       <dt>Date et heure</dt><dd>${escapeHtml(quand)}</dd>
       <dt>Révision</dt><dd>${escapeHtml(revisionId || '')}</dd>
     </dl>
-    <a class="btn" href="${cibleDashboard}">Ouvrir le Dashboard de ${escapeHtml((approbation && approbation.id) || 'cette sauvegarde')}</a>
-    <a class="btn secondaire" data-ouvrir-suivi-tei href="${escapeHtml(urlAppConsultationBase())}">Ouvrir dans Suivi TEI</a>
-    <p class="note">Pour consulter une sauvegarde précise (ex. celle envoyée pour approbation), utilisez le lien de son propre Dashboard : cette page, elle, désigne toujours la plus récente.</p>
+    <a class="btn" href="${cibleDashboard}">Ouvrir le Dashboard de ${escapeHtml(idSauvegarde || 'cette sauvegarde')}</a>
+    <p class="note">Pour consulter ou approuver une sauvegarde précise (ex. celle envoyée par courriel), utilisez le lien de son propre Dashboard : cette page, elle, désigne toujours la plus récente.</p>
     <p class="chemin">${escapeHtml(nomSauvegarde)}/00_Dashboard/Dashboard.html</p>
   </div>
-${buildScriptOuvrirSuiviTei(urlAppConsultationBase(), suiviRelatif)}
 </body></html>`;
 }
 
@@ -2657,8 +2872,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
       try {
         const categorie = categorizeDocument(groupOfTask[name], name);
         const catDir = await d02.getDirectoryHandle(categorie, { create: true });
-        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        await writeTextFile(catDir, `${name}__${safe}`, f.blob);
+        await writeTextFile(catDir, nomDocumentTache(name, f), f.blob);
       } catch (err) { /* best effort par fichier */ }
     }
   }
@@ -2667,8 +2881,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
   const d03taches = await d03.getDirectoryHandle('Taches', { create: true });
   for (const f of (draft.files['mise-a-jour'] || [])) {
     try {
-      const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-      await writeTextFile(d03taches, safe, f.blob);
+      await writeTextFile(d03taches, nomFichierSurDisque(f), f.blob);
     } catch (err) { /* best effort par fichier */ }
   }
 
@@ -2680,8 +2893,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
       const ncDir = await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: true });
       for (const f of files) {
         try {
-          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          await writeTextFile(ncDir, safe, f.blob);
+          await writeTextFile(ncDir, nomFichierSurDisque(f), f.blob);
         } catch (err) { /* best effort par fichier */ }
       }
     }
@@ -2789,14 +3001,16 @@ function buildDashboardHtml(options) {
     return { cls: 'st-pending', icon: '' };
   };
 
-  const attachmentsHtml = (files, baseHref) => {
+  // Pièces jointes : liens relatifs ENCODÉS vers les fichiers de CETTE sauvegarde
+  // (dirHref = dossier relatif ; nomFor(f) = nom réel du fichier sur disque).
+  const attachmentsHtml = (files, dirHref, nomFor) => {
     if (!files || !files.length) return '';
     return `<div class="attachments">${files.map((f) => {
-      const safeStored = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-      const href = `${baseHref}${safeStored}`;
-      return isImageFile(f.name)
+      const href = dirHref + encodeURIComponent(nomFor(f));
+      const lien = isImageFile(f.name)
         ? `<a href="${href}" target="_blank" class="thumb-link" title="${escapeHtml(f.name)}"><img src="${href}" class="thumb" alt="${escapeHtml(f.name)}"></a>`
         : `<a href="${href}" target="_blank" class="doc-link">${escapeHtml(f.name)}</a>`;
+      return `<div class="attachment">${lien}${f.commentaire ? `<div class="file-comment">${escapeHtml(f.commentaire)}</div>` : ''}</div>`;
     }).join('')}</div>`;
   };
 
@@ -2828,22 +3042,38 @@ function buildDashboardHtml(options) {
       <div class="ring-card-count">${g.count} tâches</div>
     </div>`).join('');
 
-  // ---- Sections détaillées par tâche (redessinées, fermées par défaut) ----
-  const taskRowHtml = (label, v, reasonRaw, filesHtml) => {
+  // ---- Sections détaillées par tâche (fermées par défaut, « Tout développer » disponible) ----
+  const GRAVITE_TAG = { critique: 'Critique', majeure: 'Majeure', mineure: 'Mineure' };
+  const detailLigne = (titre, valeur) => (valeur ? `<div class="task-detail"><b>${escapeHtml(titre)}</b> ${escapeHtml(valeur)}</div>` : '');
+  const quandTexte = (iso) => { const dt = new Date(iso); return isNaN(dt.getTime()) ? '' : dt.toLocaleString('fr-CA'); };
+
+  // Le statut est TOUJOURS écrit en texte (jamais seulement une couleur ou une icône).
+  const taskRowHtml = (label, v, reasonRaw, filesHtml, extraHtml, statutTexte) => {
     const st = statusDotFor(v);
+    const texte = statutTexte || (v === true ? 'Fait' : v === 'na' ? 'N/A' : v === 'nc' ? 'Non conforme' : 'À faire');
     const reason = reasonRaw ? `<div class="task-reason">Raison : ${escapeHtml(reasonRaw)}</div>` : '';
     return `<div class="task-row ${st.cls}">
       <div class="task-dot">${st.icon}</div>
       <div class="task-body">
-        <div class="task-label">${escapeHtml(label)}</div>
+        <div class="task-label">${escapeHtml(label)} <span class="task-status-text">${escapeHtml(texte)}</span></div>
         ${reason}
+        ${extraHtml || ''}
         ${filesHtml || ''}
       </div>
     </div>`;
   };
 
+  // Détails d'une non-conformité (tâche, VPO, VPD) : gravité, zone, action corrective, responsable.
+  const ncDetailsHtml = (o) => [
+    o.numero || o.gravite ? `<div class="task-detail">${o.numero ? `<b>${escapeHtml(o.numero)}</b>` : ''}${o.gravite ? ` · gravité ${escapeHtml(GRAVITE_TAG[o.gravite] || o.gravite)}` : ''}${o.resolu ? ' · <span class="tag-ok">Résolue</span>' : ''}</div>` : '',
+    detailLigne('Zone :', o.zone),
+    detailLigne('Action corrective :', o.actionCorrective),
+    detailLigne('Responsable :', o.responsable),
+    o.dateCreation ? detailLigne('Relevée le :', quandTexte(o.dateCreation)) : '',
+  ].join('');
+
   const sectionsHtml = groupStats
-    .filter((g) => Array.isArray(groups[g.group])) // 'vpo' n'a pas d'entrée dans `groups` : sa section est construite séparément plus bas (vpoHtml)
+    .filter((g) => Array.isArray(groups[g.group])) // 'vpo'/'vpd' n'ont pas d'entrée dans `groups` : sections construites plus bas
     .map((g) => {
     const items = groups[g.group];
     const rows = items.map(([name, label]) => {
@@ -2851,8 +3081,14 @@ function buildDashboardHtml(options) {
       const reason = (v === 'na' || v === 'nc') ? d.casesRaisons[name] : '';
       const files = d.casesFichiers[name] || [];
       const categorie = categorizeDocument(g.group, name);
-      const filesHtml = attachmentsHtml(files, `${prefix}02_Documents/${categorie}/${name}__`);
-      return taskRowHtml(label, v, reason, filesHtml);
+      const filesHtml = attachmentsHtml(files, `${prefix}02_Documents/${encodeURIComponent(categorie)}/`, (f) => nomDocumentTache(name, f));
+      const det = d.casesNcDetails[name] || {};
+      const extra = [
+        d.casesPreuveRequise[name] ? `<div class="task-detail"><span class="tag-preuve">Preuve requise</span>${v === true && !files.length ? ' \u2014 <span class="tag-warn">aucun document joint</span>' : ''}</div>` : '',
+        d.casesNotes[name] ? `<div class="task-note"><b>Commentaire :</b> ${escapeHtml(d.casesNotes[name])}</div>` : '',
+        v === 'nc' ? ncDetailsHtml({ numero: det.numero, gravite: d.casesGravites[name], zone: det.zone, actionCorrective: det.actionCorrective, responsable: det.responsable, dateCreation: det.dateCreation, resolu: det.resolu }) : '',
+      ].join('');
+      return taskRowHtml(label, v, reason, filesHtml, extra);
     }).join('');
     return `<details class="section-card" id="sec-${g.group}">
       <summary><span>${g.label}</span><span class="section-pct">${Math.round(g.pct)} %</span></summary>
@@ -2860,71 +3096,66 @@ function buildDashboardHtml(options) {
     </details>`;
   }).join('');
 
-  // ---- VPO détaillé ----
-  const vpoHtml = hasVpo ? (() => {
-    const vpoDone = vpoFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
-    const vpoPct = (vpoDone / vpoFilled.length) * 100;
-    const rows = vpoFilled.map((it) => {
-      const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
-      return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '');
-    }).join('');
-    return `<details class="section-card" id="sec-vpo">
-      <summary><span>VPO — Vérification pré-opérationnelle</span><span class="section-pct">${Math.round(vpoPct)} %</span></summary>
-      <div class="task-list">${rows}</div>
+  // ---- VPO / VPD détaillés : même présentation, chacun sa section ----
+  const vpoVpdRowHtml = (it) => {
+    const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
+    const statutTexte = it.statut === 'conforme' ? 'Conforme' : it.statut === 'nc' ? 'Non conforme' : 'Non évalué';
+    const extra = [
+      it.obligatoire ? '<div class="task-detail"><span class="tag-oblig">Obligatoire</span></div>' : '',
+      it.statut && it.dateValidation ? detailLigne(it.statut === 'conforme' ? 'Validé par :' : 'Évalué par :', `${it.validePar || 'inconnu'} le ${quandTexte(it.dateValidation)}`) : '',
+      it.statut === 'nc' ? ncDetailsHtml(it) : '',
+    ].join('');
+    return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '', extra, statutTexte);
+  };
+  const vpoVpdSection = (id, titre, filled) => {
+    const faits = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
+    const pctSection = (faits / filled.length) * 100;
+    return `<details class="section-card" id="sec-${id}">
+      <summary><span>${titre}</span><span class="section-pct">${Math.round(pctSection)} %</span></summary>
+      <div class="task-list">${filled.map(vpoVpdRowHtml).join('')}</div>
     </details>`;
-  })() : '';
+  };
+  const vpoHtml = hasVpo ? vpoVpdSection('vpo', 'VPO \u2014 Vérification pré-opérationnelle', vpoFilled) : '';
+  const vpdHtml = hasVpd ? vpoVpdSection('vpd', 'VPD \u2014 Vérification post-démarrage', vpdFilled) : '';
 
-  const vpdHtml = hasVpd ? (() => {
-    const vpdDone = vpdFilled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
-    const vpdPct = (vpdDone / vpdFilled.length) * 100;
-    const rows = vpdFilled.map((it) => {
-      const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
-      return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '');
-    }).join('');
-    return `<details class="section-card" id="sec-vpd">
-      <summary><span>VPD — Vérification post-démarrage</span><span class="section-pct">${Math.round(vpdPct)} %</span></summary>
-      <div class="task-list">${rows}</div>
-    </details>`;
-  })() : '';
-
-  // ---- Non-conformités ----
-  const GRAVITE_TAG = { critique: 'Critique', majeure: 'Majeure', mineure: 'Mineure' };
-  const ncItems = [];
-  let ncResoluesCount = 0;
+  // ---- Non-conformités : ouvertes puis résolues, avec tous les détails et fichiers ----
+  const ncItems = [];     // ouvertes
+  const ncResolues = [];
+  const pushNc = (o) => (o.resolu ? ncResolues : ncItems).push(o);
   Object.entries(groups).forEach(([group, items]) => items.forEach(([name, label]) => {
     if (d.casesCochees[name] === 'nc') {
       const det = d.casesNcDetails[name] || {};
-      if (det.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: det.numero || '', section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '' });
+      pushNc({ numero: det.numero || '', section: GROUP_LABELS[group] || group, label, reason: d.casesRaisons[name] || '', gravite: d.casesGravites[name] || '', zone: det.zone || '', actionCorrective: det.actionCorrective || '', responsable: det.responsable || '', dateCreation: det.dateCreation || '', resolu: !!det.resolu });
     }
   }));
-  toArray(d.vpoItems).forEach((it) => {
-    if (it.statut === 'nc') {
-      if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: it.numero || '', section: 'VPO', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
-    }
-  });
-  toArray(d.vpdItems).forEach((it) => {
-    if (it.statut === 'nc') {
-      if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: it.numero || '', section: 'VPD', label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '' });
-    }
-  });
+  [['VPO', d.vpoItems], ['VPD', d.vpdItems]].forEach(([section, liste]) => toArray(liste).forEach((it) => {
+    if (it.statut === 'nc') pushNc({ numero: it.numero || '', section, label: it.texte || '(sans description)', reason: it.raison || '', gravite: it.gravite || '', zone: it.zone || '', actionCorrective: it.actionCorrective || '', responsable: it.responsable || '', dateCreation: it.dateCreation || '', resolu: !!it.resolu });
+  }));
   toArray(d.ncExtra).forEach((it) => {
-    if (it.texte && it.texte.trim()) {
-      if (it.resolu) { ncResoluesCount++; return; }
-      ncItems.push({ numero: it.numero || '', section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '' });
-    }
+    if (it.texte && it.texte.trim()) pushNc({ numero: it.numero || '', section: 'AJOUT MANUEL', label: it.texte, reason: '', gravite: it.gravite || '', zone: it.zone || '', actionCorrective: it.actionCorrective || '', responsable: it.responsable || '', dateCreation: it.dateCreation || '', resolu: !!it.resolu });
   });
-  const ncBanner = ncItems.length
+  const ncCardHtml = (r) => {
+    const fichiersNc = r.numero ? toArray(d.ncFichiers && d.ncFichiers[r.numero]) : [];
+    return `<div class="nc-card">
+      <div class="nc-card-head">${r.numero ? `<strong>${escapeHtml(r.numero)}</strong> \u00b7 ` : ''}${escapeHtml(r.section)}${r.gravite ? ` \u00b7 ${escapeHtml(GRAVITE_TAG[r.gravite] || r.gravite)}` : ''}${r.resolu ? ' \u00b7 <span class="tag-ok">Résolue</span>' : ''}</div>
+      <div class="nc-card-label">${escapeHtml(r.label)}</div>
+      ${r.reason ? `<div class="task-detail"><b>Raison :</b> ${escapeHtml(r.reason)}</div>` : ''}
+      ${detailLigne('Zone :', r.zone)}${detailLigne('Action corrective :', r.actionCorrective)}${detailLigne('Responsable :', r.responsable)}
+      ${attachmentsHtml(fichiersNc, `${prefix}04_NonConformites/${encodeURIComponent(sanitizeFilename(r.numero) || 'NC')}/`, nomFichierSurDisque)}
+    </div>`;
+  };
+  const ncBanner = (ncItems.length
     ? `<div class="nc-banner nc-banner-alert">
-        <div class="nc-banner-title">${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}${ncResoluesCount ? ` (+ ${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>
-        <ul class="nc-list">${ncItems.map((r) => `<li>${r.numero ? `<strong>${r.numero}</strong> — ` : ''}${escapeHtml(r.section)}${r.gravite ? ` · ${GRAVITE_TAG[r.gravite] || r.gravite}` : ''} — ${escapeHtml(r.label)}${r.reason ? ` <span class="reason-inline">(${escapeHtml(r.reason)})</span>` : ''}</li>`).join('')}</ul>
+        <div class="nc-banner-title">${ncItems.length} non-conformité${ncItems.length > 1 ? 's' : ''} ouverte${ncItems.length > 1 ? 's' : ''}</div>
+        ${ncItems.map(ncCardHtml).join('')}
       </div>`
-    : `<div class="nc-banner nc-banner-ok">Aucune non-conformité ouverte pour ce dossier.${ncResoluesCount ? ` (${ncResoluesCount} résolue${ncResoluesCount > 1 ? 's' : ''})` : ''}</div>`;
+    : `<div class="nc-banner nc-banner-ok">Aucune non-conformité ouverte pour ce dossier.</div>`)
+    + (ncResolues.length ? `<details class="nc-resolues"><summary>${ncResolues.length} non-conformité${ncResolues.length > 1 ? 's' : ''} résolue${ncResolues.length > 1 ? 's' : ''}</summary>${ncResolues.map(ncCardHtml).join('')}</details>` : '');
 
+  // ---- Vérification avant fermeture : verdict + éléments concernés ----
   const closureVerdict = computeClosureVerdict();
-  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}</div>`;
+  const closureItems = closureVerdict.ready ? [] : computeClosureItems();
+  const closureHtml = `<div class="nc-banner ${closureVerdict.ready ? 'nc-banner-ok' : 'nc-banner-alert'}"><div class="nc-banner-title">Vérification avant fermeture</div>${escapeHtml(closureVerdict.text)}${closureItems.length ? `<ul class="closure-list">${closureItems.map((it) => `<li>${escapeHtml(it.label)} \u2014 <span class="reason-inline">${escapeHtml(it.detail)}</span></li>`).join('')}</ul>` : ''}</div>`;
 
   // ---- Stamp d'approbation (Phase 7) : uniquement si une décision est réellement enregistrée ----
   const revForStamp = d.activeRevision || {};
@@ -2954,7 +3185,7 @@ function buildDashboardHtml(options) {
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = toArray(d.files && d.files['mise-a-jour']);
-  const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`) : '<p class="empty">Aucune image de mise à jour.</p>';
+  const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`, nomFichierSurDisque) : '<p class="empty">Aucune image de mise à jour.</p>';
 
   // ---- Historique ----
   const histHtml = toArray(d.approbations).length
@@ -2991,6 +3222,63 @@ function buildDashboardHtml(options) {
   const qrSvg = generateQrSvg(appUrl);
   const statutLabel = pct >= 100 ? 'Terminé' : pct > 0 ? 'En cours' : 'Non commencé';
   const statutClass = pct >= 100 ? 'status-done' : pct > 0 ? 'status-progress' : 'status-new';
+
+  // ---- Identification de la sauvegarde consultée (auteur, date, révision, statut) ----
+  const sauvegardesListe = toArray(d.approbations);
+  const dernier = sauvegardesListe.length ? sauvegardesListe[sauvegardesListe.length - 1] : null;
+  const roleTexte = (r) => ROLE_LABELS[r] || r || '';
+  const identItems = [
+    ['Sauvegarde', dernier ? dernier.id : '\u2014'],
+    ['Date et heure', dernier ? quandTexte(dernier.at) : '\u2014'],
+    ['Enregistrée par', dernier ? `${dernier.nom || 'inconnu'}${dernier.role ? ' \u00b7 ' + roleTexte(dernier.role) : ''}` : '\u2014'],
+    ['Révision', `${revActive.id || ''}${revActive.nom ? ' \u2014 ' + revActive.nom : ''}`],
+    ['Statut du dossier', computeGlobalStatus().label],
+    ['Localisation', d.localisation],
+    ['B.T.', d.champs.bt ? formatBt(d.champs.bt) : '\u2014'],
+    ['Équipement / tag', d.champs.tag || '\u2014'],
+    ['Type', modeLabel],
+  ];
+  const identHtml = `<div class="ident-grid">${identItems.map(([k, v]) => `<div class="ident-item"><div class="ident-k">${escapeHtml(k)}</div><div class="ident-v">${escapeHtml(v)}</div></div>`).join('')}</div>`;
+
+  // ---- Décision d'approbation (page statique : la décision voyage par courriel/fichier) ----
+  const peutDecider = !!dernier && !apprForStamp;
+  const metaDecision = {
+    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode },
+    revision: { id: revActive.id || '', nom: revActive.nom || '' },
+    sauvegarde: { id: dernier ? dernier.id : '', date: dernier ? dernier.at : '' },
+    pret: closureVerdict.ready,
+  };
+  const decisionHtml = peutDecider ? `
+    <section class="decision-panel" id="decision">
+      <h2 class="section-title" style="margin-top:0;">Décision d\u2019approbation \u2014 sauvegarde ${escapeHtml(dernier.id)}</h2>
+      <p class="decision-intro">Cette page est la sauvegarde exacte qui vous est soumise${dernier.nom ? ` par <strong>${escapeHtml(dernier.nom)}</strong>${dernier.role ? ' (' + escapeHtml(roleTexte(dernier.role)) + ')' : ''}` : ''}. Consultez le dossier ci-dessous, puis indiquez votre décision : une réponse structurée est préparée, à renvoyer par courriel.</p>
+      <div class="decision-verdict ${closureVerdict.ready ? 'decision-verdict-ok' : 'decision-verdict-alert'}">${escapeHtml(closureVerdict.text)}</div>
+      <div class="decision-grid">
+        <label>Votre nom<input type="text" id="decNom" autocomplete="name" placeholder="ex. Marie Tremblay"></label>
+        <label>Votre rôle<select id="decRole"><option value="contremaitre">Contremaître</option><option value="qualite">Planificateur</option></select></label>
+      </div>
+      <label class="decision-comment">Commentaire (obligatoire pour un retour pour correction)<textarea id="decComment" rows="3" placeholder="ex. Plan de boucle manquant"></textarea></label>
+      <div class="decision-actions">
+        <button type="button" id="btnDecApprouver" class="btn-dec btn-dec-ok">Approuver le dossier</button>
+        <button type="button" id="btnDecRetour" class="btn-dec btn-dec-retour">Retourner pour correction</button>
+      </div>
+      <div id="decMsg" class="dec-msg" role="status" aria-live="polite"></div>
+      <div id="decResultat" class="dec-resultat hidden">
+        <div class="dec-resultat-titre" id="decResultatTitre"></div>
+        <p class="decision-intro">Envoyez cette réponse à la personne qui vous a soumis le dossier : elle l\u2019importera dans Suivi TEI. Si votre courriel n\u2019affiche pas le code complet, utilisez « Copier » ou « Télécharger » et joignez le fichier.</p>
+        <textarea id="decTexte" rows="14" readonly spellcheck="false"></textarea>
+        <div class="decision-actions">
+          <button type="button" id="btnDecMail" class="btn-dec btn-dec-neutre">Ouvrir dans le courriel</button>
+          <button type="button" id="btnDecCopier" class="btn-dec btn-dec-neutre">Copier la réponse</button>
+          <button type="button" id="btnDecTelecharger" class="btn-dec btn-dec-neutre">Télécharger le fichier de réponse</button>
+        </div>
+      </div>
+    </section>` : `
+    <section class="decision-panel" id="decision">
+      <h2 class="section-title" style="margin-top:0;">Décision d\u2019approbation</h2>
+      <p class="decision-intro">${apprForStamp ? 'Une décision est déjà enregistrée dans cette sauvegarde (voir l\u2019encadré ci-dessus).' : 'Ce rapport n\u2019a pas été généré par une sauvegarde officielle : aucune décision ne peut être préparée depuis cette page.'}</p>
+    </section>`;
+  const metaScript = peutDecider ? buildScriptDecisionPlanificateur(metaDecision) : '';
 
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
@@ -3124,6 +3412,62 @@ function buildDashboardHtml(options) {
   .approbation-stamp-retour .approbation-stamp-title { color: #b8860b; }
   .approbation-stamp-body { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 
+  .hidden { display: none; }
+  .nc-banner-ok .nc-banner-title { color: #4ade80; }
+  .ident-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 24px; }
+  .ident-item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .ident-k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+  .ident-v { font-size: 14px; font-weight: 600; margin-top: 2px; word-break: break-word; }
+
+  .decision-panel { background: var(--surface); border: 2px solid var(--accent); border-radius: 14px; padding: 22px 24px; margin-bottom: 28px; }
+  .decision-intro { font-size: 13.5px; color: var(--text-muted); line-height: 1.55; margin: 0 0 14px; }
+  .decision-verdict { border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 16px; }
+  .decision-verdict-ok { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.35); }
+  .decision-verdict-alert { background: rgba(214,69,69,0.1); border: 1px solid rgba(214,69,69,0.4); }
+  .decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .decision-panel label { display: block; font-size: 12.5px; color: var(--text-muted); }
+  .decision-panel input, .decision-panel select, .decision-panel textarea {
+    display: block; width: 100%; margin-top: 4px; padding: 10px 12px; font: inherit; font-size: 14px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .decision-panel textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
+  .decision-comment { margin-bottom: 16px; }
+  .decision-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  .btn-dec { padding: 12px 22px; border-radius: 8px; border: 1px solid transparent; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .btn-dec-ok { background: #15803d; color: #fff; }
+  .btn-dec-retour { background: #b45309; color: #fff; }
+  .btn-dec-neutre { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-dec:hover { filter: brightness(1.1); }
+  .btn-dec:focus-visible, .decision-panel input:focus-visible, .decision-panel select:focus-visible, .decision-panel textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .dec-msg { min-height: 20px; margin-top: 10px; font-size: 13.5px; font-weight: 600; }
+  .dec-msg-erreur { color: #f87171; }
+  .dec-msg-ok { color: #4ade80; }
+  .dec-msg-info { color: var(--text-muted); }
+  .dec-resultat { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .dec-resultat-titre { font-weight: 700; margin-bottom: 8px; }
+
+  .expand-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .expand-bar button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+  .task-status-text { font-size: 11px; font-weight: 700; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 8px; white-space: nowrap; }
+  .task-detail { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+  .task-detail b { color: var(--text); font-weight: 600; }
+  .task-note { font-size: 12.5px; margin-top: 6px; padding: 6px 10px; background: var(--accent-soft); border-radius: 8px; }
+  .tag-preuve, .tag-oblig { font-size: 11px; font-weight: 700; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 1px 8px; }
+  .tag-warn { color: #f87171; font-weight: 600; }
+  .tag-ok { color: #4ade80; font-weight: 600; }
+  .attachment { display: flex; flex-direction: column; gap: 2px; max-width: 220px; }
+  .file-comment { font-size: 11.5px; color: var(--text-muted); font-style: italic; }
+  .nc-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 10px 0 0; }
+  .nc-card-head { font-size: 12.5px; color: var(--text-muted); }
+  .nc-card-label { font-size: 14px; font-weight: 600; margin: 2px 0 4px; }
+  .nc-resolues { margin-top: 10px; }
+  .nc-resolues summary { cursor: pointer; font-size: 13px; color: var(--text-muted); }
+  .closure-list { margin: 10px 0 0; padding-left: 20px; font-size: 13.5px; }
+  .avance { margin-top: 32px; border: 1px dashed var(--border); border-radius: 12px; padding: 12px 18px; font-size: 13px; color: var(--text-muted); }
+  .avance summary { cursor: pointer; font-weight: 600; }
+  .avance .nav-btn { display: inline-flex; margin-top: 8px; }
+  @media print { .decision-panel, .avance, .expand-bar, .open-app-link { display: none; } }
+
   .revision-list { display: flex; flex-direction: column; gap: 8px; }
   .revision-row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
   .revision-row-active { border-color: var(--accent); background: var(--accent-soft); }
@@ -3148,11 +3492,15 @@ function buildDashboardHtml(options) {
           <div class="qr-card">${qrSvg || ''}</div>
           <div class="qr-caption">Scannez pour rouvrir ce dossier</div>
         </div>
-        <a class="open-app-link" data-ouvrir-suivi-tei href="${appBase}">\u21a9 Ouvrir dans Suivi TEI</a>
+        ${peutDecider ? '<a class="open-app-link" href="#decision">Décision d\u2019approbation \u2193</a>' : ''}
       </div>
     </div>
 
     ${stampHtml}
+
+    ${identHtml}
+
+    ${decisionHtml}
 
     ${estInstantaneHistorique ? `
     <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Ceci est un instantané historique — les documents ci-dessous sont ceux de CETTE sauvegarde précisément, indépendants des changements faits depuis.</p>
@@ -3169,10 +3517,7 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" href="../04_NonConformites/"><span class="nav-label">Ouvrir les non-conformités</span><span class="nav-path">04_NonConformites/</span></a>
       <a class="nav-btn" href="../../"><span class="nav-label">Voir l\u2019historique (autres sauvegardes)</span><span class="nav-path">.. (racine du dossier)</span></a>
       <a class="nav-btn" href="../06_Exports/Rapport_de_chantier.html"><span class="nav-label">Ouvrir le Rapport de chantier</span><span class="nav-path">06_Exports/Rapport_de_chantier.html</span></a>
-      <a class="nav-btn" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule, avec les données de cette sauvegarde</span></a>
-      <a class="nav-btn${pct < 100 ? ' disabled' : ''}" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">${pct >= 100 ? 'Ouvre Suivi TEI en mode consultation' : 'Disponible à 100 % seulement'}</span></a>
     </div>`}
-    ${buildScriptOuvrirSuiviTei(appBase, '../01_Dossier_actif/suivi.json')}
 
     <div class="hero-ring">
       ${ringSvg(pct, 150, 14)}
@@ -3199,6 +3544,7 @@ function buildDashboardHtml(options) {
     ${ncBanner}
 
     <h2 class="section-title">Détail des tâches</h2>
+    <div class="expand-bar"><button type="button" onclick="toggleAll(true)">Tout développer</button><button type="button" onclick="toggleAll(false)">Tout réduire</button></div>
     ${sectionsHtml}
     ${vpoHtml}
     ${vpdHtml}
@@ -3214,6 +3560,12 @@ function buildDashboardHtml(options) {
 
     ${d.champs.commentaires ? `<h2 class="section-title">Commentaires</h2><div class="comment-box">${escapeHtml(d.champs.commentaires)}</div>` : ''}
 
+    <details class="avance">
+      <summary>Option avancée \u2014 ouvrir dans l\u2019application Suivi TEI</summary>
+      <p>Ouvre cette sauvegarde dans l\u2019application Suivi TEI en mode consultation (lecture seule). Cela fonctionne seulement si le serveur qui héberge ce dossier est en HTTPS et autorise l\u2019accès (CORS), ou si l\u2019application est hébergée sur le même réseau interne. Sinon, l\u2019application affiche un message de diagnostic (par exemple CONTENU_MIXTE) et vous pouvez revenir à cette page. <strong>Cette page reste la façon complète et officielle de consulter et d\u2019approuver.</strong></p>
+      <a class="nav-btn" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule</span></a>
+    </details>
+
     <div class="footer-note"><b>\u00a9 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
   </div>
 
@@ -3228,7 +3580,14 @@ function buildDashboardHtml(options) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       setTimeout(function () { el.classList.remove('flash'); }, 1700);
     }
+    function toggleAll(ouvert) {
+      var liste = document.querySelectorAll('details.section-card');
+      for (var i = 0; i < liste.length; i++) liste[i].open = ouvert;
+    }
+    window.addEventListener('beforeprint', function () { toggleAll(true); });
   </script>
+  ${metaScript}
+  ${buildScriptOuvrirSuiviTei(appBase, '../01_Dossier_actif/suivi.json')}
 </body></html>`;
 }
 
@@ -5595,7 +5954,8 @@ function renderApprobationFinaleCard() {
         <div class="approbation-finale-title">${iconSvg('clock')} En attente d'approbation</div>
         <div class="approbation-finale-meta">Demande préparée le ${new Date(rev.demandeApprobationLe).toLocaleString('fr-CA')}${rev.demandeDestinataireNom ? ` pour <strong>${escapeHtml(rev.demandeDestinataireNom)}</strong> (${escapeHtml(ROLE_LABELS[rev.demandeDestinataireRole] || rev.demandeDestinataireRole || '')})` : ''}. Enregistrez la décision dès qu'elle est connue.</div>
         <div class="approbation-finale-actions">
-          <button type="button" class="btn btn-primary" id="btnEnregistrerDecision">Enregistrer la décision</button>
+          ${state.readOnlyConsultation ? '' : '<button type="button" class="btn btn-primary" id="btnImporterReponse">Importer la réponse du planificateur</button>'}
+          <button type="button" class="btn btn-outline" id="btnEnregistrerDecision">Enregistrer la décision manuellement</button>
           <button type="button" class="btn btn-tertiary" id="btnAnnulerDemandeApprobation">Annuler la demande</button>
         </div>
       </div>`;
@@ -5612,6 +5972,7 @@ function renderApprobationFinaleCard() {
         </div>
         <div class="approbation-finale-actions">
           <button type="button" class="btn btn-primary" id="btnDemanderApprobation">Demander l'approbation finale</button>
+          ${state.readOnlyConsultation ? '' : '<button type="button" class="btn btn-outline" id="btnImporterReponse">Importer la réponse du planificateur</button>'}
         </div>
       </div>`;
   } else {
@@ -5627,6 +5988,8 @@ function renderApprobationFinaleCard() {
   if (btnDemander) btnDemander.addEventListener('click', demanderApprobationFinale);
   const btnRedemander = $('#btnRedemanderApprobation', container);
   if (btnRedemander) btnRedemander.addEventListener('click', demanderApprobationFinale);
+  const btnImporter = $('#btnImporterReponse', container);
+  if (btnImporter) btnImporter.addEventListener('click', importerReponseApprobation);
   const btnEnregistrer = $('#btnEnregistrerDecision', container);
   if (btnEnregistrer) btnEnregistrer.addEventListener('click', showApprobationDecisionModal);
   const btnAnnuler = $('#btnAnnulerDemandeApprobation', container);
@@ -5716,7 +6079,7 @@ async function demanderApprobationFinale() {
     `Non-conformités ouvertes : ${nc.total}`,
     ...(sauvegardeSoumise ? [`Sauvegarde soumise : ${sauvegardeSoumise.id} (${new Date(sauvegardeSoumise.at).toLocaleString('fr-CA')})`] : []),
     '',
-    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard ${sauvegardeSoumise ? 'de cette sauvegarde (' + sauvegardeSoumise.id + ')' : 'du dossier'} ici : ${lienDashboard}`, ''] : []),
+    ...(lienDashboard ? [`Tu peux ouvrir le Dashboard ${sauvegardeSoumise ? 'de cette sauvegarde (' + sauvegardeSoumise.id + ')' : 'du dossier'} ici : ${lienDashboard}`, '', 'Tu y trouveras le dossier complet (tâches, VPO/VPD, non-conformités, documents et photos) et les boutons « Approuver le dossier » / « Retourner pour correction » (commentaire obligatoire en cas de retour). Ils préparent une réponse à me renvoyer par courriel.', ''] : []),
     "Merci de le vérifier quand tu as un moment, et de m'indiquer si tu l'approuves ou si quelque chose doit être corrigé avant la fermeture.", '',
     'Merci beaucoup et bonne journée !',
   ].join('\n');
@@ -5754,6 +6117,115 @@ function annulerDemandeApprobation() {
 // Formulaire d'approbation finale : redemande les champs tant qu'ils sont
 // invalides (nom obligatoire; commentaire obligatoire si retourné), sans
 // fermer la fenêtre sur une saisie incomplète.
+// Enregistre une décision d'approbation sur la révision active : point de passage
+// UNIQUE (saisie manuelle et import d'une réponse). Une approbation verrouille le dossier.
+async function enregistrerDecisionApprobation(record, journalTexte) {
+  state.draft.activeRevision.approbation = record;
+  logActivity(journalTexte);
+  schedulePersist();
+  await dbPut(state.draft);
+  refreshApprovals();
+  updateProgressPill();
+  return record;
+}
+
+// Vérifie qu'une réponse de planificateur (code décodé) correspond bien à CE
+// dossier, à sa révision active et à sa DERNIÈRE sauvegarde officielle. Retourne
+// la liste des raisons de refus (vide = importable).
+function verifierReponseApprobation(rep) {
+  const erreurs = [];
+  const d = state.draft;
+  const rev = d.activeRevision || {};
+  const bareBt = (v) => String(v || '').replace(/^bt/i, '').trim();
+  if (state.readOnlyConsultation) erreurs.push('Ce dossier est ouvert en consultation : aucune décision ne peut y être enregistrée.');
+  if (rep.version !== 1) erreurs.push(`Version de réponse non prise en charge (${rep.version}).`);
+  if (rep.decision !== 'approuve' && rep.decision !== 'retourne') erreurs.push('La décision indiquée est inconnue.');
+  const pl = rep.planificateur || {};
+  if (!pl.nom || !String(pl.nom).trim()) erreurs.push('Le nom du planificateur est absent.');
+  if (!APPROBATEUR_ROLES.includes(pl.role)) erreurs.push('Le rôle du planificateur doit être Contremaître ou Planificateur.');
+  if (rep.decision === 'retourne' && !String(rep.commentaire || '').trim()) erreurs.push('Un retour pour correction doit contenir un commentaire.');
+  const dos = rep.dossier || {};
+  if ((dos.localisation || '') !== d.localisation) erreurs.push(`Cette réponse concerne la localisation ${dos.localisation || '(inconnue)'}, pas ${d.localisation}.`);
+  if (bareBt(dos.bt) !== bareBt(d.champs.bt)) erreurs.push(`Cette réponse concerne le B.T. ${dos.bt ? formatBt(String(dos.bt)) : '(inconnu)'}, pas ${d.champs.bt ? formatBt(d.champs.bt) : '(non renseigné)'}.`);
+  const rv = rep.revision || {};
+  if (rv.id !== rev.id) erreurs.push(`Cette réponse concerne la révision ${rv.id || '(inconnue)'}, mais la révision active est ${rev.id}.`);
+  const sv = rep.sauvegarde || {};
+  const sauvegardes = toArray(d.approbations);
+  const trouvee = sauvegardes.find((a) => a.id === sv.id);
+  if (!trouvee) erreurs.push(`La sauvegarde ${sv.id || '(inconnue)'} n\u2019existe pas dans ce dossier.`);
+  else if (trouvee.at !== sv.date) erreurs.push(`La sauvegarde ${sv.id} de cette réponse n\u2019a pas la même date que celle de ce dossier : ce n\u2019est pas la même sauvegarde.`);
+  else if (sauvegardes[sauvegardes.length - 1].id !== trouvee.id) {
+    erreurs.push(`Cette réponse concerne la sauvegarde ${trouvee.id}, mais une sauvegarde plus récente existe (${sauvegardes[sauvegardes.length - 1].id}). La décision ne couvre pas les modifications faites depuis : demandez une nouvelle approbation pour la dernière sauvegarde.`);
+  }
+  const dl = new Date(rep.decisionLe);
+  if (isNaN(dl.getTime())) erreurs.push('La date de la décision est invalide.');
+  else if (trouvee && dl.getTime() < new Date(trouvee.at).getTime()) erreurs.push('La date de la décision est antérieure à la sauvegarde : réponse incohérente.');
+  if (rev.approbation) erreurs.push(`Une décision est déjà enregistrée pour la révision ${rev.id} (${rev.approbation.decision === 'approuve' ? 'approuvé' : 'retourné pour correction'} par ${rev.approbation.nom}).`);
+  return { erreurs, sauvegarde: trouvee || null };
+}
+
+// Importe la réponse d'un planificateur (courriel collé, code, ou fichier .json)
+// et l'enregistre comme décision officielle de la révision active, après vérification
+// et confirmation. Ne demande JAMAIS de choisir un dossier réseau.
+async function importerReponseApprobation() {
+  if (!state.draft) return null;
+  let texteSaisi = '';
+  let messageErreur = '';
+  for (;;) {
+    const confirme = await showModal({
+      title: 'Importer la réponse du planificateur',
+      bodyHtml: `
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Collez le courriel de réponse reçu (ou seulement le code entre les lignes BEGIN et END), ou choisissez le fichier de réponse (.json) téléchargé depuis le Dashboard.</p>
+        ${messageErreur ? `<div class="import-erreur" role="alert" style="border:1px solid #d64545;border-radius:var(--radius-md);padding:var(--space-3);margin:var(--space-2) 0;color:#f0a8a8;font-size:var(--text-sm);">${messageErreur}</div>` : ''}
+        <textarea id="modalImportTexte" rows="8" placeholder="Collez ici le courriel de réponse…" style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(texteSaisi)}</textarea>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;margin-top:var(--space-3);">Ou fichier de réponse</label>
+        <input type="file" id="modalImportFichier" accept=".json,.txt,application/json,text/plain">`,
+      confirmLabel: 'Vérifier la réponse',
+    });
+    if (!confirme) return null;
+    texteSaisi = $('#modalImportTexte').value;
+    const fichier = $('#modalImportFichier').files && $('#modalImportFichier').files[0];
+    let source = texteSaisi;
+    if (fichier) {
+      try { source = await fichier.text(); } catch (err) { messageErreur = 'Le fichier choisi n\u2019a pas pu être lu.'; continue; }
+    }
+    if (!source.trim()) { messageErreur = 'Rien à importer : collez le courriel de réponse ou choisissez le fichier.'; continue; }
+    const lu = reponseDepuisTexte(source);
+    if (!lu.ok) { messageErreur = escapeHtml(lu.message); continue; }
+    const rep = lu.data;
+    const verif = verifierReponseApprobation(rep);
+    if (verif.erreurs.length) {
+      const infoComm = String(rep.commentaire || '').trim() ? `<br><br><strong>Commentaire du planificateur :</strong> ${escapeHtml(rep.commentaire)}` : '';
+      messageErreur = `<strong>Cette réponse ne peut pas être enregistrée :</strong><br>${verif.erreurs.map((e) => '\u2022 ' + escapeHtml(e)).join('<br>')}${infoComm}`;
+      continue;
+    }
+    const pl = rep.planificateur;
+    const approuve = rep.decision === 'approuve';
+    const ok = await showModal({
+      title: approuve ? 'Enregistrer l\u2019approbation ?' : 'Enregistrer le retour pour correction ?',
+      bodyHtml: `
+        <div style="font-size:var(--text-sm);line-height:1.6;">
+          <div><strong>Décision :</strong> ${approuve ? 'APPROUVÉ' : 'RETOURNÉ POUR CORRECTION'}</div>
+          <div><strong>Planificateur :</strong> ${escapeHtml(pl.nom)} (${escapeHtml(ROLE_LABELS[pl.role] || pl.role)})</div>
+          <div><strong>Décision prise le :</strong> ${new Date(rep.decisionLe).toLocaleString('fr-CA')}</div>
+          <div><strong>Sauvegarde :</strong> ${escapeHtml(rep.sauvegarde.id)} \u00b7 <strong>Révision :</strong> ${escapeHtml(rep.revision.id)}</div>
+          <div><strong>Dossier :</strong> ${escapeHtml(rep.dossier.localisation)}${rep.dossier.bt ? ' \u00b7 ' + escapeHtml(formatBt(String(rep.dossier.bt))) : ''}</div>
+          ${String(rep.commentaire || '').trim() ? `<div style="margin-top:var(--space-2);"><strong>Commentaire :</strong> ${escapeHtml(rep.commentaire)}</div>` : ''}
+        </div>
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);">${approuve ? 'Le dossier sera verrouillé en lecture seule (nouvelle révision nécessaire pour continuer).' : 'Le dossier reviendra en correction ; vous pourrez redemander l\u2019approbation une fois les corrections faites.'} Cette réponse n\u2019est pas signée : vérifiez qu\u2019elle provient bien de la personne indiquée.</p>`,
+      confirmLabel: approuve ? 'Enregistrer l\u2019approbation' : 'Enregistrer le retour',
+    });
+    if (!ok) return null;
+    const record = {
+      decision: rep.decision, nom: String(pl.nom).trim(), role: pl.role, commentaire: String(rep.commentaire || '').trim(),
+      date: rep.decisionLe, sauvegardeId: rep.sauvegarde.id, source: 'reponse-importee', importeLe: new Date().toISOString(),
+    };
+    await enregistrerDecisionApprobation(record, `Réponse d\u2019approbation importée : ${approuve ? 'approuvé' : 'retourné pour correction'} par ${record.nom} (${ROLE_LABELS[record.role] || record.role}), sauvegarde ${rep.sauvegarde.id}, révision ${rep.revision.id}`);
+    toast(approuve ? 'Approbation importée : dossier verrouillé.' : 'Retour pour correction importé.', 4500);
+    return record;
+  }
+}
+
 async function showApprobationDecisionModal() {
   if (!state.draft) return null;
   let nomVal = '', roleVal = 'contremaitre', decisionVal = 'approuve', commentVal = '';
@@ -5789,12 +6261,7 @@ async function showApprobationDecisionModal() {
     break;
   }
   const record = { decision: decisionVal, nom: nomVal, role: roleVal, commentaire: commentVal, date: new Date().toISOString() };
-  state.draft.activeRevision.approbation = record;
-  logActivity(`${decisionVal === 'approuve' ? 'Approbation finale' : 'Retour pour correction'} de la révision ${state.draft.activeRevision.id} par ${nomVal} (${ROLE_LABELS[roleVal] || roleVal})`);
-  schedulePersist();
-  await dbPut(state.draft);
-  refreshApprovals();
-  updateProgressPill();
+  await enregistrerDecisionApprobation(record, `${decisionVal === 'approuve' ? 'Approbation finale' : 'Retour pour correction'} de la révision ${state.draft.activeRevision.id} par ${nomVal} (${ROLE_LABELS[roleVal] || roleVal})`);
   toast(decisionVal === 'approuve' ? 'Dossier approuvé et verrouillé.' : 'Dossier retourné pour correction.', 4500);
   return record;
 }
@@ -6407,49 +6874,51 @@ function afficherBandeauConsultation() {
 // par un courriel préformaté et structuré plutôt que par une écriture directe
 // (une page HTML statique ne peut de toute façon jamais écrire dans OneDrive
 // ou modifier les données originales du TEI).
-function construireCourrielDecisionConsultation(decision, commentaire) {
+async function decisionApprobationConsultation(decisionBrute) {
+  const decision = decisionBrute === 'approuve' ? 'approuve' : 'retourne';
   const d = state.draft;
   const meta = state.consultationMeta || {};
-  const sujet = `Décision d\u2019approbation \u2014 ${d.localisation}${d.champs.bt ? ' \u2014 BT' + d.champs.bt : ''} \u2014 ${decision === 'approuve' ? 'Approuvé' : 'Retourné pour correction'}`;
-  const lignes = [
-    `Décision : ${decision === 'approuve' ? 'APPROUVÉ' : 'RETOURNÉ POUR CORRECTION'}`,
-    '',
-    `BT : ${d.champs.bt || '(non précisé)'}`,
-    `Équipement / tag : ${d.champs.tag || '(non précisé)'}`,
-    `Localisation : ${d.localisation}`,
-    `Révision : ${meta.revisionId || '(non précisée)'}`,
-    `Identifiant de sauvegarde : ${meta.snapshotId || '(non précisé)'}`,
-    `Sauvegarde soumise le : ${meta.submittedAt ? new Date(meta.submittedAt).toLocaleString('fr-CA') : '(inconnue)'}`,
-    `Soumise par : ${meta.submittedBy || '(inconnu)'}${meta.submittedRole ? ' (' + meta.submittedRole + ')' : ''}`,
-    '',
-    ...(commentaire ? [`Commentaire :`, commentaire, ''] : []),
-  ];
-  return { sujet, corps: lignes.join('\n') };
-}
-
-async function decisionApprobationConsultation(decision) {
-  let commentaire = '';
-  if (decision === 'retour') {
-    const confirmed = await showModal({
-      title: 'Retourner pour correction',
+  let nom = '', role = 'contremaitre', commentaire = '';
+  for (;;) {
+    const confirme = await showModal({
+      title: decision === 'approuve' ? 'Approuver le dossier' : 'Retourner pour correction',
       bodyHtml: `
-        <label style="font-size:var(--text-sm);color:var(--color-text-muted);">Motif du retour (obligatoire)</label>
-        <textarea id="modalRetourMotif" rows="3" placeholder="Expliquez ce qui doit être corrigé avant de resoumettre."></textarea>`,
-      confirmLabel: 'Retourner pour correction',
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);display:block;">Votre nom</label>
+        <input type="text" id="modalConsNom" value="${escapeHtml(nom)}" placeholder="ex. Marie Tremblay">
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Votre rôle</label>
+        <select id="modalConsRole" style="width:100%;margin-top:4px;">
+          <option value="contremaitre" ${role === 'contremaitre' ? 'selected' : ''}>Contremaître</option>
+          <option value="qualite" ${role === 'qualite' ? 'selected' : ''}>Planificateur</option>
+        </select>
+        <label style="font-size:var(--text-sm);color:var(--color-text-muted);margin-top:var(--space-3);display:block;">Commentaire${decision === 'retourne' ? ' (obligatoire)' : ' (facultatif)'}</label>
+        <textarea id="modalConsComment" rows="3" placeholder="${decision === 'retourne' ? 'Expliquez ce qui doit être corrigé avant de resoumettre.' : ''}">${escapeHtml(commentaire)}</textarea>`,
+      confirmLabel: 'Préparer la réponse',
     });
-    if (!confirmed) return;
-    commentaire = ($('#modalRetourMotif').value || '').trim();
-    if (!commentaire) { toast('Un commentaire est requis pour retourner le dossier pour correction.', 4000); return; }
-  } else {
-    const confirmed = await showModal({
-      title: 'Approuver le dossier',
-      bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Un courriel préformaté avec la décision sera préparé. Confirmez pour continuer.</p>`,
-      confirmLabel: 'Approuver',
-    });
-    if (!confirmed) return;
+    if (!confirme) return;
+    nom = $('#modalConsNom').value.trim();
+    role = $('#modalConsRole').value;
+    commentaire = $('#modalConsComment').value.trim();
+    if (!nom) { toast('Votre nom est obligatoire.', 4000); continue; }
+    if (decision === 'retourne' && !commentaire) { toast('Un commentaire est requis pour retourner le dossier pour correction.', 4000); continue; }
+    break;
   }
-  const { sujet, corps } = construireCourrielDecisionConsultation(decision, commentaire);
-  window.location.href = `mailto:?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+  const payload = {
+    type: 'suivi-tei-reponse-approbation', version: 1, decision, commentaire,
+    planificateur: { nom, role }, decisionLe: new Date().toISOString(),
+    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode },
+    revision: { id: meta.revisionId || (d.activeRevision && d.activeRevision.id) || '', nom: (d.activeRevision && d.activeRevision.nom) || '' },
+    sauvegarde: { id: meta.snapshotId || '', date: meta.submittedAt || '' },
+  };
+  const res = reponseVersCode(payload);
+  const texte = reponseTexteCourriel(payload, res.code);
+  const sujet = `Décision d\u2019approbation \u2014 ${d.champs.bt ? formatBt(d.champs.bt) : d.localisation} \u2014 ${payload.sauvegarde.id} \u2014 ${decision === 'approuve' ? 'Approuvé' : 'Retourné pour correction'}`;
+  const envoyer = await showModal({
+    title: 'Réponse prête',
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Voici la réponse structurée à renvoyer par courriel. Si votre courriel n\u2019affiche pas le code complet, copiez ce texte.</p>
+      <textarea rows="12" readonly onclick="this.select()" style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(texte)}</textarea>`,
+    confirmLabel: 'Ouvrir dans le courriel',
+  });
+  if (envoyer) window.location.href = `mailto:?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(texte)}`;
 }
 
 (async function autoResumeFromUrl() {
