@@ -2539,6 +2539,12 @@ $('#numLoc').addEventListener('blur', async () => {
 // branche en prévisualisation avant fusion).
 const URL_APP_OFFICIELLE = 'https://carltherock.github.io/gestion_responsable/';
 
+// Identifiant de version, inscrit dans chaque Dashboard.html / OUVRIR_DASHBOARD.html
+// généré (balise <meta name="generator"> et pied de page) : un Dashboard est un
+// fichier statique, il ne change jamais après sa génération ; cette marque permet
+// de savoir avec certitude QUELLE version de l'application l'a produit.
+const APP_BUILD = 'consultation-2026-09-19-c';
+
 // Adresse de base de l'application, SANS aucun paramètre (jamais mode/numero/bt :
 // ces paramètres déclenchent le vieux flux « Reprendre ce dossier »).
 function urlAppConsultationBase() {
@@ -2815,6 +2821,7 @@ function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, loca
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Suivi TEI ${APP_BUILD}">
 <title>Dossier ${escapeHtml(titre)} \u2014 dernière sauvegarde</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
@@ -3250,7 +3257,7 @@ function buildDashboardHtml(options) {
   };
   const decisionHtml = peutDecider ? `
     <section class="decision-panel" id="decision">
-      <h2 class="section-title" style="margin-top:0;">Décision d\u2019approbation \u2014 sauvegarde ${escapeHtml(dernier.id)}</h2>
+      <h2 class="section-title" style="margin-top:0;">DÉCISION D\u2019APPROBATION \u2014 SAUVEGARDE ${escapeHtml(dernier.id)}</h2>
       <p class="decision-intro">Cette page est la sauvegarde exacte qui vous est soumise${dernier.nom ? ` par <strong>${escapeHtml(dernier.nom)}</strong>${dernier.role ? ' (' + escapeHtml(roleTexte(dernier.role)) + ')' : ''}` : ''}. Consultez le dossier ci-dessous, puis indiquez votre décision : une réponse structurée est préparée, à renvoyer par courriel.</p>
       <div class="decision-verdict ${closureVerdict.ready ? 'decision-verdict-ok' : 'decision-verdict-alert'}">${escapeHtml(closureVerdict.text)}</div>
       <div class="decision-grid">
@@ -3275,7 +3282,7 @@ function buildDashboardHtml(options) {
       </div>
     </section>` : `
     <section class="decision-panel" id="decision">
-      <h2 class="section-title" style="margin-top:0;">Décision d\u2019approbation</h2>
+      <h2 class="section-title" style="margin-top:0;">DÉCISION D\u2019APPROBATION</h2>
       <p class="decision-intro">${apprForStamp ? 'Une décision est déjà enregistrée dans cette sauvegarde (voir l\u2019encadré ci-dessus).' : 'Ce rapport n\u2019a pas été généré par une sauvegarde officielle : aucune décision ne peut être préparée depuis cette page.'}</p>
     </section>`;
   const metaScript = peutDecider ? buildScriptDecisionPlanificateur(metaDecision) : '';
@@ -3283,6 +3290,7 @@ function buildDashboardHtml(options) {
   return `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Suivi TEI ${APP_BUILD}">
 <title>Rapport de chantier \u2014 ${titre}</title>
 <style>
   :root {
@@ -3413,6 +3421,11 @@ function buildDashboardHtml(options) {
   .approbation-stamp-body { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
 
   .hidden { display: none; }
+  html { scroll-behavior: smooth; }
+  .decision-panel { scroll-margin-top: 16px; }
+  .decision-panel:target { animation: flashHighlight 1.7s ease; }
+  .nav-btn-decision { border-color: var(--accent); }
+  .build-stamp { text-align: center; color: var(--text-muted); font-size: 11px; margin-top: 40px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
   .nc-banner-ok .nc-banner-title { color: #4ade80; }
   .ident-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 24px; }
   .ident-item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
@@ -3492,7 +3505,6 @@ function buildDashboardHtml(options) {
           <div class="qr-card">${qrSvg || ''}</div>
           <div class="qr-caption">Scannez pour rouvrir ce dossier</div>
         </div>
-        ${peutDecider ? '<a class="open-app-link" href="#decision">Décision d\u2019approbation \u2193</a>' : ''}
       </div>
     </div>
 
@@ -3511,6 +3523,7 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" href="../../00_Dashboard/Dashboard.html"><span class="nav-label">Retour au dossier actif</span><span class="nav-path">00_Dashboard/Dashboard.html</span></a>
     </div>` : `
     <div class="nav-grid">
+      <a class="nav-btn nav-btn-decision" href="#decision"><span class="nav-label">Demander l\u2019approbation finale</span><span class="nav-path">Aller à la carte « Décision d\u2019approbation »</span></a>
       <a class="nav-btn" href="../01_Dossier_actif/"><span class="nav-label">Ouvrir le dossier actif</span><span class="nav-path">01_Dossier_actif/</span></a>
       <a class="nav-btn" href="../02_Documents/"><span class="nav-label">Ouvrir les documents</span><span class="nav-path">02_Documents/</span></a>
       <a class="nav-btn" href="../03_Photos/"><span class="nav-label">Ouvrir les photos</span><span class="nav-path">03_Photos/</span></a>
@@ -3566,6 +3579,7 @@ function buildDashboardHtml(options) {
       <a class="nav-btn" data-ouvrir-suivi-tei href="${appBase}"><span class="nav-label">Ouvrir dans Suivi TEI</span><span class="nav-path">Mode consultation \u2014 lecture seule</span></a>
     </details>
 
+    <div class="build-stamp" id="buildStamp">Dashboard généré par Suivi TEI \u00b7 version ${APP_BUILD}</div>
     <div class="footer-note"><b>\u00a9 2026 Carl Desrochers — CTR.</b> Conception, idée originale et développement intégral de ce logiciel. Tous droits réservés — reproduction ou distribution interdite sans autorisation.</div>
   </div>
 
@@ -3585,6 +3599,14 @@ function buildDashboardHtml(options) {
       for (var i = 0; i < liste.length; i++) liste[i].open = ouvert;
     }
     window.addEventListener('beforeprint', function () { toggleAll(true); });
+    (function () {
+      var liens = document.querySelectorAll('a[href="#decision"]');
+      for (var i = 0; i < liens.length; i++) {
+        liens[i].addEventListener('click', function () {
+          setTimeout(function () { var n = document.getElementById('decNom'); if (n && n.focus) n.focus({ preventScroll: true }); }, 500);
+        });
+      }
+    })();
   </script>
   ${metaScript}
   ${buildScriptOuvrirSuiviTei(appBase, '../01_Dossier_actif/suivi.json')}
