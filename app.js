@@ -107,8 +107,8 @@ const state = {
   numero: null,
   isNewDraft: false,
   currentTab: 'identification',
-  rootDirHandle: null,      // dossier racine choisi par l'utilisateur sur cet appareil
-  dossierDirHandle: null,   // sous-dossier <numero> à l'intérieur du dossier racine
+  rootDirHandle: null,      // dossier PARENT choisi sur cet appareil (sert seulement à créer la racine d'un NOUVEAU dossier)
+  dossierDirHandle: null,   // RACINE du dossier (celle qui contient OUVRIR_DASHBOARD.html et les S-xxx) -- jamais un S-xxx
   draft: null,              // objet de suivi complet, persistant en IndexedDB
   showOnlyIncomplete: false, // préférence d'affichage, non sauvegardée dans le dossier
   checklistFilter: 'toutes', // préférence d'affichage, non sauvegardée dans le dossier
@@ -433,10 +433,11 @@ async function tryRestoreSaveLocation(numero) {
   const saved = await dbGetHandles(numero);
   if (!saved) return;
   try {
-    if (saved.dossierDirHandle) {
-      const perm = await saved.dossierDirHandle.queryPermission({ mode: 'readwrite' });
+    const dossierMemorise = saved.dossierHandle || saved.dossierDirHandle;
+    if (dossierMemorise && estRacine(dossierMemorise)) {
+      const perm = await dossierMemorise.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') {
-        state.dossierDirHandle = saved.dossierDirHandle;
+        state.dossierDirHandle = dossierMemorise;
         state.rootDirHandle = saved.rootHandle || null;
         return;
       }
@@ -530,6 +531,7 @@ function normalizeDraft(d) {
   if (d.activeRevision.demandeDestinataireRole === undefined) d.activeRevision.demandeDestinataireRole = null;
   if (d.activeRevision.demandeSauvegardeId === undefined) d.activeRevision.demandeSauvegardeId = null;
   if (d.activeRevision.approbation === undefined) d.activeRevision.approbation = null;
+  if (d.baseReseau === undefined) d.baseReseau = null; // sauvegarde réseau d'où ce TEI est parti (protection à l'enregistrement)
   if (!d.champs) d.champs = {};
   if (!d.liens) d.liens = {};
   if (!d.casesCochees) d.casesCochees = {};
@@ -824,14 +826,16 @@ $('#btnMoreMenuPc').addEventListener('click', async () => {
       <button type="button" class="btn btn-outline" id="menuPartager" style="width:100%;justify-content:flex-start;">${iconSvg('share2')}Partager le dossier</button>
       <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">${iconSvg('printer')}Imprimer</button>
       <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Historique / activité récente</button>
+      <button type="button" class="btn btn-outline" id="menuCopiesSecours" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Copies de secours locales</button>
       <button type="button" class="btn btn-outline" id="menuRaccourcis" style="width:100%;justify-content:flex-start;">${iconSvg('keyboard')}Raccourcis clavier</button>
     </div>
-  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuRaccourcis']);
+  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuCopiesSecours', 'menuRaccourcis']);
   if (choice === 'menuQr') showQrModal();
   else if (choice === 'menuExporter') exportDashboardFile();
   else if (choice === 'menuPartager') shareDossierLink();
   else if (choice === 'menuImprimer') window.print();
   else if (choice === 'menuHistorique') selectTab('apercu');
+  else if (choice === 'menuCopiesSecours') showCopiesSecours();
   else if (choice === 'menuRaccourcis') showShortcutsHelp();
 });
 
@@ -2193,9 +2197,9 @@ async function attachFilesToNc(numero, fileList) {
 function showSaveLocationChoice() {
   return new Promise((resolve) => {
     let choix = 'annuler';
-    const emplacementActuel = state.rootDirHandle
-      ? `${state.rootDirHandle.name} / ${folderName()}`
-      : (state.dossierDirHandle && state.dossierDirHandle.name) || '';
+    const emplacementActuel = state.dossierDirHandle
+      ? state.dossierDirHandle.name
+      : (state.rootDirHandle ? `${state.rootDirHandle.name} / ${nomRacineStable()}` : '');
     showModal({
       title: 'Où enregistrer cette sauvegarde ?',
       bodyHtml: `
@@ -2233,7 +2237,7 @@ $('#btnSaveFolder').addEventListener('click', async () => {
 
   // Vérifie la permission readwrite AVANT de construire quoi que ce soit
   // (évite de calculer un résumé/snapshot pour rien si l'écriture est refusée).
-  const handlePourPermission = state.rootDirHandle || state.dossierDirHandle;
+  const handlePourPermission = state.dossierDirHandle || state.rootDirHandle; // la racine du dossier d'abord : c'est là qu'on écrit
   const permissionOk = await ensureWritePermission(handlePourPermission);
   if (!permissionOk) {
     toast(describeWriteError({ name: 'NotAllowedError' }, !!handlePourPermission), 5500);
@@ -2257,12 +2261,27 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     return;
   }
 
+  // ---- Phase 1 : racine du dossier + garde-fous, AVANT toute modification ----
+  let prep;
+  try {
+    prep = await preparerEnregistrementReseau();
+  } catch (err) {
+    if (err && err.name === 'ErreurReprise') {
+      await showModal({ title: 'Enregistrement arrêté', bodyHtml: `<p style="font-size:var(--text-sm);line-height:1.6;">${escapeHtml(err.message)}</p>`, confirmLabel: 'Compris' });
+    } else {
+      toast(describeWriteError(err, !!(state.rootDirHandle || state.dossierDirHandle)), 6000);
+    }
+    return;
+  }
+  if (!prep) return; // conflit : le TEI en a été informé, rien n'a été écrit
+
   const now = new Date();
   const derniereSauv = state.draft.approbations[state.draft.approbations.length - 1];
   const snapshotAvant = derniereSauv ? derniereSauv.snapshot : null;
   const snapshotApres = buildLightSnapshot(state.draft);
   const resume = diffSnapshots(snapshotAvant, snapshotApres);
-  const idSauvegarde = 'S-' + String(state.draft.approbations.length + 1).padStart(3, '0');
+  // Numéro = plus grand S-xxx réellement présent dans la racine réseau + 1 (jamais un doublon).
+  const idSauvegarde = idDepuisNum(prep.idNum);
   const record = {
     id: idSauvegarde,
     revisionId: state.draft.activeRevision.id,
@@ -2276,6 +2295,8 @@ $('#btnSaveFolder').addEventListener('click', async () => {
       return s;
     })(),
   };
+  const precedenteOfficielle = state.draft.derniereSauvegardeOfficielle || null;
+  const longueurJournal = (state.draft.journal || []).length;
   state.draft.approbations.push(record);
   state.draft.derniereSauvegardeOfficielle = record;
   state.draft.champs.employeeName = nom;
@@ -2283,12 +2304,10 @@ $('#btnSaveFolder').addEventListener('click', async () => {
   logActivity(`Sauvegarde ${idSauvegarde} (${state.draft.activeRevision.id}) par ${nom} (${role})`);
 
   try {
-    if (state.rootDirHandle) {
-      // Emplacement racine choisi : nouveau dossier daté (permet de voir l'évolution).
-      await ensureLocalDossierFolder(now);
-    }
-    // Sinon, state.dossierDirHandle pointe déjà vers le dossier importé — on réécrit dedans.
-    await writeEverythingToDisk(now);
+    const bilan = await writeEverythingToDisk(now);
+
+    // Le TEI part désormais de CETTE sauvegarde (protection légère au prochain Enregistrer).
+    state.draft.baseReseau = { id: record.id, at: record.at, nom, role };
 
     // Le nom de l'employé ET son rôle doivent être retapés/rechoisis à
     // chaque sauvegarde officielle (traçabilité : jamais réutilisés
@@ -2299,18 +2318,26 @@ $('#btnSaveFolder').addEventListener('click', async () => {
     $('#fldRole').value = '';
 
     await dbPut(state.draft);
+    await dbPutHandles(state.numero, state.rootDirHandle, state.dossierDirHandle);
     refreshApprovals();
     updateApprobationBadge();
-    const label = state.rootDirHandle ? folderName(now) : (state.dossierDirHandle.name || state.numero);
-    toast(`Dossier ${label} sauvegardé avec succès.`);
+    toast(`Dossier ${state.dossierDirHandle.name} sauvegardé avec succès (${idSauvegarde}).`);
+    if (bilan && bilan.avertissements && bilan.avertissements.length) toast(bilan.avertissements.join(' '), 9000);
   } catch (err) {
-    // Même en cas d'échec d'écriture sur disque, la sauvegarde officielle
-    // (S-XXX, résumé, statut) reste conservée localement : rien n'est perdu,
-    // il suffit de réessayer l'écriture disque plus tard (bouton Enregistrer).
+    // Une sauvegarde qui n'a pas pu être écrite sur le réseau n'existe pas : on retire son entrée
+    // locale (sinon le numéro S-xxx serait dupliqué à la prochaine tentative). Le travail en cours
+    // (coches, notes, photos...) reste intact dans l'application : il suffit de réessayer.
+    state.draft.approbations.pop();
+    state.draft.derniereSauvegardeOfficielle = precedenteOfficielle;
+    if (state.draft.journal) state.draft.journal.length = longueurJournal;
     try { await dbPut(state.draft); } catch (dbErr) { console.error('Échec persistance locale (IndexedDB)', dbErr); }
     refreshApprovals();
     updateApprobationBadge();
-    toast(describeWriteError(err, !!(state.rootDirHandle || state.dossierDirHandle)), 5500);
+    if (err && err.name === 'ErreurReprise') {
+      await showModal({ title: 'Enregistrement arrêté', bodyHtml: `<p style="font-size:var(--text-sm);line-height:1.6;">${escapeHtml(err.message)}</p>`, confirmLabel: 'Compris' });
+    } else {
+      toast(describeWriteError(err, !!(state.rootDirHandle || state.dossierDirHandle)), 6500);
+    }
   }
 });
 
@@ -2484,13 +2511,736 @@ function updateApprobationBadge() {
   btn.classList.toggle('needs-attention', manque);
 }
 
-function folderName(date) {
-  const bt = sanitizeFilename(formatBt((state.draft && state.draft.champs.bt) || ''));
-  const numero = sanitizeFilename(state.numero || '');
-  const tag = sanitizeFilename((state.draft && state.draft.champs.tag) || '');
-  const ds = (date || new Date()).toISOString().slice(0, 10);
-  const identite = tag || numero;
-  return bt ? `${identite} - ${bt} - ${ds}` : `${identite} - ${ds}`;
+// =====================================================================
+// PHASE 1 -- REPRISE DU DOSSIER ACTIF
+//
+// Vocabulaire : la « racine » d'un dossier est le dossier réseau qui contient
+// OUVRIR_DASHBOARD.html, dernier-dossier-actif.json et les sauvegardes S-xxx.
+// Les sauvegardes S-xxx sont IMMUABLES : on n'y écrit jamais après leur création.
+// Seuls dernier-dossier-actif.json et OUVRIR_DASHBOARD.html (racine) sont
+// réécrits, et seulement APRÈS qu'une sauvegarde complète a réussi.
+// =====================================================================
+const POINTEUR_NOM = 'dernier-dossier-actif.json';
+const POINTEUR_TYPE = 'suivi-tei-dernier-dossier-actif';
+const RE_DOSSIER_SAUVEGARDE = /^S-(\d+) - /;
+
+class ErreurReprise extends Error {
+  constructor(code, message) { super(message); this.name = 'ErreurReprise'; this.code = code; }
+}
+
+function numDepuisId(id) { const m = /(\d+)/.exec(String(id || '')); return m ? parseInt(m[1], 10) : 0; }
+function idDepuisNum(n) { return 'S-' + String(n).padStart(3, '0'); }
+function estErreurIntrouvable(err) { return !!err && err.name === 'NotFoundError'; }
+function estRacine(handle) { return !!handle && !RE_DOSSIER_SAUVEGARDE.test(handle.name || ''); }
+
+// Ces deux accès distinguent « absent » (null) d'une vraie erreur (permission, réseau...) qui, elle, remonte.
+async function obtenirSousDossier(parent, nom) {
+  try { return await parent.getDirectoryHandle(nom, { create: false }); }
+  catch (err) { if (estErreurIntrouvable(err)) return null; throw err; }
+}
+async function obtenirFichier(parent, nom) {
+  try { return await parent.getFileHandle(nom, { create: false }); }
+  catch (err) { if (estErreurIntrouvable(err)) return null; throw err; }
+}
+
+// Nom d'une racine NOUVELLE : stable, sans date -> « 811-LT-7052 - BT1234567 ».
+// La date reste dans les sauvegardes S-xxx. Les anciennes racines datées ne sont jamais renommées.
+function nomRacineStable() {
+  const numero = sanitizeFilename(state.numero || (state.draft && state.draft.localisation) || '');
+  const bt = sanitizeFilename(formatBt((state.draft && state.draft.champs && state.draft.champs.bt) || ''));
+  return bt ? `${numero} - ${bt}` : numero;
+}
+
+// Sauvegardes S-xxx présentes dans une racine, triées (numéro puis nom, donc date).
+async function listerSauvegardes(racine) {
+  const out = [];
+  for await (const [nom, h] of racine.entries()) {
+    if (h.kind !== 'directory') continue;
+    const m = RE_DOSSIER_SAUVEGARDE.exec(nom);
+    if (m) out.push({ nom, num: parseInt(m[1], 10) });
+  }
+  out.sort((a, b) => (a.num - b.num) || (a.nom < b.nom ? -1 : a.nom > b.nom ? 1 : 0));
+  return out;
+}
+
+async function lireJsonFichier(fh) { return JSON.parse(await (await fh.getFile()).text()); }
+
+function pointeurValide(p) {
+  return !!(p && p.type === POINTEUR_TYPE && p.version === 1 && p.dossier && p.sauvegarde && p.progression && p.statut
+    && typeof p.sauvegarde.dossier === 'string' && RE_DOSSIER_SAUVEGARDE.test(p.sauvegarde.dossier)
+    && !/[\\/]/.test(p.sauvegarde.dossier) && p.sauvegarde.at);
+}
+async function lirePointeur(racine) {
+  try {
+    const fh = await obtenirFichier(racine, POINTEUR_NOM);
+    if (!fh) return null;
+    const p = await lireJsonFichier(fh);
+    return pointeurValide(p) ? p : null;
+  } catch (err) { return null; }
+}
+
+// 'complete' : suivi.json + changements.txt (écrit EN DERNIER dans une sauvegarde)
+// 'sans-marqueur' : suivi.json seulement (ancienne version, ou sauvegarde interrompue)
+// 'invalide' : pas de suivi.json
+async function etatSauvegarde(h) {
+  const d01 = await obtenirSousDossier(h, '01_Dossier_actif');
+  if (!d01 || !(await obtenirFichier(d01, 'suivi.json'))) return 'invalide';
+  // Le marqueur doit être NON VIDE : une écriture ratée peut laisser un fichier vide.
+  const marqueur = await obtenirFichier(h, 'changements.txt');
+  if (marqueur) { try { if ((await marqueur.getFile()).size > 0) return 'complete'; } catch (err) { /* illisible : pas complet */ } }
+  return 'sans-marqueur';
+}
+
+// Dernière sauvegarde valide d'une racine. Le pointeur fait foi, sauf si une
+// sauvegarde COMPLÈTE plus récente existe (pointeur périmé après une écriture interrompue).
+async function trouverDerniereSauvegarde(racine, listeDeja) {
+  const liste = listeDeja || await listerSauvegardes(racine);
+  let viaPointeur = null;
+  const pointeur = await lirePointeur(racine);
+  if (pointeur) {
+    const h = await obtenirSousDossier(racine, pointeur.sauvegarde.dossier);
+    if (h && (await etatSauvegarde(h)) !== 'invalide') {
+      viaPointeur = { nom: pointeur.sauvegarde.dossier, handle: h, num: numDepuisId(RE_DOSSIER_SAUVEGARDE.exec(pointeur.sauvegarde.dossier)[1]), source: 'pointeur', pointeur };
+    }
+  }
+  let viaListe = null, viaListeSansMarqueur = null;
+  for (let i = liste.length - 1; i >= 0; i--) {
+    const h = await obtenirSousDossier(racine, liste[i].nom);
+    if (!h) continue;
+    const et = await etatSauvegarde(h);
+    if (et === 'complete') { viaListe = { nom: liste[i].nom, handle: h, num: liste[i].num, source: 'liste' }; break; }
+    if (et === 'sans-marqueur' && !viaListeSansMarqueur) viaListeSansMarqueur = { nom: liste[i].nom, handle: h, num: liste[i].num, source: 'liste' };
+  }
+  if (viaPointeur && (!viaListe || viaListe.num <= viaPointeur.num)) return viaPointeur;
+  return viaListe || viaListeSansMarqueur || viaPointeur || null;
+}
+
+async function lireSuiviDeSauvegarde(h) {
+  const d01 = await h.getDirectoryHandle('01_Dossier_actif', { create: false });
+  return lireJsonFichier(await d01.getFileHandle('suivi.json', { create: false }));
+}
+function derniereApprobationDe(json) {
+  const a = (json && json.approbations) || [];
+  const l = a[a.length - 1];
+  return l ? { id: l.id, at: l.at, nom: l.nom, role: l.role, revisionId: l.revisionId } : null;
+}
+async function infoSauvegarde(trouvee) {
+  if (!trouvee) return null;
+  if (trouvee.pointeur) { const sv = trouvee.pointeur.sauvegarde; return { id: sv.id, at: sv.at, nom: sv.auteur, role: sv.role }; }
+  try { return derniereApprobationDe(await lireSuiviDeSauvegarde(trouvee.handle)); } catch (err) { return null; }
+}
+
+// Des modifications faites depuis la dernière sauvegarde officielle ?
+function aDesModificationsNonEnregistrees(draft) {
+  if (!draft) return false;
+  const a = draft.approbations || [];
+  const derniere = a[a.length - 1];
+  const ref = derniere ? derniere.at : draft.creeLe;
+  return !!(draft.modifieLe && ref && draft.modifieLe > ref);
+}
+
+// D'où le TEI est-il parti ? (sauvegarde réseau chargée, ou à défaut sa dernière sauvegarde locale)
+function baseDeReference(draft) {
+  const b = draft && draft.baseReseau;
+  if (b && b.id) return { id: b.id, at: b.at, nom: b.nom || b.auteur || '', role: b.role || '', num: numDepuisId(b.id) };
+  const a = (draft && draft.approbations) || [];
+  const l = a[a.length - 1];
+  return l ? { id: l.id, at: l.at, nom: l.nom, role: l.role, num: numDepuisId(l.id) } : null;
+}
+function memeSauvegarde(a, b) { return !!(a && b && a.id === b.id && a.at === b.at); }
+
+// Une sauvegarde plus récente que celle d'où part le TEI existe-t-elle sur le réseau ?
+// null = non (l'enregistrement se fait normalement, sans message).
+async function detecterSauvegardePlusRecente(racine, draft) {
+  const liste = await listerSauvegardes(racine);
+  if (!liste.length) return null;
+  const trouvee = await trouverDerniereSauvegarde(racine, liste);
+  if (!trouvee) return null; // seulement des dossiers partiels/orphelins : rien de valide à protéger
+  const netNum = trouvee.num;
+  const base = baseDeReference(draft);
+  let plusRecente = false;
+  if (!base) plusRecente = true;
+  else if (netNum > base.num) plusRecente = true;
+  else if (netNum === base.num) {
+    const info = await infoSauvegarde(trouvee);
+    if (info && info.at && base.at && info.at !== base.at) plusRecente = true;
+  }
+  if (!plusRecente) return null;
+  const info = (await infoSauvegarde(trouvee)) || { id: idDepuisNum(netNum), at: null, nom: '' };
+  return { net: info, base };
+}
+
+// Anciens dossiers datés (« <numéro ou tag> - BT... - AAAA-MM-JJ ») du même dossier dans un dossier parent.
+async function trouverAnciensDossiersDates(parent) {
+  const echapper = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cles = [state.numero, state.draft && state.draft.champs && state.draft.champs.tag].filter(Boolean).map((t) => echapper(sanitizeFilename(t)));
+  const bt = sanitizeFilename(formatBt((state.draft && state.draft.champs && state.draft.champs.bt) || ''));
+  if (!cles.length) return [];
+  const re = new RegExp(`^(${cles.join('|')})${bt ? ' - ' + echapper(bt) : ''} - \\d{4}-\\d{2}-\\d{2}$`, 'i');
+  const out = [];
+  for await (const [nom, h] of parent.entries()) { if (h.kind === 'directory' && re.test(nom)) out.push(nom); }
+  return out.sort();
+}
+
+// Détermine (et crée si c'est un NOUVEAU dossier) la racine où enregistrer. Ne modifie rien d'existant.
+async function resoudreRacineDeSauvegarde() {
+  if (state.dossierDirHandle) {
+    if (!estRacine(state.dossierDirHandle)) {
+      state.dossierDirHandle = null;
+      throw new ErreurReprise('SNAPSHOT_CHOISI', 'Le dossier de travail retenu sur cet ordinateur est une sauvegarde S-xxx, et non la racine du dossier. Ouvrez OUVRIR_DASHBOARD.html à la racine et cliquez « Continuer le travail » (ou utilisez « Importer un dossier existant depuis le réseau » et choisissez le dossier qui contient OUVRIR_DASHBOARD.html).');
+    }
+    return state.dossierDirHandle;
+  }
+  const parent = state.rootDirHandle;
+  if (!parent) throw new ErreurReprise('AUCUN_DOSSIER', 'Aucun dossier de travail n\u2019est sélectionné.');
+  const nom = nomRacineStable();
+  const dejaEnregistre = (state.draft.approbations || []).length > 0;
+  const existante = await obtenirSousDossier(parent, nom);
+  if (existante) {
+    const contenu = (await listerSauvegardes(existante)).length > 0 || !!(await obtenirFichier(existante, POINTEUR_NOM)) || !!(await obtenirFichier(existante, 'OUVRIR_DASHBOARD.html'));
+    if (contenu && !dejaEnregistre) {
+      throw new ErreurReprise('DOSSIER_EXISTE', `Un dossier « ${nom} » existe déjà à cet endroit. Pour le reprendre, ouvrez son OUVRIR_DASHBOARD.html et cliquez « Continuer le travail ». Rien n\u2019a été écrit.`);
+    }
+    return existante; // vide, ou dossier déjà enregistré par ce TEI (la vérification de conflit s'applique ensuite)
+  }
+  const anciens = await trouverAnciensDossiersDates(parent);
+  if (anciens.length) {
+    throw new ErreurReprise('ANCIEN_DOSSIER_EXISTE', `Ce dossier existe déjà sous l\u2019ancien format (« ${anciens[anciens.length - 1]} »). Utilisez « Importer un dossier existant depuis le réseau » et choisissez ce dossier (celui qui contient OUVRIR_DASHBOARD.html). Rien n\u2019a été écrit.`);
+  }
+  return parent.getDirectoryHandle(nom, { create: true });
+}
+
+// Pointeur : petit fichier à la racine qui désigne la dernière sauvegarde officielle.
+function construirePointeur(nomSauvegarde, dernier, dashboardEcrit) {
+  const d = state.draft;
+  const { done, total, pct } = computeProgress();
+  const st = computeGlobalStatus();
+  const vpo = computeVpoStats();
+  const vpd = typeof computeVpdStats === 'function' ? computeVpdStats() : { pending: 0 };
+  const nc = computeNcStats();
+  const restantes = [];
+  Object.entries(getEffectiveChecklists(d.mode, d.customTasks)).forEach(([g, items]) => items.forEach(([name, label]) => {
+    if (!isTaskDone(name)) restantes.push(`${GROUP_LABELS[g] || g} \u2014 ${label}`);
+  }));
+  const rev = d.activeRevision || {};
+  return {
+    type: POINTEUR_TYPE,
+    version: 1,
+    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode },
+    sauvegarde: {
+      id: dernier.id,
+      dossier: nomSauvegarde,
+      suivi: `${nomSauvegarde}/01_Dossier_actif/suivi.json`,
+      dashboard: dashboardEcrit ? `${nomSauvegarde}/00_Dashboard/Dashboard.html` : null,
+      at: dernier.at,
+      auteur: dernier.nom,
+      role: dernier.role,
+      revision: { id: rev.id || dernier.revisionId || '', nom: rev.nom || '' },
+    },
+    progression: { faites: done, total, pct: Math.round(pct) },
+    statut: { cle: st.key, libelle: st.label },
+    ouvertes: { vpo: vpo.pending, vpd: vpd.pending, nc: nc.total },
+    restantes: { total: restantes.length, liste: restantes.slice(0, 30) },
+    ecritLe: new Date().toISOString(),
+  };
+}
+
+// Corps du Dashboard racine. Fonction SANS dépendance externe : elle sert à la fois à écrire
+// la page (au moment de la sauvegarde) et, copiée telle quelle dans la page, à la rafraîchir
+// quand le pointeur est plus récent (Function.toString : aucun risque de divergence).
+function htmlCorpsRacine(p, appUrl) {
+  var roles = { technicien: 'TEI', contremaitre: 'Contremaître', ingenieur: 'Ingénieur(e) responsable', qualite: 'Planificateur', surintendant: 'Surintendant secteur' };
+  var e = function (v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+  var quand = function (iso) { var d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('fr-CA'); };
+  var dos = p.dossier || {}, sv = p.sauvegarde || {}, pr = p.progression || {}, st = p.statut || {}, ou = p.ouvertes || {}, re = p.restantes || {};
+  var bt = dos.bt ? 'BT' + String(dos.bt).replace(/^bt/i, '') : '';
+  var lienApp = appUrl + '?reprendre=1&numero=' + encodeURIComponent(dos.localisation || '') + '&bt=' + encodeURIComponent(dos.bt || '') + '&mode=' + encodeURIComponent(dos.mode || '');
+  var pct = Math.max(0, Math.min(100, Number(pr.pct) || 0));
+  var liste = re.liste || [];
+  var totalRestant = Number(re.total) || liste.length;
+  var H = [];
+  H.push('<header class="r-tete"><h1>' + e(dos.localisation) + (bt ? ' \u2014 ' + e(bt) : '') + '</h1>');
+  H.push('<div class="r-sous">' + (dos.tag ? 'Équipement / tag : <strong>' + e(dos.tag) + '</strong> \u00b7 ' : '') + (dos.mode === 'installation' ? 'Installation' : 'Démantèlement') + ' <span class="r-pastille">' + e(st.libelle || '') + '</span></div></header>');
+  H.push('<section class="r-progression" aria-label="Progression"><div class="r-barre"><div class="r-barre-remplie" style="width:' + pct + '%"></div></div>');
+  H.push('<div class="r-progression-texte">' + e(pr.faites) + ' / ' + e(pr.total) + ' tâches \u2014 ' + pct + ' %</div></section>');
+  H.push('<section class="r-action"><a class="r-bouton" href="' + e(lienApp) + '" target="_blank" rel="noopener">Continuer le travail</a>');
+  H.push('<p class="r-note">Ouvre Gestion responsable sur le dernier dossier enregistré. Première utilisation sur cet ordinateur : le navigateur demande d\u2019autoriser l\u2019accès au dossier de travail (le dossier qui contient ce fichier).</p></section>');
+  H.push('<dl class="r-grille">');
+  H.push('<div><dt>Dernière sauvegarde</dt><dd>' + e(sv.id) + '</dd></div>');
+  H.push('<div><dt>Date et heure</dt><dd>' + e(quand(sv.at)) + '</dd></div>');
+  H.push('<div><dt>Dernière personne</dt><dd>' + e(sv.auteur || 'inconnu') + (sv.role ? ' \u00b7 ' + e(roles[sv.role] || sv.role) : '') + '</dd></div>');
+  H.push('<div><dt>Révision</dt><dd>' + e((sv.revision && sv.revision.id) || '') + (sv.revision && sv.revision.nom ? ' \u2014 ' + e(sv.revision.nom) : '') + '</dd></div>');
+  H.push('<div><dt>Statut</dt><dd>' + e(st.libelle || '') + '</dd></div>');
+  H.push('<div><dt>VPO ouvertes</dt><dd>' + e(ou.vpo || 0) + '</dd></div>');
+  H.push('<div><dt>VPD ouvertes</dt><dd>' + e(ou.vpd || 0) + '</dd></div>');
+  H.push('<div><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl>');
+  H.push('<section class="r-restantes"><h2>Tâches restantes (' + totalRestant + ')</h2>');
+  if (!totalRestant) H.push('<p>Aucune tâche restante.</p>');
+  else {
+    H.push('<ul>' + liste.map(function (t) { return '<li>' + e(t) + '</li>'; }).join('') + '</ul>');
+    if (totalRestant > liste.length) H.push('<p class="r-suite">\u2026 et ' + (totalRestant - liste.length) + ' autre' + (totalRestant - liste.length > 1 ? 's' : '') + ' tâche' + (totalRestant - liste.length > 1 ? 's' : '') + '.</p>');
+  }
+  H.push('</section>');
+  if (sv.dashboard) H.push('<p class="r-secondaire"><a href="' + e(String(sv.dashboard).split('/').map(encodeURIComponent).join('/')) + '">Ouvrir le Dashboard de la dernière sauvegarde (' + e(sv.id) + ')</a></p>');
+  H.push('<p class="r-note">Pour approuver un dossier, utilisez le lien du Dashboard envoyé par courriel : cette page sert à reprendre le travail, pas à approuver.</p>');
+  return H.join('\n');
+}
+
+// OUVRIR_DASHBOARD.html (racine) : régénéré APRÈS chaque sauvegarde complète.
+// Il lit dernier-dossier-actif.json pour se rafraîchir ; sans lecture possible
+// (fichier ouvert depuis un partage, pas de JavaScript...), il affiche la copie incluse.
+function buildDashboardRacineHtml(pointeur) {
+  const appUrl = urlAppConsultationBase();
+  const titre = `${pointeur.dossier.localisation}${pointeur.dossier.bt ? ' \u2014 ' + formatBt(pointeur.dossier.bt) : ''}`;
+  const donnees = JSON.stringify(pointeur).replace(/</g, '\\u003c');
+  const appUrlJs = JSON.stringify(appUrl).replace(/</g, '\\u003c');
+  return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Suivi TEI ${APP_BUILD}">
+<title>Dossier ${escapeHtml(titre)}</title>
+<style>
+  :root { --bg:#10151b; --surface:#171d25; --border:#333e4b; --text:#e7ebef; --muted:#99a6b5; --accent:#ff8f3f; --accent-fg:#10151b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f7f7f5; --surface:#ffffff; --border:#d9d9d4; --text:#1c1c1a; --muted:#5c5c56; --accent:#b85a1f; --accent-fg:#ffffff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px 20px 56px; background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:860px; margin:0 auto; }
+  .r-tete h1 { margin:0 0 6px; font-size:26px; }
+  .r-sous { color:var(--muted); font-size:14px; }
+  .r-pastille { display:inline-block; margin-left:8px; padding:2px 12px; border:1px solid var(--border); border-radius:999px; font-size:12px; font-weight:700; color:var(--text); }
+  .r-progression { margin:22px 0 8px; }
+  .r-barre { height:12px; background:var(--surface); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
+  .r-barre-remplie { height:100%; background:var(--accent); }
+  .r-progression-texte { margin-top:6px; font-size:14px; color:var(--muted); }
+  .r-action { margin:22px 0; }
+  .r-bouton { display:inline-block; padding:16px 34px; background:var(--accent); color:var(--accent-fg); border-radius:10px; font-size:18px; font-weight:800; text-decoration:none; }
+  .r-bouton:hover { filter:brightness(1.08); }
+  .r-bouton:focus-visible, a:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+  .r-note { font-size:13px; color:var(--muted); line-height:1.5; margin:10px 0 0; }
+  .r-grille { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:20px 0; }
+  .r-grille > div { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; }
+  .r-grille dt { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .r-grille dd { margin:2px 0 0; font-size:15px; font-weight:600; word-break:break-word; }
+  .r-restantes h2 { font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:26px 0 8px; }
+  .r-restantes ul { margin:0; padding-left:20px; font-size:14px; line-height:1.6; }
+  .r-suite { font-size:13px; color:var(--muted); }
+  .r-secondaire { margin:26px 0 4px; font-size:14px; }
+  .r-secondaire a { color:var(--accent); }
+  @media print { .r-action { display:none; } }
+</style></head><body>
+<div class="wrap" id="racine">
+${htmlCorpsRacine(pointeur, appUrl)}
+</div>
+<script type="application/json" id="pointeur">${donnees}</script>
+<script>
+${htmlCorpsRacine.toString()}
+(function () {
+  var APP_URL = ${appUrlJs};
+  var integre;
+  try { integre = JSON.parse(document.getElementById('pointeur').textContent); } catch (e) { return; }
+  try {
+    fetch('${POINTEUR_NOM}', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
+      if (p && p.type === '${POINTEUR_TYPE}' && p.sauvegarde && p.sauvegarde.at && p.sauvegarde.at > integre.sauvegarde.at) {
+        document.getElementById('racine').innerHTML = htmlCorpsRacine(p, APP_URL);
+      }
+    }).catch(function () {});
+  } catch (e) {}
+})();
+</script>
+</body></html>`;
+}
+
+// Réinjecte les fichiers (documents, photos, non-conformités) dans les données lues.
+// Lit les DEUX nommages (celui d'écriture actuel, puis l'ancien) : les noms avec « : » ou « ? » sont retrouvés.
+async function restaurerFichiersDepuis(base, draft) {
+  let manquants = 0;
+  const propre = (n) => String(n).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const lire = async (dir, noms) => {
+    for (const n of new Set(noms)) {
+      try { const fh = await obtenirFichier(dir, n); if (fh) return await fh.getFile(); } catch (err) { /* essai suivant */ }
+    }
+    return null;
+  };
+
+  const dirsDocs = [];
+  const d02 = await obtenirSousDossier(base, '02_Documents');
+  if (d02) {
+    for (const sub of [...Object.values(GROUP_FOLDER_NAMES), 'Autres']) {
+      const sd = await obtenirSousDossier(d02, sub);
+      if (sd) dirsDocs.push(sd);
+    }
+  }
+  const ancienDocs = await obtenirSousDossier(base, 'Documents');
+  if (ancienDocs) dirsDocs.push(ancienDocs);
+  for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
+    for (const f of files) {
+      const noms = [nomDocumentTache(name, f), `${name}__${propre(f.name)}`, `${sanitizeFilename(name)}__${propre(f.name)}`];
+      let blob = null;
+      for (const dir of dirsDocs) { blob = await lire(dir, noms); if (blob) break; }
+      if (blob) f.blob = blob; else manquants++;
+    }
+  }
+
+  const dirsPhotos = [];
+  const d03 = await obtenirSousDossier(base, '03_Photos');
+  const taches = d03 ? await obtenirSousDossier(d03, 'Taches') : null;
+  if (taches) dirsPhotos.push(taches);
+  const anciennesPhotos = await obtenirSousDossier(base, 'Photos');
+  if (anciennesPhotos) dirsPhotos.push(anciennesPhotos);
+  for (const f of (draft.files['mise-a-jour'] || [])) {
+    let blob = null;
+    for (const dir of dirsPhotos) { blob = await lire(dir, [nomFichierSurDisque(f), propre(f.name)]); if (blob) break; }
+    if (blob) f.blob = blob; else manquants++;
+  }
+
+  const d04 = await obtenirSousDossier(base, '04_NonConformites');
+  const ancienNc = await obtenirSousDossier(base, 'NonConformites');
+  for (const [numero, files] of Object.entries(draft.ncFichiers || {})) {
+    const sous = d04 ? await obtenirSousDossier(d04, sanitizeFilename(numero) || 'NC') : null;
+    for (const f of files) {
+      let blob = sous ? await lire(sous, [nomFichierSurDisque(f), propre(f.name)]) : null;
+      if (!blob && ancienNc) blob = await lire(ancienNc, [`${numero}__${propre(f.name)}`]);
+      if (blob) f.blob = blob; else manquants++;
+    }
+  }
+  return manquants;
+}
+
+// Lit le dossier actif d'une RACINE : pointeur -> sauvegarde pointée ; à défaut, dernière sauvegarde
+// S-xxx valide ; à défaut, anciens formats (01_Dossier_actif/ ou suivi.json directement à la racine).
+async function chargerDossierDepuisRacine(folder, opts) {
+  const o = opts || {};
+  if (!estRacine(folder)) {
+    throw new ErreurReprise('SNAPSHOT_CHOISI', 'Sélectionnez le dossier racine contenant OUVRIR_DASHBOARD.html, pas une sauvegarde S-xxx.');
+  }
+  let base = null, source = null, sauvegarde = null, json = null;
+  const trouvee = await trouverDerniereSauvegarde(folder);
+  try {
+    if (trouvee) { base = trouvee.handle; source = trouvee.source; sauvegarde = trouvee; json = await lireSuiviDeSauvegarde(base); }
+    else {
+      const d01 = await obtenirSousDossier(folder, '01_Dossier_actif');
+      const fhInter = d01 ? await obtenirFichier(d01, 'suivi.json') : null;
+      const fhPlat = fhInter ? null : await obtenirFichier(folder, 'suivi.json');
+      if (fhInter) { base = folder; source = 'intermediaire'; json = await lireJsonFichier(fhInter); }
+      else if (fhPlat) { base = folder; source = 'plat'; json = await lireJsonFichier(fhPlat); }
+    }
+  } catch (err) {
+    if (err && err.name === 'SyntaxError') throw new ErreurReprise('JSON_ILLISIBLE', 'Le fichier suivi.json de la dernière sauvegarde est abîmé et ne peut pas être lu.');
+    throw err;
+  }
+  if (!json) throw new ErreurReprise('DOSSIER_VIDE', 'Ce dossier ne contient aucune sauvegarde de Suivi TEI. Sélectionnez le dossier racine contenant OUVRIR_DASHBOARD.html.');
+  if (!json.localisation || (json.mode !== 'installation' && json.mode !== 'demantelement')) {
+    throw new ErreurReprise('STRUCTURE_INVALIDE', 'Ce dossier ne contient pas un suivi.json valide de Suivi TEI.');
+  }
+  const avertissements = [];
+  if (o.numeroAttendu && json.localisation !== o.numeroAttendu) {
+    if (o.strict) throw new ErreurReprise('AUTRE_DOSSIER', `Ce dossier est celui de ${json.localisation}, et non de ${o.numeroAttendu}. Sélectionnez le bon dossier racine.`);
+    avertissements.push(`Attention : ce dossier correspond à ${json.localisation}, pas à ${o.numeroAttendu}.`);
+  }
+  const draft = normalizeDraft(json);
+  const manquants = await restaurerFichiersDepuis(base, draft);
+  return { draft, base, source, sauvegarde, avertissements, manquants };
+}
+
+function messageErreurReprise(err) {
+  if (err && err.name === 'ErreurReprise') return err.message;
+  if (err && err.name === 'NotAllowedError') return 'L\u2019accès au dossier n\u2019a pas été autorisé. Cliquez de nouveau et acceptez la demande du navigateur.';
+  if (err && err.name === 'NotFoundError') return 'Dossier introuvable. Vérifiez qu\u2019il est bien disponible sur cet ordinateur (lecteur réseau connecté).';
+  return `Impossible d\u2019ouvrir ce dossier : ${(err && err.message) || (err && err.name) || 'erreur inconnue'}`;
+}
+
+function preparerChampsIdentification(draft) {
+  try { selectMode(draft.mode); } catch (err) { /* affichage seulement */ }
+  $('#numLoc').value = draft.localisation;
+  $('#numBt').value = draft.champs.bt || '';
+  $('#numLoc').dispatchEvent(new Event('input'));
+  $('#numBt').dispatchEvent(new Event('input'));
+}
+
+// Installe un dossier lu sur le réseau comme dossier de travail de cet ordinateur.
+async function appliquerDossierCharge(res, racine, opts) {
+  const draft = res.draft;
+  const o = opts || {};
+  // Traçabilité : nom et rôle doivent être retapés à chaque enregistrement.
+  draft.champs.employeeName = '';
+  draft.champs.employeeRole = '';
+  const net = derniereApprobationDe(draft);
+  draft.baseReseau = net ? { id: net.id, at: net.at, nom: net.nom, role: net.role } : null;
+  preparerChampsIdentification(draft);
+  state.readOnlyConsultation = false;
+  state.draft = draft;
+  state.numero = draft.localisation;
+  state.isNewDraft = false;
+  state.dossierDirHandle = racine;
+  if (o.parent !== undefined) state.rootDirHandle = o.parent;
+  await dbPut(state.draft);
+  await dbPutHandles(state.numero, o.parent || null, racine);
+}
+
+// Garde la copie locale telle quelle mais l'associe à la racine réseau (aucune donnée remplacée).
+async function associerRacineAuDossierLocal(racine, local, parent) {
+  preparerChampsIdentification(local);
+  state.dossierDirHandle = racine;
+  if (parent !== undefined) state.rootDirHandle = parent;
+  await dbPutHandles(local.localisation, parent || null, racine);
+}
+
+// ---------- Copies de secours locales (avant de remplacer des modifications non enregistrées) ----------
+async function creerCopieSecours(draft, raison) {
+  const iso = new Date().toISOString();
+  const cle = `${draft.localisation}::secours::${iso}`;
+  const copie = deepCloneKeepingBlobs(draft);
+  copie.localisation = cle;
+  copie.copieSecours = { de: draft.localisation, creeLe: iso, raison: raison || '', modifieLe: draft.modifieLe || null };
+  const ok = await dbPut(copie);
+  if (!ok) throw new Error('COPIE_SECOURS_ECHEC');
+  return { cle, creeLe: iso };
+}
+async function listerCopiesSecours(numero) {
+  try {
+    const db = await openDb();
+    return await new Promise((resolve, reject) => {
+      const prefixe = `${numero}::secours::`;
+      const out = [];
+      const req = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).openCursor(IDBKeyRange.bound(prefixe, prefixe + '\uffff'));
+      req.onsuccess = () => {
+        const c = req.result;
+        if (c) { const v = c.value || {}; out.push({ cle: c.key, creeLe: v.copieSecours && v.copieSecours.creeLe, raison: (v.copieSecours && v.copieSecours.raison) || '', modifieLe: v.modifieLe || null }); c.continue(); }
+        else resolve(out.sort((a, b) => (a.creeLe < b.creeLe ? 1 : -1)));
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) { return []; }
+}
+async function supprimerCopieSecours(cle) {
+  try {
+    const db = await openDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).delete(cle);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) { return false; }
+}
+async function restaurerCopieSecours(cle) {
+  const b = await dbGet(cle);
+  if (!b || !b.copieSecours) { toast('Copie de secours introuvable.', 4000); return false; }
+  const quand = new Date(b.copieSecours.creeLe).toLocaleString('fr-CA');
+  const ok = await showModal({
+    title: 'Restaurer la copie de secours ?',
+    bodyHtml: `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Copie créée le <strong>${escapeHtml(quand)}</strong>. Le travail actuellement affiché sera d\u2019abord conservé dans une nouvelle copie de secours : rien n\u2019est perdu.</p>`,
+    confirmLabel: 'Restaurer',
+  });
+  if (!ok) return false;
+  try { if (state.draft && state.numero === b.copieSecours.de) await creerCopieSecours(state.draft, 'avant la restauration d\u2019une copie de secours'); }
+  catch (err) { toast('Impossible de conserver le travail actuel : restauration annulée.', 5000); return false; }
+  const restaure = normalizeDraft(deepCloneKeepingBlobs(b));
+  restaure.localisation = b.copieSecours.de;
+  delete restaure.copieSecours;
+  restaure.champs.employeeName = '';
+  restaure.champs.employeeRole = '';
+  state.draft = restaure;
+  state.numero = restaure.localisation;
+  await dbPut(state.draft);
+  openWorkspace();
+  toast(`Copie de secours du ${quand} restaurée.`, 4500);
+  return true;
+}
+async function showCopiesSecours() {
+  if (!state.draft) return;
+  const liste = await listerCopiesSecours(state.numero);
+  if (!liste.length) { toast('Aucune copie de secours locale pour ce dossier.', 3500); return; }
+  const ids = [];
+  const lignes = liste.map((c, i) => {
+    ids.push(`csRest${i}`, `csSuppr${i}`);
+    return `<div style="display:flex;gap:var(--space-2);align-items:center;justify-content:space-between;flex-wrap:wrap;padding:var(--space-2) 0;border-bottom:1px solid var(--color-border);">
+      <div style="font-size:var(--text-sm);"><strong>${escapeHtml(new Date(c.creeLe).toLocaleString('fr-CA'))}</strong><br><span style="color:var(--color-text-muted);">${escapeHtml(c.raison)}</span></div>
+      <div style="display:flex;gap:var(--space-2);"><button type="button" class="btn btn-primary" id="csRest${i}">Restaurer</button><button type="button" class="btn btn-outline" id="csSuppr${i}">Supprimer</button></div>
+    </div>`;
+  }).join('');
+  const choix = await showChoiceModal('Copies de secours locales', `<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Créées automatiquement avant de remplacer des modifications non enregistrées. Elles restent sur cet ordinateur.</p>${lignes}`, ids);
+  if (!choix) return;
+  const i = parseInt(choix.replace(/\D/g, ''), 10);
+  if (choix.startsWith('csRest')) await restaurerCopieSecours(liste[i].cle);
+  else if (choix.startsWith('csSuppr')) {
+    const ok = await showModal({ title: 'Supprimer cette copie de secours ?', bodyHtml: '<p style="font-size:var(--text-sm);color:var(--color-text-muted);">Cette copie locale sera définitivement supprimée.</p>', confirmLabel: 'Supprimer' });
+    if (ok) { await supprimerCopieSecours(liste[i].cle); toast('Copie de secours supprimée.', 3000); }
+  }
+}
+
+// ---------- Protection légère au moment d'Enregistrer ----------
+function showConflitReseau(conflit) {
+  const ligne = (o) => (o ? `<strong>${escapeHtml(o.id)}</strong> \u00b7 ${escapeHtml(o.nom || 'auteur inconnu')} \u00b7 ${o.at ? escapeHtml(new Date(o.at).toLocaleString('fr-CA')) : 'date inconnue'}` : 'aucune (nouveau dossier)');
+  return showModal({
+    title: 'Une sauvegarde plus récente existe sur le réseau',
+    bodyHtml: `
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Pour ne pas écraser le travail d\u2019un collègue, l\u2019enregistrement est arrêté. Rien n\u2019a été écrit.</p>
+      <div style="font-size:var(--text-sm);line-height:1.7;margin:var(--space-3) 0;">
+        <div><strong>Sur le réseau :</strong> ${ligne(conflit.net)}</div>
+        <div><strong>Vous êtes parti de :</strong> ${ligne(conflit.base)}</div>
+      </div>
+      <p style="font-size:var(--text-sm);color:var(--color-text-muted);">« Recharger la version réseau » ouvre la sauvegarde la plus récente. Vos modifications non enregistrées sont d\u2019abord conservées dans une copie de secours locale.</p>`,
+    confirmLabel: 'Recharger la version réseau',
+  });
+}
+
+// Recharge la dernière sauvegarde réseau à la place du travail affiché (copie de secours d'abord).
+async function rechargerVersionReseau(racine) {
+  let res;
+  try { res = await chargerDossierDepuisRacine(racine, { numeroAttendu: state.numero, strict: true }); }
+  catch (err) { toast(messageErreurReprise(err), 7000); return false; }
+  let copie = null;
+  if (state.draft && aDesModificationsNonEnregistrees(state.draft)) {
+    try { copie = await creerCopieSecours(state.draft, 'avant le rechargement de la version réseau'); }
+    catch (err) { toast('La copie de secours locale n\u2019a pas pu être créée : la version réseau n\u2019est pas rechargée. Vos données sont intactes.', 8000); return false; }
+  }
+  await appliquerDossierCharge(res, racine, { parent: state.rootDirHandle });
+  openWorkspace();
+  const net = derniereApprobationDe(res.draft);
+  toast(`Version réseau rechargée : ${net ? net.id + ' par ' + net.nom : 'dernière sauvegarde'}.${copie ? ' Vos modifications non enregistrées sont dans la copie de secours du ' + new Date(copie.creeLe).toLocaleString('fr-CA') + ' (menu \u22ef, Copies de secours locales).' : ''}`, 9000);
+  return true;
+}
+
+// Avant d'écrire quoi que ce soit : racine, conflit éventuel, numéro de la prochaine sauvegarde.
+// Retourne { racine, idNum }, ou null si l'enregistrement est arrêté (le TEI en a été informé).
+async function preparerEnregistrementReseau() {
+  const racine = await resoudreRacineDeSauvegarde();
+  const conflit = await detecterSauvegardePlusRecente(racine, state.draft);
+  if (conflit) {
+    const recharger = await showConflitReseau(conflit);
+    if (recharger) { state.dossierDirHandle = racine; await rechargerVersionReseau(racine); }
+    return null;
+  }
+  const liste = await listerSauvegardes(racine);
+  const maxReseau = liste.length ? liste[liste.length - 1].num : 0;
+  const maxLocal = (state.draft.approbations || []).reduce((m, a) => Math.max(m, numDepuisId(a.id)), 0);
+  state.dossierDirHandle = racine;
+  return { racine, idNum: Math.max(maxReseau, maxLocal) + 1 };
+}
+
+// ---------- Écran de reprise (bouton « Continuer le travail » du Dashboard racine) ----------
+function afficherEcranReprise(etat, ctx) {
+  const c = ctx || {};
+  let overlay = $('#repriseOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'repriseOverlay';
+    overlay.className = 'reprise-overlay';
+    document.body.appendChild(overlay);
+  }
+  const titre = `Reprise du dossier ${escapeHtml(c.numero || '')}${c.bt ? ' (' + escapeHtml(formatBt(c.bt)) + ')' : ''}`;
+  let html;
+  if (etat === 'chargement') {
+    html = `<div class="reprise-box"><h2>${titre}</h2><p>Ouverture du dernier dossier enregistré\u2026</p></div>`;
+  } else if (etat === 'autoriser') {
+    html = `<div class="reprise-box"><h2>${titre}</h2>
+      <p>${c.dejaConnu
+        ? 'Cet ordinateur connaît déjà ce dossier. Cliquez ci-dessous : le navigateur va demander de confirmer l\u2019accès (choisissez « Modifier »).'
+        : 'Première utilisation sur cet ordinateur : autorisez l\u2019accès au <strong>dossier de travail</strong>, c\u2019est-à-dire le dossier qui contient le fichier <strong>OUVRIR_DASHBOARD.html</strong>.'}</p>
+      <div class="reprise-actions"><button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Autoriser l\u2019accès au dossier de travail</button>
+      <button type="button" class="btn btn-outline" id="btnRepriseFermer">Annuler</button></div>
+      ${c.nomAttendu ? `<p class="reprise-aide">Le dossier s\u2019appelle « ${escapeHtml(c.nomAttendu)} » (avec une date à la fin s\u2019il est plus ancien). Ne choisissez pas un dossier S-001, S-002\u2026</p>` : ''}</div>`;
+  } else if (etat === 'nonSupporte') {
+    html = `<div class="reprise-box"><h2>${titre}</h2><p>La reprise d\u2019un dossier depuis le réseau nécessite <strong>Chrome ou Edge sur ordinateur</strong>. Sur ce navigateur ou cet appareil, vous pouvez consulter le Dashboard mais pas reprendre le travail.</p>
+      <div class="reprise-actions"><button type="button" class="btn btn-outline" id="btnRepriseFermer">Fermer</button></div></div>`;
+  } else {
+    html = `<div class="reprise-box"><h2>${titre}</h2><p role="alert">${escapeHtml(c.message || 'La reprise a échoué.')}</p>
+      <div class="reprise-actions">${c.reessayable === false ? '' : '<button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Choisir le dossier de travail</button>'}
+      <button type="button" class="btn btn-outline" id="btnRepriseFermer">Fermer</button></div></div>`;
+  }
+  overlay.innerHTML = html;
+  overlay.classList.remove('hidden');
+  const fermer = $('#btnRepriseFermer', overlay);
+  if (fermer) fermer.addEventListener('click', () => { masquerEcranReprise(); history.replaceState({}, '', location.pathname); });
+  return overlay;
+}
+function masquerEcranReprise() { const o = $('#repriseOverlay'); if (o) o.classList.add('hidden'); }
+
+// Point d'entrée : ?reprendre=1&numero=...&bt=...&mode=... (lien du Dashboard racine).
+async function reprendreDepuisDashboard(params) {
+  const ctx = { numero: (params.numero || '').trim(), bt: (params.bt || '').trim(), mode: params.mode || '' };
+  ctx.nomAttendu = ctx.numero ? (ctx.bt ? `${ctx.numero} - ${formatBt(ctx.bt)}` : ctx.numero) : '';
+  if (!ctx.numero) { afficherEcranReprise('erreur', { ...ctx, message: 'Ce lien de reprise est incomplet (numéro de localisation manquant).', reessayable: false }); return false; }
+  if (!FS_ACCESS_SUPPORTED) { afficherEcranReprise('nonSupporte', ctx); return false; }
+
+  const saved = await dbGetHandles(ctx.numero);
+  let candidat = saved && saved.dossierHandle ? saved.dossierHandle : null;
+  if (candidat && !estRacine(candidat)) candidat = null; // ne jamais réutiliser une sauvegarde S-xxx mémorisée par erreur
+  let permission = null;
+  if (candidat) { try { permission = await candidat.queryPermission({ mode: 'readwrite' }); } catch (err) { candidat = null; } }
+  if (candidat && permission === 'granted') return lancerReprise(candidat, ctx, saved);
+
+  afficherEcranReprise('autoriser', { ...ctx, dejaConnu: !!candidat });
+  const brancher = () => {
+    const btn = $('#btnRepriseAutoriser');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      try {
+        let racine = candidat;
+        if (racine) { const p = await racine.requestPermission({ mode: 'readwrite' }); if (p !== 'granted') racine = null; }
+        if (!racine) racine = await window.showDirectoryPicker({ id: 'dossier-travail', mode: 'readwrite' });
+        await lancerReprise(racine, ctx, saved);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        afficherEcranReprise('erreur', { ...ctx, message: messageErreurReprise(err) });
+        brancher();
+      }
+    });
+  };
+  brancher();
+  return false;
+}
+
+async function lancerReprise(racine, ctx, saved) {
+  afficherEcranReprise('chargement', ctx);
+  const rebrancher = (message) => {
+    afficherEcranReprise('erreur', { ...ctx, message });
+    const btn = $('#btnRepriseAutoriser');
+    if (btn) btn.addEventListener('click', async () => {
+      try {
+        const autre = await window.showDirectoryPicker({ id: 'dossier-travail', mode: 'readwrite' });
+        await lancerReprise(autre, ctx, saved);
+      } catch (err) { if (!err || err.name !== 'AbortError') rebrancher(messageErreurReprise(err)); }
+    });
+  };
+  let res;
+  try { res = await chargerDossierDepuisRacine(racine, { numeroAttendu: ctx.numero, strict: true }); }
+  catch (err) { rebrancher(messageErreurReprise(err)); return false; }
+
+  const parent = (saved && saved.rootHandle) || null;
+  const numero = res.draft.localisation;
+  const local = await dbGet(numero);
+  const net = derniereApprobationDe(res.draft);
+  let infoCopie = null;
+  if (local && aDesModificationsNonEnregistrees(local)) {
+    if (memeSauvegarde(baseDeReference(local), net)) {
+      // Copie locale non enregistrée, partie de la même sauvegarde réseau : on la garde, rien n'est remplacé.
+      await associerRacineAuDossierLocal(racine, local, parent);
+      masquerEcranReprise();
+      history.replaceState({}, '', location.pathname);
+      toast(`Copie locale non enregistrée retrouvée (modifiée le ${new Date(local.modifieLe).toLocaleString('fr-CA')}).`, 6000);
+      await ouvrirDossier();
+      return true;
+    }
+    masquerEcranReprise(); // pour que la fenêtre d'avertissement s'affiche au-dessus
+    const ok = await showModal({
+      title: 'Copie locale non enregistrée',
+      bodyHtml: `<p style="font-size:var(--text-sm);line-height:1.6;">Une copie de ce dossier <strong>non enregistrée</strong> existe sur cet ordinateur (modifiée le ${escapeHtml(new Date(local.modifieLe).toLocaleString('fr-CA'))}), et la version réseau est différente : <strong>${escapeHtml(net ? net.id : '?')}</strong>${net ? ' par ' + escapeHtml(net.nom || 'auteur inconnu') + ', le ' + escapeHtml(new Date(net.at).toLocaleString('fr-CA')) : ''}.</p>
+        <p style="font-size:var(--text-sm);color:var(--color-text-muted);">Votre copie locale sera d\u2019abord conservée dans une copie de secours (menu \u22ef, Copies de secours locales), puis la version réseau sera ouverte.</p>`,
+      confirmLabel: 'Ouvrir la version réseau',
+    });
+    if (!ok) { rebrancher('Ouverture annulée : votre copie locale n\u2019a pas été modifiée.'); return false; }
+    try { infoCopie = await creerCopieSecours(local, 'avant l\u2019ouverture de la version réseau'); }
+    catch (err) { rebrancher('La copie de secours locale n\u2019a pas pu être créée : la version réseau n\u2019est pas ouverte et votre copie locale est intacte.'); return false; }
+  }
+  await appliquerDossierCharge(res, racine, { parent });
+  masquerEcranReprise();
+  history.replaceState({}, '', location.pathname);
+  if (res.manquants) toast(`${res.manquants} fichier(s) référencé(s) n\u2019ont pas été retrouvés dans la sauvegarde.`, 7000);
+  if (infoCopie) toast(`Copie de secours de votre travail local créée le ${new Date(infoCopie.creeLe).toLocaleString('fr-CA')}.`, 8000);
+  await ouvrirDossier();
+  return true;
 }
 
 // Catégorise un document de tâche pour le classer dans le bon sous-dossier
@@ -2508,14 +3258,6 @@ const GROUP_FOLDER_NAMES = {
 
 function categorizeDocument(group) {
   return GROUP_FOLDER_NAMES[group] || 'Autres';
-}
-
-async function ensureLocalDossierFolder(date) {
-  if (!state.rootDirHandle || !state.numero) return;
-  state.dossierDirHandle = await state.rootDirHandle.getDirectoryHandle(folderName(date), { create: true });
-  const pill = $('#wsFolderPill');
-  if (pill) pill.textContent = `Lié : ${state.rootDirHandle.name}/${folderName(date)}`;
-  await dbPutHandles(state.numero, state.rootDirHandle, state.dossierDirHandle);
 }
 
 // Pré-remplit le B.T. si un brouillon existe déjà pour ce numéro
@@ -2543,7 +3285,7 @@ const URL_APP_OFFICIELLE = 'https://carltherock.github.io/gestion_responsable/';
 // généré (balise <meta name="generator"> et pied de page) : un Dashboard est un
 // fichier statique, il ne change jamais après sa génération ; cette marque permet
 // de savoir avec certitude QUELLE version de l'application l'a produit.
-const APP_BUILD = 'consultation-2026-09-19-c';
+const APP_BUILD = 'reprise-p1-2026-09-19-a';
 
 // Adresse de base de l'application, SANS aucun paramètre (jamais mode/numero/bt :
 // ces paramètres déclenchent le vieux flux « Reprendre ce dossier »).
@@ -2805,51 +3547,6 @@ ${reponseTexteCourriel.toString()}
 </script>`;
 }
 
-// Fichier à la racine du dossier exporté : page d'accueil qui désigne la
-// DERNIÈRE sauvegarde (identifiant exact, date, révision) et n'a qu'une seule
-// action : ouvrir le Dashboard.html de cette sauvegarde. Régénéré à chaque
-// nouvelle sauvegarde. Aucun scan de sous-dossiers en JavaScript : le nom exact
-// du dossier est écrit ici au moment de la sauvegarde. Chemins relatifs
-// seulement (aucun chemin Windows absolu). Pour consulter ou approuver une
-// sauvegarde PRÉCISE (ex. celle envoyée par courriel), on utilise le lien de
-// son propre Dashboard.html, jamais cette page.
-function buildDashboardRedirectHtml(nomSauvegarde, approbation, revisionId, localisation, bt) {
-  const cibleDashboard = `${encodeURIComponent(nomSauvegarde)}/00_Dashboard/Dashboard.html`;
-  const quand = approbation && approbation.at ? new Date(approbation.at).toLocaleString('fr-CA') : '';
-  const titre = `${localisation || ''}${bt ? ' \u2014 ' + formatBt(bt) : ''}`;
-  const idSauvegarde = (approbation && approbation.id) || '';
-  return `<!DOCTYPE html>
-<html lang="fr"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="Suivi TEI ${APP_BUILD}">
-<title>Dossier ${escapeHtml(titre)} \u2014 dernière sauvegarde</title>
-<style>
-  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#f7f7f5; color:#1c1c1a; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
-  .box { max-width:560px; padding:28px; background:#fff; border:1px solid #d9d9d4; border-radius:8px; }
-  h1 { font-size:20px; margin:0 0 4px; }
-  .sub { color:#5c5c56; font-size:14px; margin:0 0 18px; }
-  dl { margin:0 0 20px; font-size:14px; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; }
-  dt { color:#5c5c56; } dd { margin:0; font-weight:600; }
-  a.btn { display:block; margin-top:10px; padding:12px 18px; background:#b85a1f; color:#fff; text-decoration:none; border-radius:6px; font-weight:600; text-align:center; }
-  p.chemin { font-family:monospace; font-size:12px; color:#5c5c56; margin-top:18px; word-break:break-all; }
-  p.note { font-size:12px; color:#5c5c56; margin-top:14px; }
-</style>
-</head><body>
-  <div class="box">
-    <h1>${escapeHtml(titre)}</h1>
-    <p class="sub">Cette page désigne la sauvegarde la plus récente de ce dossier.</p>
-    <dl>
-      <dt>Sauvegarde</dt><dd>${escapeHtml(idSauvegarde)}</dd>
-      <dt>Date et heure</dt><dd>${escapeHtml(quand)}</dd>
-      <dt>Révision</dt><dd>${escapeHtml(revisionId || '')}</dd>
-    </dl>
-    <a class="btn" href="${cibleDashboard}">Ouvrir le Dashboard de ${escapeHtml(idSauvegarde || 'cette sauvegarde')}</a>
-    <p class="note">Pour consulter ou approuver une sauvegarde précise (ex. celle envoyée par courriel), utilisez le lien de son propre Dashboard : cette page, elle, désigne toujours la plus récente.</p>
-    <p class="chemin">${escapeHtml(nomSauvegarde)}/00_Dashboard/Dashboard.html</p>
-  </div>
-</body></html>`;
-}
-
 // Écrit un fichier texte/JSON dans un dossier (crée le fichier si nécessaire).
 async function writeTextFile(dirHandle, name, content) {
   const fh = await dirHandle.getFileHandle(name, { create: true });
@@ -2870,6 +3567,7 @@ function slugForFolder(text, maxLen) {
 // et autonome à la racine du dossier — avec ses propres fichiers tels qu'ils
 // étaient à ce moment, sans dépendre d'aucun dossier commun partagé.
 async function writeDocumentsPhotosNc(destHandle, draft) {
+  const echecs = []; // noms des fichiers qui n'ont pas pu être écrits
   const groupOfTask = {};
   Object.entries(getEffectiveChecklists(draft.mode, draft.customTasks)).forEach(([g, items]) => items.forEach(([n]) => { groupOfTask[n] = g; }));
 
@@ -2880,7 +3578,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
         const categorie = categorizeDocument(groupOfTask[name], name);
         const catDir = await d02.getDirectoryHandle(categorie, { create: true });
         await writeTextFile(catDir, nomDocumentTache(name, f), f.blob);
-      } catch (err) { /* best effort par fichier */ }
+      } catch (err) { echecs.push(f.name); }
     }
   }
 
@@ -2889,7 +3587,7 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
   for (const f of (draft.files['mise-a-jour'] || [])) {
     try {
       await writeTextFile(d03taches, nomFichierSurDisque(f), f.blob);
-    } catch (err) { /* best effort par fichier */ }
+    } catch (err) { echecs.push(f.name); }
   }
 
   try {
@@ -2901,23 +3599,35 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
       for (const f of files) {
         try {
           await writeTextFile(ncDir, nomFichierSurDisque(f), f.blob);
-        } catch (err) { /* best effort par fichier */ }
+        } catch (err) { echecs.push(f.name); }
       }
     }
     await writeTextFile(d04, 'registre.txt', registreLignes.length ? registreLignes.join('\n') : 'Aucune non-conformité avec fichier joint.');
   } catch (err) { /* best effort */ }
+  return echecs;
 }
 
 async function writeEverythingToDisk(date) {
-  if (!state.dossierDirHandle || !state.draft) return;
+  if (!state.dossierDirHandle || !state.draft) return null;
+  const racine = state.dossierDirHandle;
+  const dernier = state.draft.approbations[state.draft.approbations.length - 1];
+  if (!dernier) return null; // rien à sauvegarder tant qu'aucune sauvegarde officielle n'a été faite
+
+  // Jamais de sauvegarde dans une autre sauvegarde.
+  if (!estRacine(racine)) {
+    throw new ErreurReprise('SNAPSHOT_CHOISI', 'Le dossier de destination est une sauvegarde S-xxx, pas la racine du dossier. Rien n\u2019a été écrit.');
+  }
   const jsonContent = JSON.stringify(state.draft, (k, v) => (k === 'blob' ? undefined : v), 2);
   const resumeContent = buildResumeText();
+  const avertissements = [];
   // Nom du sous-dossier de cette sauvegarde (S-001 - date - motif), créé
   // DIRECTEMENT à la racine du dossier — plus de dossiers communs partagés.
-  const dernier = state.draft.approbations[state.draft.approbations.length - 1];
-  if (!dernier) return; // rien à sauvegarder tant qu'aucune sauvegarde officielle n'a été faite
   const nomSauvegarde = nomDossierSauvegarde(dernier);
-  const dSave = await state.dossierDirHandle.getDirectoryHandle(nomSauvegarde, { create: true });
+  // Jamais d'écrasement : le dossier de cette sauvegarde ne doit pas déjà exister.
+  if (await obtenirSousDossier(racine, nomSauvegarde)) {
+    throw new ErreurReprise('SAUVEGARDE_EXISTE', `Le dossier de sauvegarde « ${nomSauvegarde} » existe déjà. Rien n\u2019a été écrasé ni modifié : un collègue vient peut-être d\u2019enregistrer. Réessayez dans un instant.`);
+  }
+  const dSave = await racine.getDirectoryHandle(nomSauvegarde, { create: true });
 
   const dashboardContent = buildDashboardHtml({ docPrefix: '../', estInstantaneHistorique: false });
 
@@ -2926,29 +3636,36 @@ async function writeEverythingToDisk(date) {
   await writeTextFile(d01, 'suivi.json', jsonContent);
   await writeTextFile(d01, 'resume.txt', resumeContent);
 
-  // 00_Dashboard : point d'entrée de CETTE sauvegarde.
+  // 00_Dashboard : point d'entrée de CETTE sauvegarde (utilisé par le contremaître).
+  let dashboardEcrit = false;
   try {
     const d00 = await dSave.getDirectoryHandle('00_Dashboard', { create: true });
     await writeTextFile(d00, 'Dashboard.html', dashboardContent);
-  } catch (err) { /* best effort */ }
+    dashboardEcrit = true;
+  } catch (err) { avertissements.push('Le Dashboard de cette sauvegarde n\u2019a pas pu être écrit.'); }
 
   // 06_Exports : copie du rapport de chantier de cette sauvegarde, prête à partager.
   try {
     const d06 = await dSave.getDirectoryHandle('06_Exports', { create: true });
     await writeTextFile(d06, 'Rapport_de_chantier.html', dashboardContent);
-  } catch (err) { /* best effort */ }
+  } catch (err) { avertissements.push('Le Rapport de chantier de cette sauvegarde n\u2019a pas pu être écrit.'); }
 
   // 02_Documents / 03_Photos / 04_NonConformites : copie complète telle
   // qu'elle était à ce moment précis — chaque sauvegarde est autonome.
-  await writeDocumentsPhotosNc(dSave, state.draft);
-  await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n'));
+  const echecs = await writeDocumentsPhotosNc(dSave, state.draft);
+  if (echecs.length) avertissements.push(`${echecs.length} fichier(s) n\u2019ont pas pu être écrits dans cette sauvegarde : ${echecs.slice(0, 5).join(', ')}${echecs.length > 5 ? '\u2026' : ''}.`);
+  // changements.txt = dernier fichier de la sauvegarde : sert de marqueur « sauvegarde complète ».
+  await writeTextFile(dSave, 'changements.txt', (dernier.resume || []).join('\n') || 'Sauvegarde ' + dernier.id + ' terminée.');
 
-  // OUVRIR_DASHBOARD.html à la racine : pointe toujours vers la sauvegarde
-  // la PLUS RÉCENTE.
+  // ---- Sauvegarde complète réussie : SEULEMENT maintenant, on met à jour la racine. ----
+  const pointeur = construirePointeur(nomSauvegarde, dernier, dashboardEcrit);
+  await writeTextFile(racine, POINTEUR_NOM, JSON.stringify(pointeur, null, 2));
   try {
-    await writeTextFile(state.dossierDirHandle, 'OUVRIR_DASHBOARD.html', buildDashboardRedirectHtml(nomSauvegarde, dernier, (state.draft.activeRevision && state.draft.activeRevision.id) || '', state.draft.localisation, state.draft.champs.bt));
-  } catch (err) { /* best effort */ }
+    await writeTextFile(racine, 'OUVRIR_DASHBOARD.html', buildDashboardRacineHtml(pointeur));
+  } catch (err) { avertissements.push('Le Dashboard racine (OUVRIR_DASHBOARD.html) n\u2019a pas pu être mis à jour.'); }
+  return { nomSauvegarde, pointeur, avertissements };
 }
+
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -6450,14 +7167,12 @@ async function importDossierFromPickedFolder(expectedNumero) {
     return false;
   }
   try {
-    const folder = await window.showDirectoryPicker({ mode: 'readwrite' });
-    // Nouveau format : 01_Dossier_actif/suivi.json. Ancien format (avant
-    // cette réorganisation) : suivi.json directement à la racine.
-    const dossierActifDir = await folder.getDirectoryHandle('01_Dossier_actif', { create: false }).catch(() => null);
-    const jsonFile = dossierActifDir
-      ? await (await dossierActifDir.getFileHandle('suivi.json')).getFile()
-      : await (await folder.getFileHandle('suivi.json')).getFile();
-    const draft = normalizeDraft(JSON.parse(await jsonFile.text()));
+    const folder = await window.showDirectoryPicker({ id: 'dossier-travail', mode: 'readwrite' });
+    // Accepte la RACINE (pointeur, sinon dernière sauvegarde S-xxx valide) et les anciens formats
+    // (01_Dossier_actif/ ou suivi.json à la racine). Refuse un dossier S-xxx avec une explication.
+    const res = await chargerDossierDepuisRacine(folder, { numeroAttendu: expectedNumero, strict: false });
+    const draft = res.draft;
+    const net = derniereApprobationDe(draft);
 
     // ---- Aperçu avant import : montrer l'essentiel avant de toucher aux données locales ----
     const groupsPreview = getEffectiveChecklists(draft.mode, draft.customTasks);
@@ -6481,99 +7196,32 @@ async function importDossierFromPickedFolder(expectedNumero) {
           <div>B.T.<br><strong>${escapeHtml(draft.champs.bt ? formatBt(draft.champs.bt) : '—')}</strong></div>
           <div>Type<br><strong>${draft.mode === 'installation' ? 'Installation' : 'Démantèlement'}</strong></div>
           <div>Créé le<br><strong>${draft.creeLe ? new Date(draft.creeLe).toLocaleDateString('fr-CA') : '—'}</strong></div>
-          <div>Dernière sauvegarde<br><strong>${draft.derniereSauvegardeOfficielle ? new Date(draft.derniereSauvegardeOfficielle.at).toLocaleDateString('fr-CA') : (draft.modifieLe ? new Date(draft.modifieLe).toLocaleDateString('fr-CA') : '—')}</strong></div>
+          <div>Dernière sauvegarde<br><strong>${net ? escapeHtml(net.id) + ' \u00b7 ' + new Date(net.at).toLocaleString('fr-CA') : (draft.modifieLe ? new Date(draft.modifieLe).toLocaleDateString('fr-CA') : '—')}</strong></div>
+          <div>Par<br><strong>${net ? escapeHtml(net.nom || 'inconnu') : '—'}</strong></div>
           <div>Tâches<br><strong>${taskDone} / ${taskTotal}</strong></div>
           <div>VPO<br><strong>${vpoCount}</strong></div>
           <div>Non-conformités<br><strong>${ncCount}</strong></div>
           <div>Documents / photos<br><strong>${docCount}</strong></div>
         </div>
-        ${remplaceExistant ? `<p style="color:var(--color-warning, #eab308);font-size:var(--text-sm);">Le dossier actuellement ouvert (${escapeHtml(state.numero || state.draft.localisation)}) sera remplacé par cet import dans l\u2019espace de travail.</p>` : ''}
+        ${remplaceExistant ? `<p style="color:var(--color-warning, #eab308);font-size:var(--text-sm);">Le dossier actuellement ouvert (${escapeHtml(state.numero || state.draft.localisation)}) sera remplacé par cet import. Si des modifications ne sont pas enregistrées, une copie de secours locale est créée d\u2019abord.</p>` : ''}
       `,
       confirmLabel: remplaceExistant ? 'Remplacer et importer' : 'Importer',
     });
     if (!confirmed) return false;
 
-    // Documents : nouveau format réparti par onglet (Identification, Plans,
-    // Programmation, Systeme, Information, Securite-et-general, Autres),
-    // ancien format à plat dans Documents/. On cherche dans tous les
-    // emplacements possibles.
-    const docCandidateDirs = [];
-    const d02 = await folder.getDirectoryHandle('02_Documents', { create: false }).catch(() => null);
-    if (d02) {
-      for (const sub of [...Object.values(GROUP_FOLDER_NAMES), 'Autres']) {
-        const sd = await d02.getDirectoryHandle(sub, { create: false }).catch(() => null);
-        if (sd) docCandidateDirs.push(sd);
-      }
-    }
-    const oldDocsDir = await folder.getDirectoryHandle('Documents', { create: false }).catch(() => null);
-    if (oldDocsDir) docCandidateDirs.push(oldDocsDir);
-    if (docCandidateDirs.length) {
-      for (const [name, files] of Object.entries(draft.casesFichiers || {})) {
-        for (const f of files) {
-          const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          for (const dir of docCandidateDirs) {
-            const blob = await readBlobFromDir(dir, `${name}__${safe}`);
-            if (blob) { f.blob = blob; break; }
-          }
-        }
-      }
+    // Jamais d'écrasement silencieux d'une copie locale non enregistrée : copie de secours d'abord.
+    const local = (state.draft && state.draft.localisation === draft.localisation) ? state.draft : await dbGet(draft.localisation);
+    let infoCopie = null;
+    if (local && aDesModificationsNonEnregistrees(local)) {
+      try { infoCopie = await creerCopieSecours(local, 'avant l\u2019import d\u2019un dossier réseau'); }
+      catch (err) { toast('La copie de secours locale n\u2019a pas pu être créée : l\u2019import est annulé et vos données sont intactes.', 8000); return false; }
     }
 
-    const photoCandidateDirs = [];
-    const d03 = await folder.getDirectoryHandle('03_Photos', { create: false }).catch(() => null);
-    if (d03) {
-      const tachesDir = await d03.getDirectoryHandle('Taches', { create: false }).catch(() => null);
-      if (tachesDir) photoCandidateDirs.push(tachesDir);
-    }
-    const oldPhotosDir = await folder.getDirectoryHandle('Photos', { create: false }).catch(() => null);
-    if (oldPhotosDir) photoCandidateDirs.push(oldPhotosDir);
-    if (photoCandidateDirs.length) {
-      for (const f of (draft.files['mise-a-jour'] || [])) {
-        const safe = (f.storedAs || f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-        for (const dir of photoCandidateDirs) {
-          const blob = await readBlobFromDir(dir, safe);
-          if (blob) { f.blob = blob; break; }
-        }
-      }
-    }
+    await appliquerDossierCharge(res, folder, { parent: null });
 
-    // Non-conformités : nouveau format en sous-dossier par NC, ancien format
-    // à plat dans NonConformites/.
-    const d04 = await folder.getDirectoryHandle('04_NonConformites', { create: false }).catch(() => null);
-    const oldNcDir = await folder.getDirectoryHandle('NonConformites', { create: false }).catch(() => null);
-    for (const [numero, files] of Object.entries(draft.ncFichiers || {})) {
-      const ncSousDossier = d04 ? await d04.getDirectoryHandle(sanitizeFilename(numero) || 'NC', { create: false }).catch(() => null) : null;
-      for (const f of files) {
-        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        let blob = ncSousDossier ? await readBlobFromDir(ncSousDossier, safe) : null;
-        if (!blob && oldNcDir) blob = await readBlobFromDir(oldNcDir, `${numero}__${safe}`);
-        if (blob) f.blob = blob;
-      }
-    }
-
-    if (expectedNumero && draft.localisation !== expectedNumero) {
-      toast(`Attention : ce dossier correspond à ${draft.localisation}, pas à ${expectedNumero}.`, 5500);
-    }
-
-    // Toujours vider le nom ET le rôle de l'employé à l'import, même s'ils
-    // étaient restés dans le fichier importé — la traçabilité exige de les
-    // retaper/choisir à chaque fois, peu importe si le dossier est nouveau
-    // ou repris.
-    draft.champs.employeeName = '';
-    draft.champs.employeeRole = '';
-
-    // Remplit les champs visibles de l'écran d'identification
-    $('#numLoc').value = draft.localisation;
-    $('#numBt').value = draft.champs.bt || '';
-    $('#numLoc').dispatchEvent(new Event('input'));
-    $('#numBt').dispatchEvent(new Event('input'));
-
-    state.draft = draft;
-    state.numero = draft.localisation;
-    state.isNewDraft = false;
-    state.dossierDirHandle = folder; // les futures sauvegardes réécrivent ce même dossier
-    await dbPut(state.draft);
-    await dbPutHandles(state.numero, null, folder);
+    res.avertissements.forEach((m) => toast(m, 5500));
+    if (res.manquants) toast(`${res.manquants} fichier(s) référencé(s) n\u2019ont pas été retrouvés dans la sauvegarde.`, 7000);
+    if (infoCopie) toast(`Copie de secours de votre travail local créée le ${new Date(infoCopie.creeLe).toLocaleString('fr-CA')}.`, 8000);
 
     const statusEl = $('#dossierStatus');
     statusEl.classList.remove('hidden', 'err', 'new');
@@ -6584,11 +7232,7 @@ async function importDossierFromPickedFolder(expectedNumero) {
   } catch (err) {
     if (err && err.name === 'AbortError') return false;
     console.error('Erreur importDossierFromPickedFolder:', err);
-    if (err && err.name === 'NotFoundError') {
-      toast('Ce dossier ne contient pas de fichier suivi.json valide.', 4500);
-    } else {
-      toast(`Impossible d\u2019importer ce dossier : ${(err && err.message) || (err && err.name) || 'erreur inconnue'}`, 6000);
-    }
+    toast(messageErreurReprise(err), 7000);
     return false;
   }
 }
@@ -6948,6 +7592,12 @@ async function decisionApprobationConsultation(decisionBrute) {
   if (consultationOuverte) return;
 
   const params = new URLSearchParams(location.search);
+  // Reprise du dossier actif depuis le Dashboard racine : écran d'autorisation (une fois par PC),
+  // puis ouverture automatique de la dernière sauvegarde. Jamais l'ancien flux « Reprendre ce dossier ».
+  if (params.get('reprendre')) {
+    await reprendreDepuisDashboard({ numero: params.get('numero'), bt: params.get('bt'), mode: params.get('mode') });
+    return;
+  }
   const mode = params.get('mode');
   const numero = params.get('numero');
   const bt = params.get('bt') || '';
