@@ -828,16 +828,18 @@ $('#btnMoreMenuPc').addEventListener('click', async () => {
       <button type="button" class="btn btn-outline" id="menuImprimer" style="width:100%;justify-content:flex-start;">${iconSvg('printer')}Imprimer</button>
       <button type="button" class="btn btn-outline" id="menuHistorique" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Historique / activité récente</button>
       <button type="button" class="btn btn-outline" id="menuCopiesSecours" style="width:100%;justify-content:flex-start;">${iconSvg('clock')}Copies de secours locales</button>
+      <button type="button" class="btn btn-outline" id="menuDossierActuel" style="width:100%;justify-content:flex-start;">${iconSvg('folder')}Dossier de travail actuel</button>
       <button type="button" class="btn btn-outline" id="menuChangerDossier" style="width:100%;justify-content:flex-start;">${iconSvg('folder')}Changer de dossier de travail</button>
       <button type="button" class="btn btn-outline" id="menuRaccourcis" style="width:100%;justify-content:flex-start;">${iconSvg('keyboard')}Raccourcis clavier</button>
     </div>
-  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuCopiesSecours', 'menuChangerDossier', 'menuRaccourcis']);
+  `, ['menuQr', 'menuExporter', 'menuPartager', 'menuImprimer', 'menuHistorique', 'menuCopiesSecours', 'menuDossierActuel', 'menuChangerDossier', 'menuRaccourcis']);
   if (choice === 'menuQr') showQrModal();
   else if (choice === 'menuExporter') exportDashboardFile();
   else if (choice === 'menuPartager') shareDossierLink();
   else if (choice === 'menuImprimer') window.print();
   else if (choice === 'menuHistorique') selectTab('apercu');
   else if (choice === 'menuCopiesSecours') showCopiesSecours();
+  else if (choice === 'menuDossierActuel') showDossierDeTravailActuel();
   else if (choice === 'menuChangerDossier') changerDossierDeTravail();
   else if (choice === 'menuRaccourcis') showShortcutsHelp();
 });
@@ -2832,14 +2834,38 @@ ${htmlCorpsRacine(pointeur, appUrl)}
 <script type="application/json" id="pointeur">${donnees}</script>
 <script>
 ${htmlCorpsRacine.toString()}
+${cheminReseauDepuisUrlFichier.toString()}
 (function () {
   var APP_URL = ${appUrlJs};
   var integre;
   try { integre = JSON.parse(document.getElementById('pointeur').textContent); } catch (e) { return; }
+  // Le bouton « Continuer le travail » transmet à l'application, dans le FRAGMENT de l'adresse (#reprise=...,
+  // jamais envoyé au serveur), ce qu'elle peut afficher avant l'autorisation du dossier. Le paramètre ?reprendre=1&... ne change pas.
+  var courant = integre;
+  function infosReprise(p) {
+    var sv = p.sauvegarde || {}, pr = p.progression || {}, loc = window.location;
+    var info = { v: 1, s: sv.id, a: sv.auteur, r: sv.role, q: sv.at, f: pr.faites, t: pr.total, p: pr.pct };
+    if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+      var sansFragment = loc.href.split('#')[0].split('?')[0];
+      info.u = sansFragment.slice(0, sansFragment.lastIndexOf('/') + 1);
+    } else if (loc.protocol === 'file:') {
+      var chemin = cheminReseauDepuisUrlFichier(loc.href);
+      if (chemin) info.c = chemin;
+    }
+    return info;
+  }
+  function majLienReprise() {
+    var a = document.querySelector('#racine a.r-bouton');
+    if (!a) return;
+    a.setAttribute('href', a.getAttribute('href').split('#')[0] + '#reprise=' + encodeURIComponent(JSON.stringify(infosReprise(courant))));
+  }
+  majLienReprise();
   try {
     fetch('${POINTEUR_NOM}', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
       if (p && p.type === '${POINTEUR_TYPE}' && p.sauvegarde && p.sauvegarde.at && p.sauvegarde.at > integre.sauvegarde.at) {
         document.getElementById('racine').innerHTML = htmlCorpsRacine(p, APP_URL);
+        courant = p;
+        majLienReprise();
       }
     }).catch(function () {});
   } catch (e) {}
@@ -3195,6 +3221,152 @@ async function preparerEnregistrementReseau() {
   return { racine, idNum: Math.max(maxReseau, maxLocal) + 1 };
 }
 
+// =====================================================================
+// AMÉLIORATION UX -- écran de reprise et fiche « Dossier de travail actuel »
+// AFFICHAGE SEULEMENT : aucune logique de sauvegarde, de reprise, de conflit ou de snapshot ici.
+// =====================================================================
+
+// Chemin réseau lisible d'après l'adresse d'un fichier local (Dashboard ouvert depuis un partage Windows).
+// Fonction SANS dépendance : elle est aussi copiée (Function.toString) dans le Dashboard racine.
+//   file://serveur/partage/dossier/OUVRIR_DASHBOARD.html -> \\serveur\partage\dossier
+//   file:///Z:/dossier/OUVRIR_DASHBOARD.html            -> Z:\dossier
+function cheminReseauDepuisUrlFichier(href) {
+  try {
+    var u = String(href).split('#')[0].split('?')[0];
+    if (!/^file:/i.test(u)) return '';
+    u = u.replace(/^file:/i, '');
+    u = u.slice(0, u.lastIndexOf('/'));                 // retire le nom du fichier
+    u = u.replace(/^\/{5}/, '//');                      // file://///serveur/... -> file://serveur/...
+    var segments = function (s) {
+      return s.split('/').filter(function (x) { return x !== ''; }).map(function (x) { return decodeURIComponent(x); });
+    };
+    var m = /^\/\/\/([A-Za-z]:)(\/.*)?$/.exec(u);       // lecteur : file:///Z:/dossier
+    if (m) return m[1] + '\\' + segments(m[2] || '').join('\\');
+    m = /^\/\/([^\/]+)(\/.*)?$/.exec(u);                // partage : file://serveur/partage/dossier
+    if (m && m[1]) return '\\\\' + m[1] + (m[2] ? '\\' + segments(m[2]).join('\\') : '');
+    return '';
+  } catch (e) { return ''; }
+}
+
+// Informations transmises par le Dashboard racine dans le FRAGMENT de l'adresse (#reprise=...) :
+// le fragment n'est jamais envoyé au serveur (GitHub Pages). Tout est nettoyé : ce sont des données non fiables.
+function nettoyerInfosReprise(brut) {
+  if (!brut || typeof brut !== 'object' || brut.v !== 1) return null;
+  const txt = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  const nb = (v) => (typeof v === 'number' && isFinite(v) && v >= 0 && v < 1000000 ? Math.round(v) : null);
+  const iso = (v) => { const t = txt(v, 40); return t && !isNaN(new Date(t).getTime()) ? t : ''; };
+  const url = (v) => { try { const u = new URL(txt(v, 500)); return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : ''; } catch (err) { return ''; } };
+  const chemin = (v) => { const t = txt(v, 500); return /^(\\\\|[A-Za-z]:\\)/.test(t) ? t : ''; };
+  return {
+    sauvegarde: txt(brut.s, 20), auteur: txt(brut.a, 80), role: txt(brut.r, 30), quand: iso(brut.q),
+    faites: nb(brut.f), total: nb(brut.t), pct: nb(brut.p),
+    lienPartage: url(brut.u), cheminReseau: chemin(brut.c),
+  };
+}
+function lireInfosReprise() {
+  try {
+    const m = /^#reprise=(.+)$/.exec(location.hash || '');
+    return m ? nettoyerInfosReprise(JSON.parse(decodeURIComponent(m[1]))) : null;
+  } catch (err) { return null; }
+}
+
+function htmlIdentiteReprise(c, infos) {
+  const lignes = [];
+  if (c.nomAttendu) lignes.push(['Nom du dossier attendu', `\u00ab ${c.nomAttendu} \u00bb`]);
+  if (c.numero) lignes.push(['Localisation', c.numero]);
+  if (c.bt) lignes.push(['B.T.', formatBt(c.bt)]);
+  let avecInfos = false;
+  if (infos) {
+    const quand = infos.quand ? new Date(infos.quand).toLocaleString('fr-CA') : '';
+    if (infos.sauvegarde || quand) { lignes.push(['Dernière sauvegarde', [infos.sauvegarde, quand].filter(Boolean).join(' \u00b7 ')]); avecInfos = true; }
+    if (infos.auteur) { lignes.push(['Dernière personne', infos.auteur + (infos.role ? ' \u00b7 ' + (ROLE_LABELS[infos.role] || infos.role) : '')]); avecInfos = true; }
+    if (infos.total !== null && infos.faites !== null) { lignes.push(['Progression', `${infos.faites} / ${infos.total} tâches${infos.pct !== null ? ' \u00b7 ' + infos.pct + ' %' : ''}`]); avecInfos = true; }
+  }
+  if (!lignes.length) return '';
+  return `<dl class="reprise-identite">${lignes.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join('')}</dl>${avecInfos ? '<p class="reprise-source reprise-aide">Informations d\u2019après le Dashboard ouvert.</p>' : ''}`;
+}
+
+// Aide à reconnaître le bon dossier : ne remplace JAMAIS l'autorisation demandée par le navigateur.
+function htmlPartageReprise(infos) {
+  if (!infos || (!infos.lienPartage && !infos.cheminReseau)) return '';
+  const contenu = infos.lienPartage
+    ? `<code>${escapeHtml(infos.lienPartage)}</code><div class="reprise-partage-actions"><a class="btn btn-outline" id="lienOuvrirPartage" href="${escapeHtml(infos.lienPartage)}" target="_blank" rel="noopener noreferrer">Ouvrir le dossier partagé</a></div>`
+    : `<code>${escapeHtml(infos.cheminReseau)}</code><div class="reprise-partage-actions"><button type="button" class="btn btn-outline" id="btnCopierChemin">Copier le chemin</button></div>`;
+  return `<div class="reprise-partage"><div class="reprise-partage-titre">Dossier partagé</div>${contenu}
+    <p class="reprise-aide">Ce lien sert seulement à reconnaître ou ouvrir le bon dossier : il ne remplace pas l\u2019autorisation demandée par le navigateur.</p></div>`;
+}
+
+async function copierTexteSimple(texte) {
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(texte); return true; } } catch (err) { /* repli ci-dessous */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = texte; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  } catch (err) { return false; }
+}
+
+// ---------- Dernier accès à un dossier sur CET ordinateur (dernière ouverture) ----------
+// Une seule rotation par session du navigateur : ouvrir plusieurs fois le même dossier pendant la même session ne
+// fait pas « avancer » le dernier accès.
+function noterDernierAcces(numero) {
+  try {
+    if (!numero) return;
+    const cleSession = 'suiviTei.session.' + numero;
+    if (sessionStorage.getItem(cleSession)) return;
+    sessionStorage.setItem(cleSession, '1');
+    const maintenant = new Date().toISOString();
+    const ancien = localStorage.getItem('suiviTei.dernierAcces.' + numero);
+    if (ancien) localStorage.setItem('suiviTei.accesPrecedent.' + numero, ancien);
+    localStorage.setItem('suiviTei.dernierAcces.' + numero, maintenant);
+  } catch (err) { /* stockage indisponible : la fiche affichera « inconnu » */ }
+}
+function lireDernierAcces(numero) {
+  try { return { precedent: localStorage.getItem('suiviTei.accesPrecedent.' + numero), session: localStorage.getItem('suiviTei.dernierAcces.' + numero) }; }
+  catch (err) { return { precedent: null, session: null }; }
+}
+
+// 'accordee' | 'aconfirmer' | 'nonautorisee' (jamais d'exception : un dossier introuvable = non autorisé)
+async function etatAutorisationDossier(handle) {
+  if (!handle) return 'nonautorisee';
+  try {
+    const perm = await handle.queryPermission({ mode: 'readwrite' });
+    return perm === 'granted' ? 'accordee' : (perm === 'prompt' ? 'aconfirmer' : 'nonautorisee');
+  } catch (err) { return 'nonautorisee'; }
+}
+
+// Menu ⋯ -> Dossier de travail actuel
+async function showDossierDeTravailActuel() {
+  if (!state.draft) return;
+  const racine = state.dossierDirHandle, parent = state.rootDirHandle;
+  const etat = await etatAutorisationDossier(racine || parent);
+  const libelleEtat = { accordee: '\u2714 Accordée', aconfirmer: '\u26a0 À confirmer', nonautorisee: '\u2716 Non autorisée' }[etat];
+  const aide = etat === 'aconfirmer'
+    ? 'Le navigateur demandera de confirmer l\u2019accès : choisissez « Autoriser à chaque visite » (si proposé), puis « Modifier ».'
+    : (etat === 'nonautorisee'
+      ? (racine || parent ? 'L\u2019accès n\u2019est plus autorisé : ouvrez le Dashboard racine et cliquez « Continuer le travail », ou utilisez « Changer de dossier de travail ».' : 'Aucun dossier de travail n\u2019est choisi : il sera demandé au premier Enregistrer.')
+      : '');
+  const nomDossier = racine ? racine.name : (parent ? `${parent.name} / ${nomRacineStable()} (créé au premier enregistrement)` : 'Aucun dossier de travail');
+  const base = baseDeReference(state.draft);
+  const derniere = base ? `${base.id} \u00b7 ${base.nom || 'auteur inconnu'} \u00b7 ${new Date(base.at).toLocaleString('fr-CA')}` : 'Aucune sauvegarde réseau connue';
+  const acces = lireDernierAcces(state.numero);
+  const dernierAcces = acces.precedent ? new Date(acces.precedent).toLocaleString('fr-CA') : 'Première ouverture sur cet ordinateur';
+  const bt = state.draft.champs && state.draft.champs.bt ? formatBt(state.draft.champs.bt) : '\u2014';
+  const choix = await showChoiceModal('Dossier de travail actuel', `
+    <dl class="fiche-dossier">
+      <div><dt>Nom du dossier de travail</dt><dd>${escapeHtml(nomDossier)}</dd></div>
+      <div><dt>Localisation / B.T.</dt><dd>${escapeHtml(state.numero)} / ${escapeHtml(bt)}</dd></div>
+      <div><dt>Dernier accès sur cet ordinateur</dt><dd>${escapeHtml(dernierAcces)}</dd></div>
+      <div><dt>Dernière sauvegarde réseau connue</dt><dd>${escapeHtml(derniere)}</dd></div>
+      <div><dt>Autorisation</dt><dd id="ficheAutorisation">${escapeHtml(libelleEtat)}</dd></div>
+    </dl>
+    ${aide ? `<p style="font-size:var(--text-sm);color:var(--color-text-muted);line-height:1.5;">${escapeHtml(aide)}</p>` : ''}
+    <button type="button" class="btn btn-outline" id="btnFicheChanger" style="width:100%;">Changer de dossier de travail</button>`, ['btnFicheChanger']);
+  if (choix === 'btnFicheChanger') changerDossierDeTravail();
+}
+
 // ---------- Écran de reprise (bouton « Continuer le travail » du Dashboard racine) ----------
 function afficherEcranReprise(etat, ctx) {
   const c = ctx || {};
@@ -3205,30 +3377,46 @@ function afficherEcranReprise(etat, ctx) {
     overlay.className = 'reprise-overlay';
     document.body.appendChild(overlay);
   }
+  const infos = lireInfosReprise(); // fournies par le Dashboard racine (absentes d'un ancien Dashboard : affichage réduit, sans erreur)
   const titre = `Reprise du dossier ${escapeHtml(c.numero || '')}${c.bt ? ' (' + escapeHtml(formatBt(c.bt)) + ')' : ''}`;
+  const identite = htmlIdentiteReprise(c, infos);
+  const partage = htmlPartageReprise(infos);
+  const consigne = '<p class="reprise-consigne"><strong>Au prochain écran, sélectionnez seulement le dossier racine contenant OUVRIR_DASHBOARD.html. Ne choisissez pas S-001/S-002.</strong></p>';
+  const conseilEdge = '<p class="reprise-aide">Dans Edge, choisissez \u00ab Autoriser à chaque visite \u00bb si cette option est proposée.</p>';
   let html;
   if (etat === 'chargement') {
     html = `<div class="reprise-box"><h2>${titre}</h2><p>Ouverture du dernier dossier enregistré\u2026</p></div>`;
   } else if (etat === 'autoriser') {
-    html = `<div class="reprise-box"><h2>${titre}</h2>
-      <p>${c.dejaConnu
-        ? 'Cet ordinateur connaît déjà ce dossier. Cliquez ci-dessous : le navigateur va demander de confirmer l\u2019accès (choisissez « Modifier »).'
-        : 'Première utilisation sur cet ordinateur : autorisez l\u2019accès au <strong>dossier de travail</strong>, c\u2019est-à-dire le dossier qui contient le fichier <strong>OUVRIR_DASHBOARD.html</strong>.'}</p>
-      <div class="reprise-actions"><button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Autoriser l\u2019accès au dossier de travail</button>
-      <button type="button" class="btn btn-outline" id="btnRepriseFermer">Annuler</button></div>
-      ${c.nomAttendu ? `<p class="reprise-aide">Le dossier s\u2019appelle « ${escapeHtml(c.nomAttendu)} » (avec une date à la fin s\u2019il est plus ancien). Ne choisissez pas un dossier S-001, S-002\u2026</p>` : ''}</div>`;
+    html = c.dejaConnu
+      ? `<div class="reprise-box reprise-box-large"><h2>${titre}</h2>${identite}
+          <p>Cet ordinateur connaît déjà ce dossier. Le navigateur va demander de confirmer l\u2019accès : choisissez \u00ab Autoriser à chaque visite \u00bb (si proposé), puis \u00ab Modifier \u00bb. Aucune sélection de dossier n\u2019est nécessaire.</p>
+          ${partage}
+          <div class="reprise-actions"><button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Autoriser l\u2019accès au dossier pour continuer</button>
+          <button type="button" class="btn btn-outline" id="btnRepriseFermer">Annuler</button></div></div>`
+      : `<div class="reprise-box reprise-box-large"><h2>${titre}</h2>${identite}
+          <p>Première utilisation de ce dossier sur cet ordinateur. <strong>Cette autorisation est demandée une seule fois sur cet ordinateur</strong> (une fois par dossier).</p>
+          ${consigne}${conseilEdge}${partage}
+          <div class="reprise-actions"><button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Autoriser l\u2019accès au dossier pour continuer</button>
+          <button type="button" class="btn btn-outline" id="btnRepriseFermer">Annuler</button></div></div>`;
   } else if (etat === 'nonSupporte') {
     html = `<div class="reprise-box"><h2>${titre}</h2><p>La reprise d\u2019un dossier depuis le réseau nécessite <strong>Chrome ou Edge sur ordinateur</strong>. Sur ce navigateur ou cet appareil, vous pouvez consulter le Dashboard mais pas reprendre le travail.</p>
       <div class="reprise-actions"><button type="button" class="btn btn-outline" id="btnRepriseFermer">Fermer</button></div></div>`;
   } else {
-    html = `<div class="reprise-box"><h2>${titre}</h2><p role="alert">${escapeHtml(c.message || 'La reprise a échoué.')}</p>
-      <div class="reprise-actions">${c.reessayable === false ? '' : '<button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Choisir le dossier de travail</button>'}
+    const reessayable = c.reessayable !== false;
+    html = `<div class="reprise-box reprise-box-large"><h2>${titre}</h2><p role="alert">${escapeHtml(c.message || 'La reprise a échoué.')}</p>
+      ${reessayable ? identite : ''}${reessayable ? consigne : ''}${reessayable ? partage : ''}
+      <div class="reprise-actions">${reessayable ? '<button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Réessayer</button>' : ''}
       <button type="button" class="btn btn-outline" id="btnRepriseFermer">Fermer</button></div></div>`;
   }
   overlay.innerHTML = html;
   overlay.classList.remove('hidden');
   const fermer = $('#btnRepriseFermer', overlay);
   if (fermer) fermer.addEventListener('click', () => { masquerEcranReprise(); history.replaceState({}, '', location.pathname); });
+  const copier = $('#btnCopierChemin', overlay);
+  if (copier && infos) copier.addEventListener('click', async () => {
+    const ok = await copierTexteSimple(infos.cheminReseau);
+    copier.textContent = ok ? 'Chemin copié' : 'Copie impossible : sélectionnez le chemin';
+  });
   return overlay;
 }
 function masquerEcranReprise() { const o = $('#repriseOverlay'); if (o) o.classList.add('hidden'); }
@@ -3362,7 +3550,7 @@ const URL_APP_OFFICIELLE = 'https://carltherock.github.io/gestion_responsable/';
 // généré (balise <meta name="generator"> et pied de page) : un Dashboard est un
 // fichier statique, il ne change jamais après sa génération ; cette marque permet
 // de savoir avec certitude QUELLE version de l'application l'a produit.
-const APP_BUILD = 'reprise-p1-2026-09-19-b';
+const APP_BUILD = 'reprise-ux-2026-09-19-a';
 
 // Adresse de base de l'application, SANS aucun paramètre (jamais mode/numero/bt :
 // ces paramètres déclenchent le vieux flux « Reprendre ce dossier »).
@@ -4669,6 +4857,7 @@ function openWorkspace() {
     try {
       localStorage.setItem('dernierDossierActif', JSON.stringify({ numero: state.numero, mode: d.mode }));
     } catch (err) { /* stockage indisponible, tant pis pour "reprendre le dernier dossier" */ }
+    noterDernierAcces(state.numero); // affichage seulement (menu ⋯, Dossier de travail actuel)
     // Tente de retrouver silencieusement l'emplacement de sauvegarde retenu
     // pour ce dossier (sans bloquer l'affichage ni demander de permission
     // activement) -- si l'autorisation a expiré, on retombe simplement sur le
