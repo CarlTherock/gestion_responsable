@@ -2842,19 +2842,23 @@ function buildDashboardRacineHtml(pointeur) {
   @page { margin:14mm; }
   @media print {
     /* Impression : fond blanc, texte noir, bordures gris clair, sans le bouton ; la progression reste lisible sans couleur. */
-    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#a34e18; --accent-fg:#fff; --warn:#6b4500; }
+    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#f56700; --accent-fg:#fff; --warn:#9b6a08; }
     html, body { background:#fff; color:#000; }
     body { padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #a34e18; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
+    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #f56700; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
     .r-grille > div, .r-compteur, .r-alerte { break-inside:avoid; page-break-inside:avoid; }
     .r-alerte { border:2px solid #000; background:#fff; }
-    .r-barre { border:1px solid #a34e18; background:#fff; }
-    /* Tuiles VPO/VPD/NC : neutres si compteur = 0 ; ambre ou rouge sinon (classe posée par htmlCorpsRacine, aucune donnée nouvelle) */
-    .r-tuile-ambre { border-color: #6b4500 !important; }
-    .r-tuile-ambre dt, .r-tuile-ambre dd { color: #6b4500 !important; }
-    .r-tuile-rouge { border-color: #8c1d18 !important; }
-    .r-tuile-rouge dt, .r-tuile-rouge dd { color: #8c1d18 !important; }
-    .r-barre-remplie { background:#a34e18; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .r-barre { border:1px solid #f56700; background:#fff; }
+    /* Titre de la carte : texte NOIR (jamais orange), l'accent orange reste réservé au graphique */
+    .r-carte-titre { color:#000 !important; }
+    /* Lien secondaire : reste accentué, mais avec la nuance texte (4,5:1), pas la nuance graphique */
+    .r-secondaire a { color:#c25100 !important; }
+    /* Tuiles VPO/VPD/NC : neutres si compteur = 0 ; ambre (attention/suivi) ou rouge sinon (classe posée par htmlCorpsRacine, aucune donnée nouvelle) */
+    .r-tuile-ambre { border-color: #c7880a !important; }
+    .r-tuile-ambre dt, .r-tuile-ambre dd { color: #9b6a08 !important; }
+    .r-tuile-rouge { border-color: #ef6761 !important; }
+    .r-tuile-rouge dt, .r-tuile-rouge dd { color: #e72117 !important; }
+    .r-barre-remplie { background:#f56700; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     .r-action, .r-secondaire { display:none; }
     .r-restantes h2 { break-after:avoid; page-break-after:avoid; }
     .r-restantes li { break-inside:avoid; page-break-inside:avoid; }
@@ -4366,19 +4370,20 @@ function buildDashboardHtml(options) {
   @media print {
     :root {
       --bg: #ffffff; --surface: #f7f7f5; --surface-2: #eeeeeb; --border: #d8d8d2;
-      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #a34e18; --accent-soft: rgba(163,78,24,0.10);
+      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #f56700; --accent-soft: rgba(245,103,0,0.10);
     }
     /* Éléments interactifs : sans effet sur papier, masqués (l'approbation elle-même n'est pas modifiée) */
     .open-app-link, .nav-btn, .decision-actions { display: none !important; }
-    /* Statuts par tâche : mêmes couleurs qu'à l'écran, assombries pour rester lisibles sur fond blanc.
-       Le texte de statut (.task-status-text) et l'icône (.task-dot) restent tous deux présents : la couleur
-       n'est jamais la seule information. */
-    .st-done .task-dot { background: rgba(20,99,58,0.12) !important; color: #14633a !important; }
-    .st-na .task-dot { background: rgba(107,69,0,0.12) !important; color: #6b4500 !important; }
-    .st-nc .task-dot { background: rgba(140,29,24,0.12) !important; color: #8c1d18 !important; }
-    /* Anneaux (ringSvg, non modifiée) : texte noir lisible, arc orange au lieu du dégradé rouge-vert */
+    /* Statuts par tâche : même logique de couleur qu'à l'écran (vert = fait, gris = N/A, rouge = non conforme),
+       assombries seulement ce qu'il faut pour rester lisibles sur papier blanc. Le texte de statut
+       (.task-status-text) et l'icône (.task-dot) restent tous deux présents : la couleur n'est jamais la
+       seule information. N/A est gris neutre, jamais l'ambre (réservée à VPO/VPD dans les autres surfaces). */
+    .st-done .task-dot { background: rgba(44,130,89,0.12) !important; color: #2c8259 !important; }
+    .st-na .task-dot { background: rgba(89,89,89,0.10) !important; color: #595959 !important; }
+    .st-nc .task-dot { background: rgba(231,33,23,0.10) !important; color: #e72117 !important; }
+    /* Anneaux (ringSvg, non modifiée) : texte noir lisible, arc orange vif au lieu du dégradé rouge-vert */
     .ring-svg text { fill: #000 !important; }
-    .ring-svg circle:not(:first-child) { stroke: #a34e18 !important; }
+    .ring-svg circle:not(:first-child) { stroke: #f56700 !important; }
     /* Sauts de page : une carte ou une tâche ne doit pas être coupée */
     .task-row, .nc-card, .stat-card, .hero-ring, .ring-card { break-inside: avoid; page-break-inside: avoid; }
   }
