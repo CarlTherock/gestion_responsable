@@ -1023,7 +1023,25 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   /* Anneaux de progression : le pourcentage reste lu en noir, la piste en gris clair */
   .ring-svg text { fill: #000 !important; }
   .ring-svg circle:first-child { stroke: #cccccc !important; }
-  .ring-svg circle:not(:first-child) { stroke: #000000 !important; } /* arc de progression noir : visible sur une imprimante noir et blanc */
+  .ring-svg circle:not(:first-child) { stroke: #a34e18 !important; } /* arc de progression orange (lisible aussi en dégradé de gris) */
+
+  /* ---------- États fonctionnels à l'impression : la couleur ne porte jamais seule l'information ---------- */
+  /* Tâche terminée : coche + bordure verte (texte déjà noir, réutilise --color-success-text défini plus haut) */
+  .checklist-item-wrap.checked { border-color: var(--color-success-text) !important; }
+  .checklist-item-wrap.checked .ci-label::before { content: "\2713 "; color: var(--color-success-text); font-weight: 700; }
+  /* N/A : bordure ambre + libellé texte */
+  .checklist-item-wrap.na { border-color: var(--color-warning-text) !important; }
+  .checklist-item-wrap.na .ci-label::after { content: " (N/A)"; color: var(--color-warning-text); font-weight: 700; }
+  /* Non-conforme : bordure rouge foncé + libellé texte */
+  .checklist-item-wrap.nc { border-color: var(--color-danger-text) !important; }
+  .checklist-item-wrap.nc .ci-label::after { content: " (Non conforme)"; color: var(--color-danger-text); font-weight: 700; }
+  /* Non-conformités (onglet dédié / résumé) : même rouge, sans grand aplat */
+  .nc-summary-item { border-color: var(--color-danger-text) !important; }
+  /* VPO/VPD en attente : couleurs explicites (les jetons de teinte ne sont pas redéfinis à l'impression) */
+  .vpo-impact-block { background: #fdecea !important; color: var(--color-danger-text) !important; border: 1px solid var(--color-danger-text) !important; }
+  .vpo-impact-soft { background: #fdf3dc !important; color: var(--color-warning-text) !important; border: 1px solid var(--color-warning-text) !important; }
+  /* Titres de section : accent orange discret, sans aplat (texte, pas de fond) */
+  .panel-title { color: #a34e18; }
 }
 
 /* ---------- Actions et sélecteur de gravité sur les cartes de non-conformité ---------- */

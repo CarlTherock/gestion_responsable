@@ -2773,9 +2773,9 @@ function htmlCorpsRacine(p, appUrl) {
   H.push('<div><dt>Dernière personne</dt><dd>' + e(sv.auteur || 'inconnu') + (sv.role ? ' \u00b7 ' + e(roles[sv.role] || sv.role) : '') + '</dd></div>');
   H.push('<div><dt>Révision</dt><dd>' + e((sv.revision && sv.revision.id) || '') + (sv.revision && sv.revision.nom ? ' \u2014 ' + e(sv.revision.nom) : '') + '</dd></div>');
   H.push('<div><dt>Statut</dt><dd>' + e(st.libelle || '') + '</dd></div>');
-  H.push('<div><dt>VPO ouvertes</dt><dd>' + e(ou.vpo || 0) + '</dd></div>');
-  H.push('<div><dt>VPD ouvertes</dt><dd>' + e(ou.vpd || 0) + '</dd></div>');
-  H.push('<div><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl></section>');
+  H.push('<div class="' + ((ou.vpo || 0) > 0 ? 'r-tuile-ambre' : '') + '"><dt>VPO ouvertes</dt><dd>' + e(ou.vpo || 0) + '</dd></div>');
+  H.push('<div class="' + ((ou.vpd || 0) > 0 ? 'r-tuile-ambre' : '') + '"><dt>VPD ouvertes</dt><dd>' + e(ou.vpd || 0) + '</dd></div>');
+  H.push('<div class="' + ((ou.nc || 0) > 0 ? 'r-tuile-rouge' : '') + '"><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl></section>');
   H.push('<section class="r-restantes"><h2>Tâches restantes (' + totalRestant + ')</h2>');
   if (!totalRestant) H.push('<p>Aucune tâche restante.</p>');
   else {
@@ -2842,14 +2842,19 @@ function buildDashboardRacineHtml(pointeur) {
   @page { margin:14mm; }
   @media print {
     /* Impression : fond blanc, texte noir, bordures gris clair, sans le bouton ; la progression reste lisible sans couleur. */
-    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#000; --accent-fg:#fff; --warn:#000; }
+    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#a34e18; --accent-fg:#fff; --warn:#6b4500; }
     html, body { background:#fff; color:#000; }
     body { padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #000; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
+    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #a34e18; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
     .r-grille > div, .r-compteur, .r-alerte { break-inside:avoid; page-break-inside:avoid; }
     .r-alerte { border:2px solid #000; background:#fff; }
-    .r-barre { border:1px solid #000; background:#fff; }
-    .r-barre-remplie { background:#000; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .r-barre { border:1px solid #a34e18; background:#fff; }
+    /* Tuiles VPO/VPD/NC : neutres si compteur = 0 ; ambre ou rouge sinon (classe posée par htmlCorpsRacine, aucune donnée nouvelle) */
+    .r-tuile-ambre { border-color: #6b4500 !important; }
+    .r-tuile-ambre dt, .r-tuile-ambre dd { color: #6b4500 !important; }
+    .r-tuile-rouge { border-color: #8c1d18 !important; }
+    .r-tuile-rouge dt, .r-tuile-rouge dd { color: #8c1d18 !important; }
+    .r-barre-remplie { background:#a34e18; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     .r-action, .r-secondaire { display:none; }
     .r-restantes h2 { break-after:avoid; page-break-after:avoid; }
     .r-restantes li { break-inside:avoid; page-break-inside:avoid; }
@@ -4361,8 +4366,21 @@ function buildDashboardHtml(options) {
   @media print {
     :root {
       --bg: #ffffff; --surface: #f7f7f5; --surface-2: #eeeeeb; --border: #d8d8d2;
-      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #b85a1f; --accent-soft: rgba(184,90,31,0.10);
+      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #a34e18; --accent-soft: rgba(163,78,24,0.10);
     }
+    /* Éléments interactifs : sans effet sur papier, masqués (l'approbation elle-même n'est pas modifiée) */
+    .open-app-link, .nav-btn, .decision-actions { display: none !important; }
+    /* Statuts par tâche : mêmes couleurs qu'à l'écran, assombries pour rester lisibles sur fond blanc.
+       Le texte de statut (.task-status-text) et l'icône (.task-dot) restent tous deux présents : la couleur
+       n'est jamais la seule information. */
+    .st-done .task-dot { background: rgba(20,99,58,0.12) !important; color: #14633a !important; }
+    .st-na .task-dot { background: rgba(107,69,0,0.12) !important; color: #6b4500 !important; }
+    .st-nc .task-dot { background: rgba(140,29,24,0.12) !important; color: #8c1d18 !important; }
+    /* Anneaux (ringSvg, non modifiée) : texte noir lisible, arc orange au lieu du dégradé rouge-vert */
+    .ring-svg text { fill: #000 !important; }
+    .ring-svg circle:not(:first-child) { stroke: #a34e18 !important; }
+    /* Sauts de page : une carte ou une tâche ne doit pas être coupée */
+    .task-row, .nc-card, .stat-card, .hero-ring, .ring-card { break-inside: avoid; page-break-inside: avoid; }
   }
   * { box-sizing: border-box; }
   body {
