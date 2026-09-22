@@ -135,6 +135,13 @@
   --color-text-inverse: #f8f8f5;
   --color-border-strong: #80858b;
   --color-focus: #b85a1f;
+  /* Bandeau de copyright (.legal-footer) : sans cette surcharge, il gardait les
+     couleurs sombres de :root même en thème clair. Vérifié ≥ 4,5:1 sur les
+     fonds clairs existants (#eef0ec, #f8f8f5, #ffffff). */
+  --footer-bg: rgba(255,255,255,0.85);
+  --footer-text: rgba(26,32,39,0.62);
+  --footer-line: rgba(26,32,39,0.12);
+  --footer-strong: rgba(26,32,39,0.85);
   /* Thème clair : accents foncés (lisibles en texte, ≥ 4,5:1) et texte blanc sur les boutons pleins */
   --color-primary: #a34e18; --color-primary-hover: #8a4113; --color-primary-active: #733611;
   --color-install: #a34e18; --color-install-hover: #8a4113; --color-install-active: #733611;
@@ -223,6 +230,14 @@
   color: var(--color-text-muted); background: var(--color-surface-2);
 }
 .icon-btn:hover { color: var(--color-text); border-color: var(--mode-accent); }
+/* #themeToggle : icône reflétant l'état actif. Le JS ne pose que data-theme
+   sur <html> ; c'est ce CSS seul qui choisit laquelle des deux icônes montrer.
+   Lune visible par défaut (avant même que le JS ait posé data-theme="dark",
+   cohérent avec le sombre chargé en premier) et en thème sombre. */
+#themeToggle svg { display: block; }
+#themeToggle .icon-theme-light { display: none; }
+[data-theme='light'] #themeToggle .icon-theme-dark { display: none; }
+[data-theme='light'] #themeToggle .icon-theme-light { display: block; }
 .topbar-menu-btn { display: none; }
 .topbar-menu-btn .icon-inline svg { width: 18px; height: 18px; }
 
