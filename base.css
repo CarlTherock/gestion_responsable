@@ -31,7 +31,8 @@ p, li, figcaption { text-wrap: pretty; }
 
 ::selection { background: color-mix(in oklab, var(--color-primary) 30%, transparent); color: var(--color-text); }
 
-:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; border-radius: var(--radius-sm); }
+/* Focus clavier : anneau orange épais + liseré sombre qui le sépare de l'élément (visible même sur un bouton orange) */
+:focus-visible { outline: 3px solid var(--color-focus, var(--color-primary)); outline-offset: 2px; box-shadow: 0 0 0 2px var(--color-bg); border-radius: var(--radius-sm); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -2756,8 +2756,11 @@ function htmlCorpsRacine(p, appUrl) {
   var H = [];
   H.push('<header class="r-tete"><h1>' + e(dos.localisation) + (bt ? ' \u2014 ' + e(bt) : '') + '</h1>');
   H.push('<div class="r-sous">' + (dos.tag ? 'Équipement / tag : <strong>' + e(dos.tag) + '</strong> \u00b7 ' : '') + (dos.mode === 'installation' ? 'Installation' : 'Démantèlement') + ' <span class="r-pastille">' + e(st.libelle || '') + '</span></div></header>');
-  H.push('<section class="r-progression" aria-label="Progression"><div class="r-barre"><div class="r-barre-remplie" style="width:' + pct + '%"></div></div>');
-  H.push('<div class="r-progression-texte">' + e(pr.faites) + ' / ' + e(pr.total) + ' tâches \u2014 ' + pct + ' %</div></section>');
+  var faites = Number(pr.faites) || 0;
+  H.push('<section class="r-carte" aria-labelledby="r-carte-titre"><h2 class="r-carte-titre" id="r-carte-titre">Reprendre le dossier actif</h2>');
+  H.push('<div class="r-progression" role="group" aria-label="Progression"><div class="r-barre"><div class="r-barre-remplie" style="width:' + pct + '%"></div></div>');
+  H.push('<div class="r-progression-texte">' + e(pr.faites) + ' / ' + e(pr.total) + ' tâches \u2014 ' + pct + ' %</div></div>');
+  H.push('<div class="r-compteurs"><div class="r-compteur"><span class="r-compteur-n">' + faites + '</span> ' + (faites > 1 ? 'terminées' : 'terminée') + '</div><div class="r-compteur"><span class="r-compteur-n">' + totalRestant + '</span> ' + (totalRestant > 1 ? 'restantes' : 'restante') + '</div></div>');
   if (sv.partielle) {
     var fm = sv.fichiersManquants || {};
     H.push('<div class="r-alerte" role="alert"><strong>Sauvegarde partielle.</strong> ' + e(fm.total || 0) + ' fichier(s) manquent (' + e((fm.liste || []).slice(0, 5).join(', ')) + ((fm.liste || []).length > 5 || (fm.total || 0) > 5 ? '\u2026' : '') + '). Ce dossier n\u2019est pas présenté comme prêt à fermer tant qu\u2019il n\u2019a pas été réenregistré complètement.</div>');
@@ -2772,7 +2775,7 @@ function htmlCorpsRacine(p, appUrl) {
   H.push('<div><dt>Statut</dt><dd>' + e(st.libelle || '') + '</dd></div>');
   H.push('<div><dt>VPO ouvertes</dt><dd>' + e(ou.vpo || 0) + '</dd></div>');
   H.push('<div><dt>VPD ouvertes</dt><dd>' + e(ou.vpd || 0) + '</dd></div>');
-  H.push('<div><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl>');
+  H.push('<div><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl></section>');
   H.push('<section class="r-restantes"><h2>Tâches restantes (' + totalRestant + ')</h2>');
   if (!totalRestant) H.push('<p>Aucune tâche restante.</p>');
   else {
@@ -2797,28 +2800,38 @@ function buildDashboardRacineHtml(pointeur) {
 <html lang="fr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="Suivi TEI ${APP_BUILD}">
+<meta name="color-scheme" content="dark">
 <title>Dossier ${escapeHtml(titre)}</title>
 <style>
-  :root { --bg:#10151b; --surface:#171d25; --border:#333e4b; --text:#e7ebef; --muted:#99a6b5; --accent:#ff8f3f; --accent-fg:#10151b; }
-  @media (prefers-color-scheme: light) { :root { --bg:#f7f7f5; --surface:#ffffff; --border:#d9d9d4; --text:#1c1c1a; --muted:#5c5c56; --accent:#b85a1f; --accent-fg:#ffffff; } }
+  /* Thème SOMBRE fixe : ne dépend pas du réglage clair/sombre de Windows ou du navigateur. */
+  :root { color-scheme: dark; --bg:#121212; --surface:#1d1d1d; --surface-2:#252525; --border:#3a3a3a; --border-strong:#737373;
+          --text:#f2f2f2; --muted:#b8b8b8; --accent:#ff8f3f; --accent-fg:#121212; --warn:#f5b83d;
+          --tint-accent-25:rgba(255,143,63,0.25); --tint-warn-10:rgba(245,184,61,0.1); }
   * { box-sizing: border-box; }
-  body { margin:0; padding:32px 20px 56px; background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  html { background:var(--bg); }
+  body { margin:0; padding:32px 20px 56px; background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; line-height:1.5; }
   .wrap { max-width:860px; margin:0 auto; }
-  .r-tete h1 { margin:0 0 6px; font-size:26px; }
+  .r-tete h1 { margin:0 0 6px; font-size:26px; letter-spacing:-0.01em; }
   .r-sous { color:var(--muted); font-size:14px; }
-  .r-pastille { display:inline-block; margin-left:8px; padding:2px 12px; border:1px solid var(--border); border-radius:999px; font-size:12px; font-weight:700; color:var(--text); }
-  .r-progression { margin:22px 0 8px; }
-  .r-barre { height:12px; background:var(--surface); border:1px solid var(--border); border-radius:999px; overflow:hidden; }
+  .r-pastille { display:inline-block; margin-left:8px; padding:2px 12px; border:1px solid var(--border-strong); border-radius:999px; font-size:12px; font-weight:700; color:var(--text); }
+  .r-carte { margin:24px 0; padding:24px; background:var(--surface); border:1px solid var(--border); border-top:4px solid var(--accent); border-radius:14px; }
+  .r-carte-titre { margin:0 0 16px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); }
+  .r-progression { margin:0; }
+  .r-barre { height:14px; background:var(--surface-2); border:1px solid var(--border-strong); border-radius:999px; overflow:hidden; }
   .r-barre-remplie { height:100%; background:var(--accent); }
-  .r-progression-texte { margin-top:6px; font-size:14px; color:var(--muted); }
-  .r-action { margin:22px 0; }
-  .r-bouton { display:inline-block; padding:16px 34px; background:var(--accent); color:var(--accent-fg); border-radius:10px; font-size:18px; font-weight:800; text-decoration:none; }
-  .r-bouton:hover { filter:brightness(1.08); }
-  .r-bouton:focus-visible, a:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+  .r-progression-texte { margin-top:8px; font-size:16px; font-weight:700; color:var(--text); }
+  .r-compteurs { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0 4px; }
+  .r-compteur { display:flex; align-items:baseline; gap:8px; padding:8px 16px; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; font-size:14px; color:var(--muted); }
+  .r-compteur-n { font-size:22px; font-weight:800; color:var(--text); }
+  .r-action { margin:22px 0 6px; }
+  .r-bouton { display:inline-block; min-height:56px; padding:16px 40px; background:var(--accent); color:var(--accent-fg); border-radius:12px; font-size:19px; font-weight:800; text-decoration:none; box-shadow:0 6px 18px var(--tint-accent-25); }
+  .r-bouton:hover { filter:brightness(1.1); }
+  .r-bouton:active { transform:translateY(1px); }
+  .r-bouton:focus-visible, a:focus-visible { outline:3px solid var(--text); outline-offset:3px; }
   .r-note { font-size:13px; color:var(--muted); line-height:1.5; margin:10px 0 0; }
-  .r-alerte { margin:18px 0 0; padding:12px 16px; border:2px solid #d97706; border-radius:10px; font-size:14px; line-height:1.5; }
-  .r-grille { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:20px 0; }
-  .r-grille > div { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; }
+  .r-alerte { margin:18px 0 0; padding:12px 16px; border:2px solid var(--warn); background:var(--tint-warn-10); border-radius:10px; font-size:14px; line-height:1.5; }
+  .r-grille { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:20px 0 0; }
+  .r-grille > div { background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:10px 14px; }
   .r-grille dt { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
   .r-grille dd { margin:2px 0 0; font-size:15px; font-weight:600; word-break:break-word; }
   .r-restantes h2 { font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:26px 0 8px; }
@@ -2826,7 +2839,22 @@ function buildDashboardRacineHtml(pointeur) {
   .r-suite { font-size:13px; color:var(--muted); }
   .r-secondaire { margin:26px 0 4px; font-size:14px; }
   .r-secondaire a { color:var(--accent); }
-  @media print { .r-action { display:none; } }
+  @page { margin:14mm; }
+  @media print {
+    /* Impression : fond blanc, texte noir, bordures gris clair, sans le bouton ; la progression reste lisible sans couleur. */
+    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#000; --accent-fg:#fff; --warn:#000; }
+    html, body { background:#fff; color:#000; }
+    body { padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #000; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
+    .r-grille > div, .r-compteur, .r-alerte { break-inside:avoid; page-break-inside:avoid; }
+    .r-alerte { border:2px solid #000; background:#fff; }
+    .r-barre { border:1px solid #000; background:#fff; }
+    .r-barre-remplie { background:#000; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .r-action, .r-secondaire { display:none; }
+    .r-restantes h2 { break-after:avoid; page-break-after:avoid; }
+    .r-restantes li { break-inside:avoid; page-break-inside:avoid; }
+    a { color:#000; text-decoration:none; }
+  }
 </style></head><body>
 <div class="wrap" id="racine">
 ${htmlCorpsRacine(pointeur, appUrl)}
