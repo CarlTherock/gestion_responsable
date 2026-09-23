@@ -995,7 +995,12 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
     --color-divider: #cccccc; --color-border: #bdbdbd; --color-border-strong: #777777;
     --color-text: #000000; --color-text-muted: #333333; --color-text-faint: #555555; --color-text-inverse: #ffffff;
     --color-primary: #000000; --color-focus: #000000;
-    --color-danger-text: #8c1d18; --color-warning-text: #6b4500; --color-success-text: #14633a; --color-info-text: #0a4f8a;
+    --color-danger-text: #e72117; --color-danger-border: #ef6761;
+    --color-warning-text: #9b6a08; --color-warning-border: #c7880a;
+    --color-success-text: #2c8259; --color-success-border: #37a570;
+    --color-neutral-text: #595959; --color-neutral-border: #8c8c8c;
+    --color-accent-text: #c25100; --color-accent-graphic: #f56700;
+    --color-info-text: #0a4f8a;
     --shadow-sm: none; --shadow-md: none; --shadow-lg: none;
   }
   #app { --mode-accent: #000000; --mode-accent-hover: #000000; --mode-accent-active: #000000; --mode-accent-highlight: #f2f2f2; }
@@ -1023,7 +1028,38 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   /* Anneaux de progression : le pourcentage reste lu en noir, la piste en gris clair */
   .ring-svg text { fill: #000 !important; }
   .ring-svg circle:first-child { stroke: #cccccc !important; }
-  .ring-svg circle:not(:first-child) { stroke: #000000 !important; } /* arc de progression noir : visible sur une imprimante noir et blanc */
+  .ring-svg circle:not(:first-child) { stroke: var(--color-accent-graphic) !important; } /* arc de progression orange, proche de la teinte écran */
+
+  /* ---------- États fonctionnels à l'impression : bande verticale + badge plein + fond très pâle.
+     Le texte de la tâche reste noir et n'est JAMAIS barré à l'impression, même si .na/.nc sont
+     barrés à l'écran (règles lignes 474 et 663, non modifiées) : on annule explicitement ici. ---------- */
+  .checklist-item-wrap.na .ci-label,
+  .checklist-item-wrap.nc .ci-label { text-decoration: none !important; opacity: 1 !important; color: #000 !important; }
+  .checklist-item-wrap { border-left: 5px solid var(--color-border) !important; }
+  .checklist-item-wrap.checked { border-left-color: var(--color-success-border) !important; background: #eaf6ef !important; }
+  .checklist-item-wrap.na { border-left-color: var(--color-neutral-border) !important; background: #f2f2f2 !important; }
+  .checklist-item-wrap.nc { border-left-color: var(--color-danger-border) !important; background: #fdecea !important; }
+  .checklist-item-wrap .ci-label::before,
+  .checklist-item-wrap .ci-label::after { display: inline-block; color: #fff !important; font-weight: 700; font-size: 11px; border-radius: 5px; padding: 4px 9px; margin-left: 8px; }
+  .checklist-item-wrap.checked .ci-label::after { content: "\2713  FAIT"; background: #2c8259 !important; }
+  .checklist-item-wrap.na .ci-label::after { content: "N/A"; background: #595959 !important; }
+  /* Non-conforme : un seul badge. S'il existe un numéro déjà affiché (.nc-xref, non modifié par
+     renderChecklist), on le transforme en badge complet et on masque le générique pour ne jamais
+     dupliquer le numéro ; sinon, le badge générique affiche « NON CONFORME ». */
+  .checklist-item-wrap.nc:not(:has(.nc-xref)) .ci-label::after { content: "NON CONFORME"; background: #e72117 !important; }
+  .checklist-item-wrap.nc:has(.nc-xref) .ci-label::after { content: none; }
+  .checklist-item-wrap.nc .nc-xref {
+    display: inline-block; font-family: inherit; color: #fff !important; font-weight: 700; font-size: 11px;
+    border-radius: 5px; padding: 4px 9px; margin-left: 8px; background: #e72117 !important;
+  }
+  .checklist-item-wrap.nc .nc-xref::after { content: " · NON CONFORME"; }
+  /* Non-conformités (onglet dédié / résumé) : même logique bande + fond pâle */
+  .nc-summary-item { border-left: 5px solid var(--color-danger-border) !important; background: #fdecea !important; }
+  /* VPO/VPD en attente : ambre (attention/suivi), couleurs explicites */
+  .vpo-impact-block { background: #fdecea !important; color: var(--color-danger-text) !important; border: 1px solid var(--color-danger-border) !important; }
+  .vpo-impact-soft { background: #fdf3dc !important; color: var(--color-warning-text) !important; border: 1px solid var(--color-warning-border) !important; }
+  /* Titres de section : texte NOIR (jamais orange), filet orange fin en accent seulement */
+  .panel-title { color: #000; border-bottom: 2px solid var(--color-accent-graphic); padding-bottom: 4px; display: inline-block; }
 }
 
 /* ---------- Actions et sélecteur de gravité sur les cartes de non-conformité ---------- */

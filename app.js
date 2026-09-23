@@ -2773,9 +2773,9 @@ function htmlCorpsRacine(p, appUrl) {
   H.push('<div><dt>Dernière personne</dt><dd>' + e(sv.auteur || 'inconnu') + (sv.role ? ' \u00b7 ' + e(roles[sv.role] || sv.role) : '') + '</dd></div>');
   H.push('<div><dt>Révision</dt><dd>' + e((sv.revision && sv.revision.id) || '') + (sv.revision && sv.revision.nom ? ' \u2014 ' + e(sv.revision.nom) : '') + '</dd></div>');
   H.push('<div><dt>Statut</dt><dd>' + e(st.libelle || '') + '</dd></div>');
-  H.push('<div><dt>VPO ouvertes</dt><dd>' + e(ou.vpo || 0) + '</dd></div>');
-  H.push('<div><dt>VPD ouvertes</dt><dd>' + e(ou.vpd || 0) + '</dd></div>');
-  H.push('<div><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl></section>');
+  H.push('<div class="' + ((ou.vpo || 0) > 0 ? 'r-tuile-ambre' : '') + '"><dt>VPO ouvertes</dt><dd>' + e(ou.vpo || 0) + '</dd></div>');
+  H.push('<div class="' + ((ou.vpd || 0) > 0 ? 'r-tuile-ambre' : '') + '"><dt>VPD ouvertes</dt><dd>' + e(ou.vpd || 0) + '</dd></div>');
+  H.push('<div class="' + ((ou.nc || 0) > 0 ? 'r-tuile-rouge' : '') + '"><dt>Non-conformités ouvertes</dt><dd>' + e(ou.nc || 0) + '</dd></div></dl></section>');
   H.push('<section class="r-restantes"><h2>Tâches restantes (' + totalRestant + ')</h2>');
   if (!totalRestant) H.push('<p>Aucune tâche restante.</p>');
   else {
@@ -2842,14 +2842,23 @@ function buildDashboardRacineHtml(pointeur) {
   @page { margin:14mm; }
   @media print {
     /* Impression : fond blanc, texte noir, bordures gris clair, sans le bouton ; la progression reste lisible sans couleur. */
-    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#000; --accent-fg:#fff; --warn:#000; }
+    :root { color-scheme:light; --bg:#fff; --surface:#fff; --surface-2:#fff; --border:#bdbdbd; --border-strong:#000; --text:#000; --muted:#333; --accent:#f56700; --accent-fg:#fff; --warn:#9b6a08; }
     html, body { background:#fff; color:#000; }
     body { padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #000; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
+    .r-carte { border:1px solid #bdbdbd; border-top:3px solid #f56700; box-shadow:none; break-inside:avoid; page-break-inside:avoid; }
     .r-grille > div, .r-compteur, .r-alerte { break-inside:avoid; page-break-inside:avoid; }
     .r-alerte { border:2px solid #000; background:#fff; }
-    .r-barre { border:1px solid #000; background:#fff; }
-    .r-barre-remplie { background:#000; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .r-barre { border:1px solid #f56700; background:#fff; }
+    /* Titre de la carte : texte NOIR (jamais orange), l'accent orange reste réservé au graphique */
+    .r-carte-titre { color:#000 !important; }
+    /* Lien secondaire : reste accentué, mais avec la nuance texte (4,5:1), pas la nuance graphique */
+    .r-secondaire a { color:#c25100 !important; }
+    /* Tuiles VPO/VPD/NC : neutres si compteur = 0 ; ambre (attention/suivi) ou rouge sinon (classe posée par htmlCorpsRacine, aucune donnée nouvelle) */
+    .r-tuile-ambre { border-color: #c7880a !important; }
+    .r-tuile-ambre dt, .r-tuile-ambre dd { color: #9b6a08 !important; }
+    .r-tuile-rouge { border-color: #ef6761 !important; }
+    .r-tuile-rouge dt, .r-tuile-rouge dd { color: #e72117 !important; }
+    .r-barre-remplie { background:#f56700; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     .r-action, .r-secondaire { display:none; }
     .r-restantes h2 { break-after:avoid; page-break-after:avoid; }
     .r-restantes li { break-inside:avoid; page-break-inside:avoid; }
@@ -4361,8 +4370,30 @@ function buildDashboardHtml(options) {
   @media print {
     :root {
       --bg: #ffffff; --surface: #f7f7f5; --surface-2: #eeeeeb; --border: #d8d8d2;
-      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #b85a1f; --accent-soft: rgba(184,90,31,0.10);
+      --text: #1c1c1a; --text-muted: #5c5c56; --accent: #f56700; --accent-soft: rgba(245,103,0,0.10);
     }
+    /* Éléments interactifs : sans effet sur papier, masqués (l'approbation elle-même n'est pas modifiée) */
+    .open-app-link, .nav-btn, .decision-actions { display: none !important; }
+    /* Statuts par tâche : bande verticale + fond très pâle + badge plein (même principe que la PWA).
+       .task-status-text affiche déjà le libellé (Fait / N/A / Non conforme) : on le transforme en badge
+       coloré au lieu d'une étiquette grise. Le texte de la tâche reste noir, jamais barré. */
+    .task-row { border-left: 5px solid #d8d8d2 !important; }
+    .st-done { border-left-color: #37a570 !important; background: #eaf6ef !important; }
+    .st-na { border-left-color: #8c8c8c !important; background: #f2f2f2 !important; }
+    .st-nc { border-left-color: #ef6761 !important; background: #fdecea !important; }
+    .st-done .task-dot { background: #2c8259 !important; color: #fff !important; }
+    .st-na .task-dot { background: #595959 !important; color: #fff !important; }
+    .st-nc .task-dot { background: #e72117 !important; color: #fff !important; }
+    .task-status-text { border-radius: 5px !important; padding: 4px 9px !important; font-weight: 700 !important; color: #fff !important; border: none !important; }
+    .st-done .task-status-text { background: #2c8259 !important; }
+    .st-na .task-status-text { background: #595959 !important; }
+    .st-nc .task-status-text { background: #e72117 !important; }
+    .task-row .task-label, .task-row .task-reason { text-decoration: none !important; color: #000 !important; }
+    /* Anneaux (ringSvg, non modifiée) : texte noir lisible, arc orange vif au lieu du dégradé rouge-vert */
+    .ring-svg text { fill: #000 !important; }
+    .ring-svg circle:not(:first-child) { stroke: #f56700 !important; }
+    /* Sauts de page : une carte ou une tâche ne doit pas être coupée */
+    .task-row, .nc-card, .stat-card, .hero-ring, .ring-card { break-inside: avoid; page-break-inside: avoid; }
   }
   * { box-sizing: border-box; }
   body {
