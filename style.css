@@ -1030,18 +1030,31 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
   .ring-svg circle:first-child { stroke: #cccccc !important; }
   .ring-svg circle:not(:first-child) { stroke: var(--color-accent-graphic) !important; } /* arc de progression orange, proche de la teinte écran */
 
-  /* ---------- États fonctionnels à l'impression : la couleur ne porte jamais seule l'information ---------- */
-  /* Tâche terminée : coche + bordure verte (texte déjà noir, réutilise --color-success-text défini plus haut) */
-  .checklist-item-wrap.checked { border-color: var(--color-success-border) !important; }
-  .checklist-item-wrap.checked .ci-label::before { content: "\2713 "; color: var(--color-success-text); font-weight: 700; }
-  /* N/A : gris neutre (jamais l'ambre, réservée à VPO/VPD) + libellé texte */
-  .checklist-item-wrap.na { border-color: var(--color-neutral-border) !important; }
-  .checklist-item-wrap.na .ci-label::after { content: " (N/A)"; color: var(--color-neutral-text); font-weight: 700; }
-  /* Non-conforme : bordure rouge + libellé texte */
-  .checklist-item-wrap.nc { border-color: var(--color-danger-border) !important; }
-  .checklist-item-wrap.nc .ci-label::after { content: " (Non conforme)"; color: var(--color-danger-text); font-weight: 700; }
-  /* Non-conformités (onglet dédié / résumé) : même rouge, sans grand aplat */
-  .nc-summary-item { border-color: var(--color-danger-border) !important; }
+  /* ---------- États fonctionnels à l'impression : bande verticale + badge plein + fond très pâle.
+     Le texte de la tâche reste noir et n'est JAMAIS barré à l'impression, même si .na/.nc sont
+     barrés à l'écran (règles lignes 474 et 663, non modifiées) : on annule explicitement ici. ---------- */
+  .checklist-item-wrap.na .ci-label,
+  .checklist-item-wrap.nc .ci-label { text-decoration: none !important; opacity: 1 !important; color: #000 !important; }
+  .checklist-item-wrap { border-left: 5px solid var(--color-border) !important; }
+  .checklist-item-wrap.checked { border-left-color: var(--color-success-border) !important; background: #eaf6ef !important; }
+  .checklist-item-wrap.na { border-left-color: var(--color-neutral-border) !important; background: #f2f2f2 !important; }
+  .checklist-item-wrap.nc { border-left-color: var(--color-danger-border) !important; background: #fdecea !important; }
+  .checklist-item-wrap .ci-label::before,
+  .checklist-item-wrap .ci-label::after { display: inline-block; color: #fff !important; font-weight: 700; font-size: 11px; border-radius: 5px; padding: 4px 9px; margin-left: 8px; }
+  .checklist-item-wrap.checked .ci-label::after { content: "\2713  FAIT"; background: #2c8259 !important; }
+  .checklist-item-wrap.na .ci-label::after { content: "N/A"; background: #595959 !important; }
+  /* Non-conforme : un seul badge. S'il existe un numéro déjà affiché (.nc-xref, non modifié par
+     renderChecklist), on le transforme en badge complet et on masque le générique pour ne jamais
+     dupliquer le numéro ; sinon, le badge générique affiche « NON CONFORME ». */
+  .checklist-item-wrap.nc:not(:has(.nc-xref)) .ci-label::after { content: "NON CONFORME"; background: #e72117 !important; }
+  .checklist-item-wrap.nc:has(.nc-xref) .ci-label::after { content: none; }
+  .checklist-item-wrap.nc .nc-xref {
+    display: inline-block; font-family: inherit; color: #fff !important; font-weight: 700; font-size: 11px;
+    border-radius: 5px; padding: 4px 9px; margin-left: 8px; background: #e72117 !important;
+  }
+  .checklist-item-wrap.nc .nc-xref::after { content: " · NON CONFORME"; }
+  /* Non-conformités (onglet dédié / résumé) : même logique bande + fond pâle */
+  .nc-summary-item { border-left: 5px solid var(--color-danger-border) !important; background: #fdecea !important; }
   /* VPO/VPD en attente : ambre (attention/suivi), couleurs explicites */
   .vpo-impact-block { background: #fdecea !important; color: var(--color-danger-text) !important; border: 1px solid var(--color-danger-border) !important; }
   .vpo-impact-soft { background: #fdf3dc !important; color: var(--color-warning-text) !important; border: 1px solid var(--color-warning-border) !important; }

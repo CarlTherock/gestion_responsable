@@ -4374,13 +4374,21 @@ function buildDashboardHtml(options) {
     }
     /* Éléments interactifs : sans effet sur papier, masqués (l'approbation elle-même n'est pas modifiée) */
     .open-app-link, .nav-btn, .decision-actions { display: none !important; }
-    /* Statuts par tâche : même logique de couleur qu'à l'écran (vert = fait, gris = N/A, rouge = non conforme),
-       assombries seulement ce qu'il faut pour rester lisibles sur papier blanc. Le texte de statut
-       (.task-status-text) et l'icône (.task-dot) restent tous deux présents : la couleur n'est jamais la
-       seule information. N/A est gris neutre, jamais l'ambre (réservée à VPO/VPD dans les autres surfaces). */
-    .st-done .task-dot { background: rgba(44,130,89,0.12) !important; color: #2c8259 !important; }
-    .st-na .task-dot { background: rgba(89,89,89,0.10) !important; color: #595959 !important; }
-    .st-nc .task-dot { background: rgba(231,33,23,0.10) !important; color: #e72117 !important; }
+    /* Statuts par tâche : bande verticale + fond très pâle + badge plein (même principe que la PWA).
+       .task-status-text affiche déjà le libellé (Fait / N/A / Non conforme) : on le transforme en badge
+       coloré au lieu d'une étiquette grise. Le texte de la tâche reste noir, jamais barré. */
+    .task-row { border-left: 5px solid #d8d8d2 !important; }
+    .st-done { border-left-color: #37a570 !important; background: #eaf6ef !important; }
+    .st-na { border-left-color: #8c8c8c !important; background: #f2f2f2 !important; }
+    .st-nc { border-left-color: #ef6761 !important; background: #fdecea !important; }
+    .st-done .task-dot { background: #2c8259 !important; color: #fff !important; }
+    .st-na .task-dot { background: #595959 !important; color: #fff !important; }
+    .st-nc .task-dot { background: #e72117 !important; color: #fff !important; }
+    .task-status-text { border-radius: 5px !important; padding: 4px 9px !important; font-weight: 700 !important; color: #fff !important; border: none !important; }
+    .st-done .task-status-text { background: #2c8259 !important; }
+    .st-na .task-status-text { background: #595959 !important; }
+    .st-nc .task-status-text { background: #e72117 !important; }
+    .task-row .task-label, .task-row .task-reason { text-decoration: none !important; color: #000 !important; }
     /* Anneaux (ringSvg, non modifiée) : texte noir lisible, arc orange vif au lieu du dégradé rouge-vert */
     .ring-svg text { fill: #000 !important; }
     .ring-svg circle:not(:first-child) { stroke: #f56700 !important; }
