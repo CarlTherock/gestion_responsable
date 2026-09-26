@@ -491,6 +491,11 @@ function newDraft(numero, mode) {
     files: Object.fromEntries(UPLOAD_TABS.map((o) => [o, []])),
     vpoItems: [newVpoItem()],
     vpdItems: [newVpdItem()],
+    // Preuves jointes VPO/VPD : dictionnaire clé item.id -> tableau de fichiers,
+    // même mécanique que ncFichiers (voir writeDocumentsPhotosNc et
+    // attacherFichiersVpoVpd). Séparé de ncFichiers car la clé est id, pas numéro.
+    vpoFichiers: {},
+    vpdFichiers: {},
     ncExtra: [],
     approbations: [],
     journal: [],
@@ -543,6 +548,8 @@ function normalizeDraft(d) {
   if (!d.casesPreuveRequise) d.casesPreuveRequise = {};
   if (!d.casesNotes) d.casesNotes = {};
   if (!d.ncFichiers) d.ncFichiers = {};
+  if (!d.vpoFichiers) d.vpoFichiers = {};
+  if (!d.vpdFichiers) d.vpdFichiers = {};
   if (d.ncSeq === undefined) d.ncSeq = 0;
   if (!d.files) d.files = {};
   UPLOAD_TABS.forEach((o) => { if (!d.files[o]) d.files[o] = []; });
@@ -724,7 +731,9 @@ function computeHandoffSummary() {
   const nc = computeNcStats();
   const docCountTotal = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0)
     + (d.files['mise-a-jour'] || []).length
-    + Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+    + Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + Object.values(d.vpoFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + Object.values(d.vpdFichiers || {}).reduce((s, a) => s + a.length, 0);
   const lastApprobation = (d.approbations || [])[d.approbations.length - 1];
 
   return {
@@ -754,7 +763,9 @@ async function showClosureCheckModal() {
   const nc = computeNcStats();
   const docCountTotal = Object.values(state.draft.casesFichiers || {}).reduce((s, a) => s + a.length, 0)
     + (state.draft.files['mise-a-jour'] || []).length
-    + Object.values(state.draft.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
+    + Object.values(state.draft.ncFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + Object.values(state.draft.vpoFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + Object.values(state.draft.vpdFichiers || {}).reduce((s, a) => s + a.length, 0);
 
   const summaryHtml = `
     <div class="tp-status-badge" style="margin-bottom:var(--space-4);">${escapeHtml(globalStatus.label)}</div>
@@ -973,7 +984,7 @@ function deepCloneKeepingBlobs(value) {
 const REVISION_DATA_FIELDS = [
   'champs', 'liens', 'casesCochees', 'casesRaisons', 'casesGravites', 'casesNcDetails',
   'casesFichiers', 'casesPreuveRequise', 'casesNotes', 'ncFichiers', 'ncSeq', 'files',
-  'vpoItems', 'vpdItems', 'ncExtra',
+  'vpoItems', 'vpdItems', 'vpoFichiers', 'vpdFichiers', 'ncExtra',
 ];
 // L'historique de sauvegarde (S-001, S-002...) appartient toujours à SA
 // révision — toujours remis à zéro pour une nouvelle révision, copiée ou
@@ -1009,12 +1020,16 @@ function buildImportableSnapshot(d) {
   const nullifyBlobs = (arr) => { (arr || []).forEach((f) => { f.blob = null; }); };
   Object.values(clone.casesFichiers || {}).forEach(nullifyBlobs);
   Object.values(clone.ncFichiers || {}).forEach(nullifyBlobs);
+  Object.values(clone.vpoFichiers || {}).forEach(nullifyBlobs);
+  Object.values(clone.vpdFichiers || {}).forEach(nullifyBlobs);
   Object.values(clone.files || {}).forEach(nullifyBlobs);
   return clone;
 }
 
 function buildLightSnapshot(d) {
-  const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length;
+  const docCount = Object.values(d.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (d.files['mise-a-jour'] || []).length
+    + Object.values(d.vpoFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + Object.values(d.vpdFichiers || {}).reduce((s, a) => s + a.length, 0);
   const ncFichiersCount = Object.values(d.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
   const CHAMPS_SUIVIS = ['tag', 'type', 'desc', 'employe', 'chargeProjet', 'contracteur', 'dateDebut', 'dateFin', 'etatGeneral'];
   return {
@@ -1800,7 +1815,9 @@ function renderApercu() {
 
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
     + (d.files['mise-a-jour'] || []).length
-    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.vpoFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.vpdFichiers || {}).reduce((s, arr) => s + arr.length, 0);
 
   const ringsHtml = groupStats.map((g) => `
     <div class="ring-card" data-apercu-jump="${g.group}">
@@ -2351,7 +2368,9 @@ function updateMobileSummary() {
 
   const docTotal = Object.values(d.files || {}).reduce((s, arr) => s + arr.length, 0)
     + Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
-    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.vpoFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.vpdFichiers || {}).reduce((s, arr) => s + arr.length, 0);
 
   const saveText = !navigator.onLine
     ? 'Hors ligne'
@@ -2964,6 +2983,32 @@ async function restaurerFichiersDepuis(base, draft) {
       if (blob) f.blob = blob; else manquants++;
     }
   }
+
+  // Preuves VPO/VPD (05_VPO_VPD/VPO-{id}/ et VPO_VPD/VPD-{id}/) : IMPORTANT --
+  // on lit f.storedAs directement (jamais nomFichierSurDisque(f), qui
+  // resassainit le nom et casserait la correspondance avec un fichier
+  // "(2)"/"(3)" réellement écrit sous ce nom sur disque). Repli sur le nom
+  // d'origine assaini pour un fichier jamais encore écrit sur disque (pas
+  // encore de storedAs, ex. dossier jamais sauvegardé officiellement).
+  const d05 = await obtenirSousDossier(base, '05_VPO_VPD');
+  for (const [type, prefixeDossier] of [['vpoFichiers', 'VPO'], ['vpdFichiers', 'VPD']]) {
+    for (const [id, files] of Object.entries(draft[type] || {})) {
+      const sous = d05 ? await obtenirSousDossier(d05, `${prefixeDossier}-${id}`) : null;
+      for (const f of files) {
+        // IMPORTANT : si storedAs est déjà connu, c'est le SEUL nom valide sur
+        // disque -- ne jamais retomber sur propre(f.name) dans ce cas, sinon un
+        // fichier "photo (2).jpg" manquant pourrait être confondu avec
+        // "photo.jpg" (le 1er fichier de la même ligne) et restaurer le
+        // mauvais contenu au lieu de signaler correctement un fichier absent.
+        // Le repli sur propre(f.name) ne sert que pour un fichier jamais
+        // encore écrit sur disque (aucun storedAs connu).
+        const nomsTentatives = f.storedAs ? [f.storedAs] : [propre(f.name)];
+        const blob = sous ? await lire(sous, nomsTentatives) : null;
+        if (blob) f.blob = blob; else manquants++;
+      }
+    }
+  }
+
   return manquants;
 }
 
@@ -3922,6 +3967,40 @@ async function writeDocumentsPhotosNc(destHandle, draft) {
     if (!d04) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
     await writeTextFile(d04, 'registre.txt', registreLignes.length ? registreLignes.join('\n') : 'Aucune non-conformité avec fichier joint.');
   } catch (err) { echec('04_NonConformites/registre.txt', false, err); }
+
+  // ---- Preuves VPO/VPD (05_VPO_VPD/VPO-{id}/ et VPO_VPD/VPD-{id}/) ----
+  // Un sous-dossier par ligne VPO/VPD qui a au moins une preuve jointe (aucun
+  // sous-dossier créé pour une ligne sans preuve, comme pour 04_NonConformites).
+  // Noms sur disque rendus uniques PAR SOUS-DOSSIER (dejaUtilises réinitialisé
+  // à chaque id) via nomUniqueVpoVpd — jamais nomFichierSurDisque, qui ne
+  // garantit pas l'unicité et casserait la restauration d'un fichier "(2)".
+  let d05 = null;
+  try { d05 = await destHandle.getDirectoryHandle('05_VPO_VPD', { create: true }); } catch (err) { /* signalé fichier par fichier */ }
+  for (const [type, prefixeDossier] of [['vpoFichiers', 'VPO'], ['vpdFichiers', 'VPD']]) {
+    for (const [id, files] of Object.entries(draft[type] || {})) {
+      if (!files || !files.length) continue;
+      const nomSousDossier = `${prefixeDossier}-${id}`;
+      const registreLignes05 = [];
+      const dejaUtilises = new Set();
+      let itemDir = null;
+      try { if (d05) itemDir = await d05.getDirectoryHandle(nomSousDossier, { create: true }); } catch (err) { /* signalé fichier par fichier */ }
+      for (const f of files) {
+        const nomDisque = nomUniqueVpoVpd(dejaUtilises, f);
+        const chemin = `05_VPO_VPD/${nomSousDossier}/${nomDisque}`;
+        registreLignes05.push(`${nomDisque} — ajouté le ${f.uploadedAt || ''}`);
+        if (!f.blob) { absents.push({ chemin, obligatoire: false }); continue; }
+        try {
+          if (!itemDir) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
+          await writeTextFile(itemDir, nomDisque, f.blob);
+        } catch (err) { echec(chemin, false, err); }
+      }
+      try {
+        if (!itemDir) throw Object.assign(new Error('dossier'), { name: 'NotFoundError' });
+        await writeTextFile(itemDir, 'registre.txt', registreLignes05.length ? registreLignes05.join('\n') : 'Aucune preuve jointe.');
+      } catch (err) { echec(`05_VPO_VPD/${nomSousDossier}/registre.txt`, false, err); }
+    }
+  }
+
   return { echecs, absents };
 }
 
@@ -4174,7 +4253,7 @@ function buildDashboardHtml(options) {
   }).join('');
 
   // ---- VPO / VPD détaillés : même présentation, chacun sa section ----
-  const vpoVpdRowHtml = (it) => {
+  const vpoVpdRowHtml = (it, tipo) => {
     const v = it.statut === 'conforme' ? true : it.statut === 'nc' ? 'nc' : false;
     const statutTexte = it.statut === 'conforme' ? 'Conforme' : it.statut === 'nc' ? 'Non conforme' : 'Non évalué';
     const extra = [
@@ -4182,14 +4261,23 @@ function buildDashboardHtml(options) {
       it.statut && it.dateValidation ? detailLigne(it.statut === 'conforme' ? 'Validé par :' : 'Évalué par :', `${it.validePar || 'inconnu'} le ${quandTexte(it.dateValidation)}`) : '',
       it.statut === 'nc' ? ncDetailsHtml(it) : '',
     ].join('');
-    return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', '', extra, statutTexte);
+    // Preuves jointes à cette ligne VPO/VPD (lecture seule, aucun blob : les
+    // liens relatifs pointent vers 05_VPO_VPD/{VPO|VPD}-{id}/, écrits par
+    // writeDocumentsPhotosNc -- rien n'est chargé en mémoire ici).
+    const dicoPreuves = tipo === 'vpo' ? d.vpoFichiers : d.vpdFichiers;
+    const preuves = toArray(dicoPreuves && dicoPreuves[it.id]);
+    const nomDossierPreuves = `${tipo === 'vpo' ? 'VPO' : 'VPD'}-${it.id}`;
+    const filesHtml = preuves.length
+      ? attachmentsHtml(preuves, `${prefix}05_VPO_VPD/${encodeURIComponent(nomDossierPreuves)}/`, (f) => f.storedAs || f.name)
+      : '';
+    return taskRowHtml(it.texte, v, it.statut === 'nc' ? it.raison : '', filesHtml, extra, statutTexte);
   };
   const vpoVpdSection = (id, titre, filled) => {
     const faits = filled.filter((it) => it.statut === 'conforme' || it.statut === 'nc').length;
     const pctSection = (faits / filled.length) * 100;
     return `<details class="section-card" id="sec-${id}">
       <summary><span>${titre}</span><span class="section-pct">${Math.round(pctSection)} %</span></summary>
-      <div class="task-list">${filled.map(vpoVpdRowHtml).join('')}</div>
+      <div class="task-list">${filled.map((it) => vpoVpdRowHtml(it, id)).join('')}</div>
     </details>`;
   };
   const vpoHtml = hasVpo ? vpoVpdSection('vpo', 'VPO \u2014 Vérification pré-opérationnelle', vpoFilled) : '';
@@ -4260,7 +4348,9 @@ function buildDashboardHtml(options) {
 
   // ---- Documents / photos ----
   const docCount = Object.values(d.casesFichiers || {}).reduce((s, arr) => s + arr.length, 0)
-    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0);
+    + Object.values(d.ncFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.vpoFichiers || {}).reduce((s, arr) => s + arr.length, 0)
+    + Object.values(d.vpdFichiers || {}).reduce((s, arr) => s + arr.length, 0);
   const photos = toArray(d.files && d.files['mise-a-jour']);
   const photosHtml = photos.length ? attachmentsHtml(photos, `${prefix}03_Photos/Taches/`, nomFichierSurDisque) : '<p class="empty">Aucune image de mise à jour.</p>';
 
@@ -6248,6 +6338,164 @@ async function ouvrirImageAttacheePourRetouche(group, name, idx) {
   toast('Retouches enregistrées.');
 }
 
+// ---------- Preuves VPO/VPD (phase preuves-vpo-vpd) ----------
+// Pièces jointes optionnelles ("Photos et documents de preuve") pour chaque
+// ligne VPO/VPD, indexées par item.id (stable, contrairement au numéro NC qui
+// n'existe que pour une ligne devenue non conforme). Même mécanique que
+// ncFichiers/casesFichiers (dbPut, schedulePersist, suppression via
+// supprimerFichier), mais formats restreints et anti-collision de noms sur
+// disque : plusieurs preuves peuvent porter le même nom de fichier d'origine
+// (ex. deux photos "IMG_0001.jpg" prises par des téléphones différents).
+const VPO_VPD_EXTENSIONS_AUTORISEES = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'pdf'];
+const VPO_VPD_TAILLE_AVERTISSEMENT = 15 * 1024 * 1024; // 15 Mo — avertissement seulement, jamais bloquant
+const VPO_VPD_NB_FICHIERS_AVERTISSEMENT = 10; // idem, par ligne VPO/VPD
+
+function estFormatAutoriseVpoVpd(filename) {
+  const m = /\.([a-z0-9]+)$/i.exec(String(filename || ''));
+  const ext = m ? m[1].toLowerCase() : '';
+  return VPO_VPD_EXTENSIONS_AUTORISEES.includes(ext);
+}
+
+function dicoFichiersVpoVpd(type) {
+  return type === 'vpo' ? state.draft.vpoFichiers : state.draft.vpdFichiers;
+}
+
+// Nom unique sur disque pour une preuve VPO/VPD : jamais d'écrasement, jamais
+// de perte silencieuse en cas de collision de nom. `f.storedAs`, une fois
+// assigné, ne change plus. IMPORTANT : ne jamais appeler nomFichierSurDisque(f)
+// pour RETROUVER un fichier déjà stocké (écriture disque, restauration,
+// Dashboard) — cette fonction ne fait qu'assainir le nom sans garantir
+// l'unicité, et recalculerait un nom différent de celui réellement écrit sur
+// disque pour un fichier "(2)"/"(3)", le rendant introuvable. Toujours lire
+// f.storedAs directement dans ces cas.
+function nomUniqueVpoVpd(dejaUtilises, f) {
+  if (f.storedAs && !dejaUtilises.has(f.storedAs)) { dejaUtilises.add(f.storedAs); return f.storedAs; }
+  const brut = (f.name || 'fichier').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const point = brut.lastIndexOf('.');
+  const base = point > 0 ? brut.slice(0, point) : brut;
+  const ext = point > 0 ? brut.slice(point) : '';
+  let candidat = brut, n = 2;
+  while (dejaUtilises.has(candidat)) { candidat = `${base} (${n})${ext}`; n += 1; }
+  dejaUtilises.add(candidat);
+  f.storedAs = candidat;
+  return candidat;
+}
+
+async function attacherFichiersVpoVpd(type, id, fileList) {
+  if (!fileList || !fileList.length) return;
+  const dico = dicoFichiersVpoVpd(type);
+  if (!dico[id]) dico[id] = [];
+  const label = type === 'vpo' ? 'VPO' : 'VPD';
+  const tousLesFichiers = Array.from(fileList);
+  const valides = [];
+  const refuses = [];
+  tousLesFichiers.forEach((f) => { (estFormatAutoriseVpoVpd(f.name) ? valides : refuses).push(f); });
+
+  if (refuses.length) {
+    toast(`${refuses.length} fichier(s) refusé(s) (format non accepté) : ${refuses.map((f) => f.name).join(', ')}. Formats acceptés : JPG, JPEG, PNG, WEBP, HEIC, PDF.`, 5500);
+  }
+  if (!valides.length) return;
+
+  valides.forEach((f) => {
+    dico[id].push({ name: f.name, size: f.size, type: f.type, uploadedAt: new Date().toISOString(), blob: f });
+  });
+  logActivity(`${valides.length} preuve(s) ${label} ajoutée(s)`);
+  await dbPut(state.draft);
+
+  const tropVolumineux = valides.filter((f) => f.size > VPO_VPD_TAILLE_AVERTISSEMENT);
+  if (tropVolumineux.length) {
+    toast(`Attention : ${tropVolumineux.length} fichier(s) dépasse(nt) 15 Mo. La sauvegarde reste possible mais peut être plus lente.`, 5500);
+  }
+  if (dico[id].length > VPO_VPD_NB_FICHIERS_AVERTISSEMENT) {
+    toast(`Attention : ${dico[id].length} preuves jointes à cette ligne ${label} (plus de ${VPO_VPD_NB_FICHIERS_AVERTISSEMENT}). La sauvegarde reste possible.`, 5500);
+  }
+  toast(`${valides.length} preuve(s) jointe(s) (${label}).`);
+
+  if (type === 'vpo') updateVpoFilesCount(id); else updateVpdFilesCount(id);
+  updateFilesCount();
+}
+
+function updateVpoFilesCount(id) { renderVpoVpdFileList('vpo', id); }
+function updateVpdFilesCount(id) { renderVpoVpdFileList('vpd', id); }
+
+function vpoVpdDropzoneHtml(type, id) {
+  return `
+    <div class="checklist-item-drawer" data-vpo-vpd-drawer="${type}::${id}">
+      <div class="dropzone-mini" data-vpo-vpd-dropzone="${type}::${id}">
+        <span class="dz-text-desktop">Photos et documents de preuve (optionnel) — glissez-déposez, cliquez pour parcourir, ou</span>
+        <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Photo ou document de preuve (optionnel)</span>
+        <button type="button" class="btn btn-outline dz-paste-btn" data-vpo-vpd-paste="${type}::${id}" title="Coller une image copiée (Ctrl+V après avoir cliqué ici)">Coller</button>
+        <input type="file" data-vpo-vpd-file-input="${type}::${id}" multiple accept=".jpg,.jpeg,.png,.webp,.heic,.pdf" class="hidden">
+      </div>
+      <div class="file-list-mini" data-vpo-vpd-file-list="${type}::${id}"></div>
+    </div>`;
+}
+
+function renderVpoVpdFileList(type, id) {
+  const containerId = type === 'vpo' ? 'vpoList' : 'vpdList';
+  const container = $(`#${containerId}`);
+  if (!container) return;
+  const listEl = container.querySelector(`[data-vpo-vpd-file-list="${type}::${id}"]`);
+  if (!listEl) return;
+  const files = dicoFichiersVpoVpd(type)[id] || [];
+  listEl.innerHTML = files.length ? files.map((f, i) => `
+    <div class="file-row file-row-lg" data-vpo-vpd-row="${type}::${id}::${i}">
+      ${isImageFile(f.name) && hasUsableBlob(f)
+        ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}">`
+        : `<span class="ext-badge">${extBadge(f.name)}</span>`}
+      <div class="file-row-info">
+        <span class="file-name">${escapeHtml(f.name)}</span>
+        <span class="file-meta">${fmtSize(f.size)}</span>
+      </div>
+      <div class="file-row-actions">
+        ${hasUsableBlob(f) ? `<button type="button" class="btn btn-tertiary" data-vpo-vpd-open="${type}::${id}::${i}">Ouvrir</button>` : ''}
+        <button type="button" class="btn btn-tertiary" data-vpo-vpd-delete="${type}::${id}::${i}">Supprimer</button>
+      </div>
+    </div>`).join('') : '';
+
+  $$('[data-vpo-vpd-open]', listEl).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [t, itemId, idx] = btn.dataset.vpoVpdOpen.split('::');
+      const f = (dicoFichiersVpoVpd(t)[itemId] || [])[Number(idx)];
+      if (!f || !hasUsableBlob(f)) return;
+      if (isImageFile(f.name)) { openImageLightbox(f); return; }
+      window.open(URL.createObjectURL(f.blob), '_blank');
+    });
+  });
+  $$('[data-vpo-vpd-delete]', listEl).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [t, itemId, idx] = btn.dataset.vpoVpdDelete.split('::');
+      const arr = dicoFichiersVpoVpd(t)[itemId] || [];
+      const f = arr[Number(idx)];
+      if (!f) return;
+      supprimerFichier(arr, f, () => { renderVpoVpdFileList(t, itemId); updateFilesCount(); });
+    });
+  });
+}
+
+function wireVpoVpdDropzone(type, id, container) {
+  const dz = container.querySelector(`[data-vpo-vpd-dropzone="${type}::${id}"]`);
+  if (!dz) return;
+  const input = dz.querySelector(`[data-vpo-vpd-file-input="${type}::${id}"]`);
+  dz.addEventListener('click', (e) => {
+    if (e.target === input || e.target.closest('button')) return;
+    input.click();
+  });
+  input.addEventListener('change', () => attacherFichiersVpoVpd(type, id, input.files));
+  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+  dz.addEventListener('drop', (e) => attacherFichiersVpoVpd(type, id, e.dataTransfer.files));
+  const pasteBtn = dz.querySelector(`[data-vpo-vpd-paste="${type}::${id}"]`);
+  if (pasteBtn) {
+    pasteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const file = await readImageFromClipboard();
+      if (file) await attacherFichiersVpoVpd(type, id, [file]);
+    });
+  }
+  renderVpoVpdFileList(type, id);
+}
+
 // Affiche une image jointe en grand, dans une fenêtre simple.
 // Visionneuse plein écran (pas la petite fenêtre générique) — appelée quand
 // on clique sur une vignette pour l'agrandir.
@@ -6494,7 +6742,10 @@ function renderVpoList() {
     ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
     ${validationInfo}
     ${impact}
+    ${vpoVpdDropzoneHtml('vpo', item.id)}
   `; }).join('');
+
+  items.forEach((item) => wireVpoVpdDropzone('vpo', item.id, container));
 
   $$('[data-vpo-obligatoire]', container).forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -6575,10 +6826,12 @@ function renderVpoList() {
   $$('[data-vpo-remove]', container).forEach((btn) => {
     btn.addEventListener('click', () => {
       state.draft.vpoItems = state.draft.vpoItems.filter((it) => it.id !== btn.dataset.vpoRemove);
+      delete state.draft.vpoFichiers[btn.dataset.vpoRemove];
       if (!state.draft.vpoItems.length) state.draft.vpoItems.push(newVpoItem());
       schedulePersist();
       renderVpoList();
       updateProgressPill();
+      updateFilesCount();
       renderNonConformites();
     });
   });
@@ -6622,7 +6875,10 @@ function renderVpdList() {
     ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
     ${validationInfo}
     ${impact}
+    ${vpoVpdDropzoneHtml('vpd', item.id)}
   `; }).join('');
+
+  items.forEach((item) => wireVpoVpdDropzone('vpd', item.id, container));
 
   $$('[data-vpd-obligatoire]', container).forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -6703,10 +6959,12 @@ function renderVpdList() {
   $$('[data-vpd-remove]', container).forEach((btn) => {
     btn.addEventListener('click', () => {
       state.draft.vpdItems = state.draft.vpdItems.filter((it) => it.id !== btn.dataset.vpdRemove);
+      delete state.draft.vpdFichiers[btn.dataset.vpdRemove];
       if (!state.draft.vpdItems.length) state.draft.vpdItems.push(newVpdItem());
       schedulePersist();
       renderVpdList();
       updateProgressPill();
+      updateFilesCount();
       renderNonConformites();
     });
   });
@@ -6906,7 +7164,9 @@ function summarizeSnapshotComplet(snap, mode) {
   const vpoCount = (snap.vpoItems || []).filter((v) => v.texte && v.texte.trim()).length;
   const vpoValidees = (snap.vpoItems || []).filter((v) => v.statut === 'ok').length;
   const ncFichiersCount = Object.values(snap.ncFichiers || {}).reduce((s, a) => s + a.length, 0);
-  const docCount = Object.values(snap.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (snap.files['mise-a-jour'] || []).length;
+  const docCount = Object.values(snap.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (snap.files['mise-a-jour'] || []).length
+    + Object.values(snap.vpoFichiers || {}).reduce((s, a) => s + a.length, 0)
+    + Object.values(snap.vpdFichiers || {}).reduce((s, a) => s + a.length, 0);
   return { total, faites, na, nc, vpoCount, vpoValidees, ncFichiersCount, docCount };
 }
 
@@ -7561,7 +7821,9 @@ async function importDossierFromPickedFolder(expectedNumero) {
     const ncCount = Object.values(draft.casesNcDetails || {}).length
       + (draft.vpoItems || []).filter((it) => it.statut === 'nc').length
       + (draft.ncExtra || []).filter((it) => it.texte && it.texte.trim()).length;
-    const docCount = Object.values(draft.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (draft.files['mise-a-jour'] || []).length;
+    const docCount = Object.values(draft.casesFichiers || {}).reduce((s, a) => s + a.length, 0) + (draft.files['mise-a-jour'] || []).length
+      + Object.values(draft.vpoFichiers || {}).reduce((s, a) => s + a.length, 0)
+      + Object.values(draft.vpdFichiers || {}).reduce((s, a) => s + a.length, 0);
     const remplaceExistant = !!(state.draft && (state.numero || state.draft.localisation) && state.draft.creeLe);
 
     const confirmed = await showModal({
