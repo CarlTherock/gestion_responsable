@@ -379,11 +379,11 @@
         <div class="dossier-panel" style="margin-top: var(--space-6);">
           <h3>Fiche d'identification</h3>
           <div class="field-row">
-            <div class="field"><label>Tag / TAG instrument</label><input type="text" id="fldTag" placeholder="ex. FT-4407"></div>
-            <div class="field"><label>Type d'instrument</label><input type="text" id="fldType" placeholder="ex. débitmètre magnétique"></div>
+            <div class="field"><label for="fldTag">Tag / TAG instrument</label><input type="text" id="fldTag" placeholder="ex. FT-4407"></div>
+            <div class="field"><label for="fldType">Type d'instrument</label><input type="text" id="fldType" placeholder="ex. débitmètre magnétique"></div>
           </div>
           <div class="field-row" style="margin-top: var(--space-4);">
-            <div class="field"><label>Description</label><textarea id="fldDesc" rows="2" placeholder="Description courte de l'équipement / du point de mesure"></textarea></div>
+            <div class="field"><label for="fldDesc">Description</label><textarea id="fldDesc" rows="2" placeholder="Description courte de l'équipement / du point de mesure"></textarea></div>
           </div>
         </div>
 
@@ -431,7 +431,7 @@
           <h3>Lien du dossier partagé (réseau / OneDrive)</h3>
           <p class="panel-desc" style="margin-top:0;">Le Dashboard et les sauvegardes de ce dossier restent toujours au même emplacement partagé — colle ici ton lien (ex. lien de partage OneDrive/SharePoint) une seule fois.</p>
           <div class="field">
-            <label>Lien du dossier partagé</label>
+            <label for="fldLienDossierPartage">Lien du dossier partagé</label>
             <input type="text" id="fldLienDossierPartage" placeholder="https://...">
           </div>
           <div id="qrLienPartageWrap" class="hidden" style="margin-top:var(--space-3);">
@@ -467,18 +467,18 @@
         <div class="dossier-panel" style="margin-top: var(--space-6);">
           <h3>Champs généraux</h3>
           <div class="field-row">
-            <div class="field"><label>Employé</label><input type="text" id="fldEmploye" placeholder="ex. 4471-DOM"></div>
-            <div class="field"><label>Chargé de projet</label><input type="text" id="fldChargeProjet"></div>
-            <div class="field"><label>Contracteur</label><input type="text" id="fldContracteur"></div>
+            <div class="field"><label for="fldEmploye">Employé</label><input type="text" id="fldEmploye" placeholder="ex. 4471-DOM"></div>
+            <div class="field"><label for="fldChargeProjet">Chargé de projet</label><input type="text" id="fldChargeProjet"></div>
+            <div class="field"><label for="fldContracteur">Contracteur</label><input type="text" id="fldContracteur"></div>
           </div>
           <div class="field-row" style="margin-top: var(--space-4);">
-            <div class="field"><label>Date de début</label><input type="text" id="fldDateDebut" placeholder="AAAA-MM-JJ"></div>
-            <div class="field"><label>Date de fin</label><input type="text" id="fldDateFin" placeholder="AAAA-MM-JJ"></div>
-            <div class="field"><label>État général du travail</label><input type="text" id="fldEtatGeneral" placeholder="ex. terminé, en cours, en attente"></div>
+            <div class="field"><label for="fldDateDebut">Date de début</label><input type="text" id="fldDateDebut" placeholder="AAAA-MM-JJ"></div>
+            <div class="field"><label for="fldDateFin">Date de fin</label><input type="text" id="fldDateFin" placeholder="AAAA-MM-JJ"></div>
+            <div class="field"><label for="fldEtatGeneral">État général du travail</label><input type="text" id="fldEtatGeneral" placeholder="ex. terminé, en cours, en attente"></div>
           </div>
           <div class="field-row" style="margin-top: var(--space-4);">
             <div class="field">
-              <label>Priorité</label>
+              <label for="fldPriorite">Priorité</label>
               <select id="fldPriorite">
                 <option value="normale">Normale</option>
                 <option value="basse">Basse</option>
@@ -526,7 +526,7 @@
         <p class="panel-desc">Notes libres sur ce dossier.</p>
         <div class="dossier-panel">
           <div class="field-row">
-            <div class="field"><label>Commentaires / notes</label><textarea id="fldCommentaires" rows="8"></textarea></div>
+            <div class="field"><label for="fldCommentaires">Commentaires / notes</label><textarea id="fldCommentaires" rows="8"></textarea></div>
           </div>
         </div>
       </div>
@@ -537,8 +537,8 @@
 
         <div class="approval-card">
           <div class="field-row">
-            <div class="field"><label>Nom de l'employé</label><input type="text" id="fldEmployeeName" placeholder="ex. Carl Therrien"></div>
-            <div class="field"><label>Rôle</label>
+            <div class="field"><label for="fldEmployeeName">Nom de l'employé</label><input type="text" id="fldEmployeeName" placeholder="ex. Carl Therrien"></div>
+            <div class="field"><label for="fldRole">Rôle</label>
               <select id="fldRole" autocomplete="off">
                 <option value="" selected>À déterminer</option>
                 <option value="technicien">TEI</option>

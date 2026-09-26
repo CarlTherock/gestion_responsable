@@ -2128,13 +2128,13 @@ function renderNonConformites() {
     const files = state.draft.ncFichiers[r.numero] || [];
     const filesHtml = files.length ? `<div class="attachments">${files.map((f, i) => {
       return isImageFile(f.name) && hasUsableBlob(f)
-        ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}" data-nc-file-enlarge="${r.numero}::${i}">`
+        ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}" title="${escapeHtml(f.name)}" data-nc-file-enlarge="${escapeHtml(r.numero)}::${i}">`
         : `<span class="doc-link"><span class="icon-inline" data-icon="folder" style="margin-right:4px;"></span>${escapeHtml(f.name)}</span>`;
     }).join('')}</div>` : '';
     return `
-    <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}${r.resolu ? ' nc-resolue' : ''}" data-nc-kind="${r.kind}" data-nc-key="${r.key}">
+    <div class="nc-summary-item${r.gravite ? ' gravite-' + r.gravite : ''}${r.resolu ? ' nc-resolue' : ''}" data-nc-kind="${r.kind}" data-nc-key="${escapeHtml(r.key)}">
       <div class="nc-summary-header">
-        <div class="nc-section">${r.numero ? `<strong>${r.numero}</strong> · ` : ''}${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
+        <div class="nc-section">${r.numero ? `<strong>${escapeHtml(r.numero)}</strong> · ` : ''}${r.section}${r.gravite ? ` · ${GRAVITE_LABEL[r.gravite] || r.gravite}` : ''}</div>
         <span class="nc-statut-badge ${r.resolu ? 'nc-statut-resolue' : 'nc-statut-ouverte'}">${r.resolu ? 'Résolue' : 'Ouverte'}</span>
       </div>
       <div class="nc-label">${escapeHtml(r.label)}</div>
@@ -2145,9 +2145,9 @@ function renderNonConformites() {
       ${r.dateCreation ? `<div class="nc-meta">Créée le ${new Date(r.dateCreation).toLocaleString('fr-CA')}</div>` : ''}
       ${filesHtml}
       <div class="nc-card-actions">
-        ${r.numero ? `<button type="button" class="btn btn-outline btn-nc-add-photo" data-nc-numero-btn="${r.numero}"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Ajouter une photo</button>
-        <button type="button" class="btn btn-outline btn-nc-paste-photo" data-nc-numero-paste="${r.numero}">Coller</button>
-        <input type="file" class="hidden" data-nc-photo-input="${r.numero}" accept="image/*" multiple>` : ''}
+        ${r.numero ? `<button type="button" class="btn btn-outline btn-nc-add-photo" data-nc-numero-btn="${escapeHtml(r.numero)}"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Ajouter une photo</button>
+        <button type="button" class="btn btn-outline btn-nc-paste-photo" data-nc-numero-paste="${escapeHtml(r.numero)}">Coller</button>
+        <input type="file" class="hidden" data-nc-photo-input="${escapeHtml(r.numero)}" accept="image/*" multiple>` : ''}
         <button type="button" class="btn btn-outline btn-nc-toggle-resolu">${r.resolu ? 'Rouvrir' : 'Marquer résolue'}</button>
       </div>
     </div>`;
@@ -5266,7 +5266,7 @@ function renderChecklist(group) {
     return `
       <div class="checklist-item-wrap${checked ? ' checked' : ''}${isNa ? ' na' : ''}${isNc ? ' nc' : ''}${preuveManquante ? ' preuve-manquante' : ''}" data-item-wrap="${name}">
         <div class="checklist-item-row">
-          <input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}">
+          <label class="ci-checkbox-tap"><input type="checkbox" class="ci-checkbox" ${checked ? 'checked' : ''} data-name="${name}"></label>
           <span class="ci-label" data-name="${name}" data-task-detail="${name}" title="Voir les détails de la tâche">${label}${preuveRequise ? ' <span class="preuve-required-tag" title="Preuve requise">!</span>' : ''}${ncNumero ? ` <span class="nc-xref">${ncNumero}</span>` : ''}</span>
           <div class="ci-actions">
             ${canAttach ? `<span class="ci-attach-count" data-attach-count="${name}">${files.length ? files.length : ''}</span>` : ''}
@@ -6727,17 +6727,17 @@ function renderVpoList() {
     if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block"><span class="icon-inline" data-icon="alertTriangle" style="margin-right:4px;"></span>Ce VPO empêche la fermeture du dossier</div>';
     else if (pending) impact = '<div class="vpo-impact vpo-impact-soft">Validation recommandée avant l\u2019étape suivante</div>';
     const validationInfo = item.statut && item.dateValidation
-      ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${item.numero}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
+      ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${escapeHtml(item.numero)}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
       : '';
     return `
-    <div class="vpo-row" data-vpo-id="${item.id}">
+    <div class="vpo-row" data-vpo-id="${escapeHtml(item.id)}">
       <div class="vpo-status">
-        <button type="button" class="btn-obligatoire${item.obligatoire ? ' active' : ''}" data-vpo-obligatoire="${item.id}" title="Marquer ce VPO comme obligatoire">Obligatoire</button>
-        <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpo-conforme="${item.id}">Conforme</button>
-        <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpo-nc="${item.id}">Non conforme</button>
+        <button type="button" class="btn-obligatoire${item.obligatoire ? ' active' : ''}" data-vpo-obligatoire="${escapeHtml(item.id)}" title="Marquer ce VPO comme obligatoire">Obligatoire</button>
+        <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpo-conforme="${escapeHtml(item.id)}">Conforme</button>
+        <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpo-nc="${escapeHtml(item.id)}">Non conforme</button>
       </div>
-      <input type="text" class="vpo-input" data-vpo-text="${item.id}" placeholder="Décrire le point vérifié…" value="${escapeHtml(item.texte || '')}">
-      <button type="button" class="btn-vpo-remove" data-vpo-remove="${item.id}" title="Retirer cette ligne">✕</button>
+      <input type="text" class="vpo-input" data-vpo-text="${escapeHtml(item.id)}" placeholder="Décrire le point vérifié…" value="${escapeHtml(item.texte || '')}">
+      <button type="button" class="btn-vpo-remove" data-vpo-remove="${escapeHtml(item.id)}" title="Retirer cette ligne">✕</button>
     </div>
     ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
     ${validationInfo}
@@ -6860,17 +6860,17 @@ function renderVpdList() {
     if (pending && item.obligatoire) impact = '<div class="vpo-impact vpo-impact-block"><span class="icon-inline" data-icon="alertTriangle" style="margin-right:4px;"></span>Ce VPD empêche la fermeture du dossier</div>';
     else if (pending) impact = '<div class="vpo-impact vpo-impact-soft">Validation recommandée avant l\u2019étape suivante</div>';
     const validationInfo = item.statut && item.dateValidation
-      ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${item.numero}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
+      ? `<div class="na-reason" style="margin-left:8px;">${item.numero ? `<strong>${escapeHtml(item.numero)}</strong> · ` : ''}${item.statut === 'conforme' ? 'Validé' : 'Évalué'} par ${escapeHtml(item.validePar || 'inconnu')} le ${new Date(item.dateValidation).toLocaleString('fr-CA')}</div>`
       : '';
     return `
-    <div class="vpo-row" data-vpd-id="${item.id}">
+    <div class="vpo-row" data-vpd-id="${escapeHtml(item.id)}">
       <div class="vpo-status">
-        <button type="button" class="btn-obligatoire${item.obligatoire ? ' active' : ''}" data-vpd-obligatoire="${item.id}" title="Marquer ce VPD comme obligatoire">Obligatoire</button>
-        <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpd-conforme="${item.id}">Conforme</button>
-        <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpd-nc="${item.id}">Non conforme</button>
+        <button type="button" class="btn-obligatoire${item.obligatoire ? ' active' : ''}" data-vpd-obligatoire="${escapeHtml(item.id)}" title="Marquer ce VPD comme obligatoire">Obligatoire</button>
+        <button type="button" class="btn-conforme${item.statut === 'conforme' ? ' active' : ''}" data-vpd-conforme="${escapeHtml(item.id)}">Conforme</button>
+        <button type="button" class="btn-nc-vpo${item.statut === 'nc' ? ' active' : ''}" data-vpd-nc="${escapeHtml(item.id)}">Non conforme</button>
       </div>
-      <input type="text" class="vpo-input" data-vpd-text="${item.id}" placeholder="Décrire le point vérifié après démarrage…" value="${escapeHtml(item.texte || '')}">
-      <button type="button" class="btn-vpo-remove" data-vpd-remove="${item.id}" title="Retirer cette ligne">✕</button>
+      <input type="text" class="vpo-input" data-vpd-text="${escapeHtml(item.id)}" placeholder="Décrire le point vérifié après démarrage…" value="${escapeHtml(item.texte || '')}">
+      <button type="button" class="btn-vpo-remove" data-vpd-remove="${escapeHtml(item.id)}" title="Retirer cette ligne">✕</button>
     </div>
     ${item.statut === 'nc' && item.raison ? `<div class="na-reason" style="margin-left:8px;">Raison : ${escapeHtml(item.raison)}</div>` : ''}
     ${validationInfo}
@@ -6987,14 +6987,14 @@ function renderNcExtraList() {
   if (!container || !state.draft) return;
   const items = state.draft.ncExtra || [];
   container.innerHTML = items.map((item) => `
-    <div class="vpo-row" data-ncextra-id="${item.id}">
-      <select class="ncextra-gravite" data-ncextra-gravite="${item.id}">
+    <div class="vpo-row" data-ncextra-id="${escapeHtml(item.id)}">
+      <select class="ncextra-gravite" data-ncextra-gravite="${escapeHtml(item.id)}">
         <option value="mineure"${item.gravite === 'mineure' ? ' selected' : ''}>Mineure</option>
         <option value="majeure"${item.gravite === 'majeure' ? ' selected' : ''}>Majeure</option>
         <option value="critique"${item.gravite === 'critique' ? ' selected' : ''}>Critique</option>
       </select>
-      <input type="text" class="vpo-input" data-ncextra-text="${item.id}" placeholder="Décrire la non-conformité…" value="${escapeHtml(item.texte || '')}">
-      <button type="button" class="btn-vpo-remove" data-ncextra-remove="${item.id}" title="Retirer cette ligne">✕</button>
+      <input type="text" class="vpo-input" data-ncextra-text="${escapeHtml(item.id)}" placeholder="Décrire la non-conformité…" value="${escapeHtml(item.texte || '')}">
+      <button type="button" class="btn-vpo-remove" data-ncextra-remove="${escapeHtml(item.id)}" title="Retirer cette ligne">✕</button>
     </div>`).join('');
 
   $$('[data-ncextra-gravite]', container).forEach((sel) => {
