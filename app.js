@@ -628,27 +628,56 @@ function logActivity(text) {
 }
 
 let persistTimer;
+// true si la dernière tentative d'autosauvegarde locale (IndexedDB) a
+// réellement échoué -- distinct d'une simple absence de sauvegarde (nouveau
+// dossier jamais encore enregistré). Piloté uniquement par schedulePersist(),
+// jamais par une supposition optimiste (voir audit A2).
+let dernierAutosaveEchoue = false;
 function schedulePersist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(async () => {
     if (!state.draft) return;
-    state.draft.modifieLe = new Date().toISOString();
-    await dbPut(state.draft);
+    if (state.readOnlyConsultation) return; // consultation en lecture seule : jamais d'écriture, jamais d'état d'échec
+    const dateTentative = new Date().toISOString();
+    const modifieLeAvant = state.draft.modifieLe;
+    state.draft.modifieLe = dateTentative;
+    const reussi = await dbPut(state.draft);
+    if (reussi) {
+      dernierAutosaveEchoue = false;
+    } else {
+      // Échec réel (IndexedDB indisponible, quota dépassé, etc.) : on annule
+      // l'horodatage optimiste pour ne JAMAIS afficher « Enregistré » sur un
+      // échec. Les données modifiées restent intactes dans state.draft (rien
+      // n'est perdu) : le prochain changement de champ redéclenche
+      // schedulePersist() et retentera automatiquement l'écriture.
+      state.draft.modifieLe = modifieLeAvant;
+      dernierAutosaveEchoue = true;
+      console.error('Échec de l’autosauvegarde locale (IndexedDB) du dossier', state.numero);
+      toast('⚠️ Échec de l’enregistrement automatique sur cet appareil. Vos modifications restent affichées mais ne sont PAS sauvegardées : ne fermez pas l’application et réessayez (espace de stockage plein ?).', 7000);
+    }
     updateMobileSaveStatus();
   }, 400);
 }
 
-// Petit état compact en haut sur mobile : "Enregistré à HH:MM" ou "Hors ligne".
-// Le hors ligne prend priorité visuellement (info la plus utile sur le terrain).
+// Petit état compact en haut sur mobile : "Enregistré à HH:MM", "Hors ligne"
+// ou, si la dernière écriture locale a réellement échoué, un avertissement
+// explicite -- jamais "Enregistré" dans ce dernier cas (voir audit A2).
 function updateMobileSaveStatus() {
   const el = document.getElementById('mobileSaveStatus');
   if (!el) return;
   if (!navigator.onLine) {
     el.textContent = 'Hors ligne — conservé sur cet appareil';
     el.classList.add('offline');
+    el.classList.remove('save-error');
     return;
   }
   el.classList.remove('offline');
+  if (dernierAutosaveEchoue) {
+    el.textContent = '⚠️ Échec de l’enregistrement — non sauvegardé';
+    el.classList.add('save-error');
+    return;
+  }
+  el.classList.remove('save-error');
   if (state.draft && state.draft.modifieLe) {
     el.textContent = `Enregistré à ${new Date(state.draft.modifieLe).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}`;
   } else {
@@ -6419,27 +6448,59 @@ function updateVpoFilesCount(id) { renderVpoVpdFileList('vpo', id); }
 function updateVpdFilesCount(id) { renderVpoVpdFileList('vpd', id); }
 
 function vpoVpdDropzoneHtml(type, id) {
+  // `id` peut provenir d'un dossier importé (jamais régénéré par
+  // generateId()) et donc contenir n'importe quel caractère, y compris des
+  // guillemets et du markup HTML. Ici l'interpolation se fait dans une
+  // valeur d'ATTRIBUT HTML (data-vpo-vpd-*="...") : la protection adaptée à
+  // ce contexte précis est l'échappement HTML (escapeHtml), le même que
+  // celui déjà utilisé pour `item.id` dans renderVpoList()/renderVpdList().
+  // `type` n'est jamais interpolé sans escapeHtml lui non plus, bien qu'il
+  // ne provienne que d'une valeur interne fixe ('vpo'/'vpd') -- défense en
+  // profondeur à coût nul. Voir audit A1 / test_xss.js.
+  const t = escapeHtml(type);
+  const i = escapeHtml(id);
   return `
-    <div class="checklist-item-drawer" data-vpo-vpd-drawer="${type}::${id}">
-      <div class="dropzone-mini" data-vpo-vpd-dropzone="${type}::${id}">
+    <div class="checklist-item-drawer" data-vpo-vpd-drawer="${t}::${i}">
+      <div class="dropzone-mini" data-vpo-vpd-dropzone="${t}::${i}">
         <span class="dz-text-desktop">Photos et documents de preuve (optionnel) — glissez-déposez, cliquez pour parcourir, ou</span>
         <span class="dz-text-mobile"><span class="icon-inline" data-icon="camera" style="margin-right:4px;"></span>Photo ou document de preuve (optionnel)</span>
-        <button type="button" class="btn btn-outline dz-paste-btn" data-vpo-vpd-paste="${type}::${id}" title="Coller une image copiée (Ctrl+V après avoir cliqué ici)">Coller</button>
-        <input type="file" data-vpo-vpd-file-input="${type}::${id}" multiple accept=".jpg,.jpeg,.png,.webp,.heic,.pdf" class="hidden">
+        <button type="button" class="btn btn-outline dz-paste-btn" data-vpo-vpd-paste="${t}::${i}" title="Coller une image copiée (Ctrl+V après avoir cliqué ici)">Coller</button>
+        <input type="file" data-vpo-vpd-file-input="${t}::${i}" multiple accept=".jpg,.jpeg,.png,.webp,.heic,.pdf" class="hidden">
       </div>
-      <div class="file-list-mini" data-vpo-vpd-file-list="${type}::${id}"></div>
+      <div class="file-list-mini" data-vpo-vpd-file-list="${t}::${i}"></div>
     </div>`;
+}
+
+// Retrouve un élément VPO/VPD sans jamais construire un sélecteur CSS à partir
+// de `id` (qui peut provenir d'un dossier importé et contenir n'importe quel
+// caractère, ex. `"`, `]`, `\`, etc. -- voir audit A1). On sélectionne d'abord
+// UNIQUEMENT par le nom d'attribut fixe (aucune donnée externe dans la chaîne
+// de sélection), puis on compare la valeur candidate en JavaScript pur.
+function findVpoVpdEl(root, datasetKey, type, id) {
+  if (!root) return null;
+  const attr = 'data-' + datasetKey.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+  const wanted = `${type}::${id}`;
+  const list = root.querySelectorAll(`[${attr}]`);
+  for (const el of list) {
+    if (el.dataset[datasetKey] === wanted) return el;
+  }
+  return null;
 }
 
 function renderVpoVpdFileList(type, id) {
   const containerId = type === 'vpo' ? 'vpoList' : 'vpdList';
   const container = $(`#${containerId}`);
   if (!container) return;
-  const listEl = container.querySelector(`[data-vpo-vpd-file-list="${type}::${id}"]`);
+  const listEl = findVpoVpdEl(container, 'vpoVpdFileList', type, id);
   if (!listEl) return;
   const files = dicoFichiersVpoVpd(type)[id] || [];
+  // Même raison qu'au-dessus (vpoVpdDropzoneHtml) : `type`/`id` interpolés
+  // dans des valeurs d'attribut HTML -> escapeHtml() est la protection
+  // adaptée à ce contexte précis.
+  const t2 = escapeHtml(type);
+  const i2 = escapeHtml(id);
   listEl.innerHTML = files.length ? files.map((f, i) => `
-    <div class="file-row file-row-lg" data-vpo-vpd-row="${type}::${id}::${i}">
+    <div class="file-row file-row-lg" data-vpo-vpd-row="${t2}::${i2}::${i}">
       ${isImageFile(f.name) && hasUsableBlob(f)
         ? `<img src="${URL.createObjectURL(f.blob)}" class="thumb-lg" alt="${escapeHtml(f.name)}">`
         : `<span class="ext-badge">${extBadge(f.name)}</span>`}
@@ -6448,8 +6509,8 @@ function renderVpoVpdFileList(type, id) {
         <span class="file-meta">${fmtSize(f.size)}</span>
       </div>
       <div class="file-row-actions">
-        ${hasUsableBlob(f) ? `<button type="button" class="btn btn-tertiary" data-vpo-vpd-open="${type}::${id}::${i}">Ouvrir</button>` : ''}
-        <button type="button" class="btn btn-tertiary" data-vpo-vpd-delete="${type}::${id}::${i}">Supprimer</button>
+        ${hasUsableBlob(f) ? `<button type="button" class="btn btn-tertiary" data-vpo-vpd-open="${t2}::${i2}::${i}">Ouvrir</button>` : ''}
+        <button type="button" class="btn btn-tertiary" data-vpo-vpd-delete="${t2}::${i2}::${i}">Supprimer</button>
       </div>
     </div>`).join('') : '';
 
@@ -6474,9 +6535,22 @@ function renderVpoVpdFileList(type, id) {
 }
 
 function wireVpoVpdDropzone(type, id, container) {
-  const dz = container.querySelector(`[data-vpo-vpd-dropzone="${type}::${id}"]`);
-  if (!dz) return;
-  const input = dz.querySelector(`[data-vpo-vpd-file-input="${type}::${id}"]`);
+  let dz, input, pasteBtn;
+  try {
+    dz = findVpoVpdEl(container, 'vpoVpdDropzone', type, id);
+    if (!dz) return;
+    input = findVpoVpdEl(dz, 'vpoVpdFileInput', type, id);
+    pasteBtn = findVpoVpdEl(dz, 'vpoVpdPaste', type, id);
+  } catch (err) {
+    // Ne doit normalement plus jamais se produire (findVpoVpdEl ne construit
+    // aucun sélecteur avec `id`), mais on garde ce filet de sécurité pour
+    // qu'un dossier importé hostile ne puisse jamais interrompre le rendu du
+    // reste de l'espace de travail (voir audit A1).
+    console.error('Câblage de la zone de dépôt VPO/VPD impossible pour un élément importé', err);
+    toast('Un élément importé n’a pas pu être préparé correctement (identifiant invalide). Le reste du dossier reste accessible.', 5000);
+    return;
+  }
+  if (!input) return;
   dz.addEventListener('click', (e) => {
     if (e.target === input || e.target.closest('button')) return;
     input.click();
@@ -6485,7 +6559,6 @@ function wireVpoVpdDropzone(type, id, container) {
   ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
   ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
   dz.addEventListener('drop', (e) => attacherFichiersVpoVpd(type, id, e.dataTransfer.files));
-  const pasteBtn = dz.querySelector(`[data-vpo-vpd-paste="${type}::${id}"]`);
   if (pasteBtn) {
     pasteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -8093,6 +8166,19 @@ function ouvrirModeConsultation(draft, sourceUrl) {
 // JAMAIS laisser la personne face à une application vide sans explication
 // (exigence explicite : un lien OneDrive incompatible/bloqué par CORS doit
 // afficher une erreur claire, jamais une PWA vide).
+// N'autorise une URL comme HREF cliquable que si son schéma est http/https.
+// Indépendant de tout contrôle fait par l'appelant (tenterOuvertureModeConsultation
+// rejette déjà javascript:/data:/file:/etc. plus haut, mais afficherEcranConsultation()
+// ne doit JAMAIS faire confiance à cet appelant pour construire un href -- voir
+// audit A3 : le schéma doit être revalidé juste avant l'insertion dans le lien,
+// pas seulement au moment du parsing initial du paramètre ?partage=).
+function urlAffichableCommeLien(url) {
+  if (!url) return '';
+  let u;
+  try { u = new URL(url); } catch (err) { return ''; }
+  return (u.protocol === 'http:' || u.protocol === 'https:') ? url : '';
+}
+
 function afficherEcranConsultation(mode, sourceUrl, message, details) {
   let overlay = $('#consultationLoadOverlay');
   if (!overlay) {
@@ -8105,7 +8191,12 @@ function afficherEcranConsultation(mode, sourceUrl, message, details) {
     overlay.innerHTML = `<div class="consultation-load-box"><p>Chargement de la sauvegarde partagée…</p></div>`;
   } else {
     const det = details || {};
-    const dashboardUrl = urlDashboardDepuisSuivi(sourceUrl);
+    // sourceUrlLien : jamais utilisée pour un href si son schéma n'est pas
+    // http/https -- sourceUrl (brut) reste affiché comme simple TEXTE
+    // diagnostique (échappé par escapeHtml, donc sûr dans ce contexte-là)
+    // pour que la personne voie l'adresse exacte qui a été refusée.
+    const sourceUrlLien = urlAffichableCommeLien(sourceUrl);
+    const dashboardUrl = urlAffichableCommeLien(urlDashboardDepuisSuivi(sourceUrlLien));
     overlay.innerHTML = `
       <div class="consultation-load-box">
         <h2>Impossible de charger la sauvegarde partagée</h2>
@@ -8114,7 +8205,7 @@ function afficherEcranConsultation(mode, sourceUrl, message, details) {
         ${det.code ? `<p class="consultation-load-url"><strong>Diagnostic :</strong> ${escapeHtml(det.code)}${det.technique ? '<br>' + escapeHtml(det.technique) : ''}</p>` : ''}
         <div class="consultation-load-actions">
           ${dashboardUrl ? `<a class="btn btn-primary" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener">Ouvrir le Dashboard de cette sauvegarde</a>` : ''}
-          ${sourceUrl ? `<a class="btn btn-outline" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Tester l\u2019accès au fichier suivi.json</a>` : ''}
+          ${sourceUrlLien ? `<a class="btn btn-outline" href="${escapeHtml(sourceUrlLien)}" target="_blank" rel="noopener">Tester l\u2019accès au fichier suivi.json</a>` : ''}
           <button type="button" class="btn btn-outline" id="btnFermerEcranConsultation">Continuer sans la sauvegarde partagée</button>
         </div>
       </div>`;
