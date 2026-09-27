@@ -1206,6 +1206,7 @@ select.ncextra-gravite {
     border-bottom: 1px solid var(--color-divider);
   }
   .mobile-save-status.offline { color: var(--color-warning-text); background: var(--tint-warning-12); }
+  .mobile-save-status.save-error { color: var(--color-danger-text, #b42318); background: var(--tint-danger-12, rgba(180, 35, 24, 0.12)); }
 }
 
 /* ---------- Résumé mobile consolidé — SEULE source de vérité de l'identité du dossier sur mobile ---------- */
