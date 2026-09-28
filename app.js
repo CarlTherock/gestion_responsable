@@ -279,18 +279,116 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Sélecteur des éléments normalement focusables/atteignables au clavier.
+const A6_FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// Ne garde que ceux réellement visibles (un champ masqué par du CSS -- ex.
+// dans une section conditionnelle du contenu de la modale -- ne doit pas
+// faire partie du piège de focus).
+function getFocusableElements(container) {
+  return Array.from(container.querySelectorAll(A6_FOCUSABLE_SELECTOR)).filter((el) => el.getClientRects().length > 0);
+}
+
+// Rend le reste de l'application inerte (hors clavier ET hors arbre
+// d'accessibilité) pendant qu'une modale est affichée, pour qu'elle soit
+// une VRAIE boîte de dialogue modale -- pas seulement visuellement au-dessus
+// du reste. `inert` est un attribut HTML natif (pris en charge par les
+// navigateurs modernes) ; là où il ne l'est pas, le piège de focus au
+// clavier ci-dessous suffit à empêcher d'atteindre l'arrière-plan au Tab,
+// donc l'absence de prise en charge de `inert` ne casse rien.
+// Remonte l'arborescence depuis la modale jusqu'à <body> et rend inertes
+// les FRÈRES de chaque ancêtre rencontré (jamais un ancêtre lui-même, ce qui
+// rendrait la modale inerte aussi) -- fonctionne quelle que soit la
+// profondeur réelle de #modalOverlay dans le DOM, sans supposer qu'il est un
+// enfant direct d'un conteneur en particulier.
+// On ne retire `inert` que des éléments à qui on l'a nous-mêmes ajouté
+// (marqués via data-a6-inert-ajoute), pour ne jamais toucher un état
+// inerte préexistant qui ne nous appartiendrait pas.
+function setBackgroundInert(actif, elementModale) {
+  let noeud = elementModale;
+  while (noeud && noeud !== document.body && noeud.parentElement) {
+    const parent = noeud.parentElement;
+    Array.from(parent.children).forEach((frere) => {
+      if (frere === noeud) return;
+      if (actif) {
+        if (frere.hasAttribute('inert')) return;
+        frere.setAttribute('inert', '');
+        frere.dataset.a6InertAjoute = '1';
+      } else if (frere.dataset.a6InertAjoute) {
+        frere.removeAttribute('inert');
+        delete frere.dataset.a6InertAjoute;
+      }
+    });
+    noeud = parent;
+  }
+}
+
+// ---------- Fenêtre modale générique (voir audit A6 : accessibilité clavier) ----------
+// Expose un vrai dialogue modal : nom accessible (aria-labelledby), focus
+// déplacé dans la modale à l'ouverture (premier champ de formulaire, sinon
+// la boîte elle-même), piège de focus Tab/Shift+Tab qui ne sort jamais vers
+// l'arrière-plan (rendu inerte pendant l'affichage), et restauration du
+// focus à l'élément déclencheur à la fermeture (Confirmer, Annuler, ou
+// Échap -- déjà géré ailleurs en simulant un clic sur #modalCancel).
 function showModal({ title, bodyHtml, confirmLabel = 'Confirmer' }) {
   return new Promise((resolve) => {
     const overlay = $('#modalOverlay');
+    const box = $('#modalBox');
+    // Peut être `null` si la modale est ouverte par du code sans clic
+    // préalable (ex. après un fetch réseau) -- géré explicitement plus bas,
+    // aucune restauration forcée n'est alors tentée.
+    const declencheur = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+
     $('#modalTitle').textContent = title;
     $('#modalBody').innerHTML = bodyHtml;
     $('#modalConfirm').textContent = confirmLabel;
     overlay.classList.remove('hidden');
+    setBackgroundInert(true, overlay);
+
+    // Focus initial sur un élément « logique » : le premier champ de
+    // formulaire du contenu si la modale en contient un (l'utilisateur peut
+    // alors saisir immédiatement), sinon la boîte de dialogue elle-même
+    // (jamais le bouton Confirmer par défaut, pour éviter qu'un Entrée
+    // accidentel valide une action avant même d'avoir lu le contenu).
+    const focusablesInitiaux = getFocusableElements(box);
+    const champFormulaire = focusablesInitiaux.find((el) => el.matches('input, textarea, select'));
+    const cibleInitiale = champFormulaire || box;
+    // requestAnimationFrame : laisse le navigateur appliquer le retrait de
+    // .hidden avant de déplacer le focus (un élément encore display:none ne
+    // peut pas recevoir le focus dans certains navigateurs).
+    const rafId = requestAnimationFrame(() => { cibleInitiale.focus(); });
+
+    function onKeydownPiege(e) {
+      if (e.key !== 'Tab') return;
+      const items = getFocusableElements(box);
+      if (!items.length) { e.preventDefault(); box.focus(); return; }
+      const premier = items[0];
+      const dernier = items[items.length - 1];
+      const dansLaModale = box.contains(document.activeElement);
+      if (e.shiftKey) {
+        if (!dansLaModale || document.activeElement === premier) {
+          e.preventDefault();
+          dernier.focus();
+        }
+      } else if (!dansLaModale || document.activeElement === dernier) {
+        e.preventDefault();
+        premier.focus();
+      }
+    }
+    overlay.addEventListener('keydown', onKeydownPiege);
 
     function cleanup(confirmed) {
+      cancelAnimationFrame(rafId);
       overlay.classList.add('hidden');
+      overlay.removeEventListener('keydown', onKeydownPiege);
       $('#modalConfirm').removeEventListener('click', onConfirm);
       $('#modalCancel').removeEventListener('click', onCancel);
+      setBackgroundInert(false, overlay);
+      // Restaure le focus au déclencheur seulement s'il existe encore dans le
+      // DOM et reste utilisable (un bouton retiré entre-temps par un
+      // ré-affichage, par ex., ne doit jamais faire planter la fermeture).
+      if (declencheur && document.contains(declencheur) && typeof declencheur.focus === 'function' && !declencheur.disabled) {
+        declencheur.focus();
+      }
       resolve(confirmed);
     }
     function onConfirm() { cleanup(true); }
