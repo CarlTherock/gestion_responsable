@@ -2865,7 +2865,10 @@ function construirePointeur(nomSauvegarde, dernier, dashboardEcrit, partiel) {
   return {
     type: POINTEUR_TYPE,
     version: 1,
-    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode },
+    // lienDossierPartage : URL intranet/réseau saisie volontairement par l'utilisateur (onglet Documents,
+    // « Lien du dossier partagé »). Jamais fabriquée depuis un chemin Windows/UNC. Optionnelle : un ancien
+    // pointeur ou un Dashboard déjà écrit sans ce champ continue de fonctionner (repli sur cheminReseau).
+    dossier: { localisation: d.localisation, bt: d.champs.bt || '', tag: d.champs.tag || '', mode: d.mode, lienDossierPartage: d.champs.lienDossierPartage || '' },
     sauvegarde: {
       id: dernier.id,
       dossier: nomSauvegarde,
@@ -3026,12 +3029,29 @@ ${cheminReseauDepuisUrlFichier.toString()}
   // jamais envoyé au serveur), ce qu'elle peut afficher avant l'autorisation du dossier. Le paramètre ?reprendre=1&... ne change pas.
   var courant = integre;
   function infosReprise(p) {
-    var sv = p.sauvegarde || {}, pr = p.progression || {}, loc = window.location;
+    var sv = p.sauvegarde || {}, pr = p.progression || {}, dos = p.dossier || {}, loc = window.location;
     var info = { v: 1, s: sv.id, a: sv.auteur, r: sv.role, q: sv.at, f: pr.faites, t: pr.total, p: pr.pct };
-    if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+    // Priorité 1 : le lien intranet/réseau saisi volontairement par l'utilisateur pour ce dossier
+    // (onglet Documents, « Lien du dossier partagé »). Jamais fabriqué depuis un chemin Windows/UNC.
+    // Validation stricte via l'API URL (pas de regex/startsWith) : seuls http: et https: sont acceptés.
+    var lienSaisi = String(dos.lienDossierPartage || '').trim();
+    var lienValide = '';
+    if (lienSaisi) {
+      try {
+        var uSaisi = new URL(lienSaisi);
+        if (uSaisi.protocol === 'http:' || uSaisi.protocol === 'https:') lienValide = uSaisi.href;
+      } catch (e) { /* lien saisi invalide ou protocole interdit : ignoré, jamais transmis comme lien cliquable */ }
+    }
+    if (lienValide) {
+      info.u = lienValide;
+    } else if (loc.protocol === 'http:' || loc.protocol === 'https:') {
+      // Priorité 2 (repli) : l'URL réelle du Dashboard actuellement ouvert, si elle est http/https.
       var sansFragment = loc.href.split('#')[0].split('?')[0];
       info.u = sansFragment.slice(0, sansFragment.lastIndexOf('/') + 1);
-    } else if (loc.protocol === 'file:') {
+    }
+    // Priorité 3 : le chemin local/réseau reste calculé indépendamment comme repère de secours quand
+    // le fichier est ouvert en file:// — même si un lien http/https a par ailleurs été trouvé ci-dessus.
+    if (loc.protocol === 'file:') {
       var chemin = cheminReseauDepuisUrlFichier(loc.href);
       if (chemin) info.c = chemin;
     }
