@@ -1002,6 +1002,11 @@ const FS_ACCESS_SUPPORTED = 'showDirectoryPicker' in window;
 if (!FS_ACCESS_SUPPORTED) {
   $('#folderStatus').textContent = 'La sauvegarde dans un dossier est disponible dans Chrome ou Edge sur ordinateur.';
 }
+// Glisser-déposer un DOSSIER (écran de reprise) : nécessite getAsFileSystemHandle(), une extension du
+// glisser-déposer standard (déjà utilisé ailleurs pour les pièces jointes, mais seulement via .files,
+// qui ne donne jamais un vrai FileSystemDirectoryHandle). Absent -> la zone de dépôt ne s'affiche pas
+// du tout ; le bouton « Autoriser » reste le seul chemin, exactement comme avant.
+const DRAG_DROP_DOSSIER_SUPPORTED = FS_ACCESS_SUPPORTED && typeof DataTransferItem !== 'undefined' && 'getAsFileSystemHandle' in DataTransferItem.prototype;
 
 // Vérifie (et demande si nécessaire) la permission d'écriture readwrite sur
 // un handle de dossier. À appeler avant toute écriture disque (getFileHandle
@@ -3525,6 +3530,19 @@ function htmlPartageReprise(infos) {
     <p class="reprise-aide">Ce lien sert seulement à reconnaître ou ouvrir le bon dossier : il ne remplace pas l\u2019autorisation demandée par le navigateur.</p></div>`;
 }
 
+// Zone de dépôt du dossier de travail par glisser-déposer (facultatif) : évite de naviguer dans le
+// sélecteur Windows quand l'utilisateur a déjà une fenêtre Explorateur ouverte sur le bon dossier
+// (notamment celle utilisée pour double-cliquer sur OUVRIR_DASHBOARD.html). Le bouton « Autoriser »
+// reste la solution de rechange (tactile, navigateurs sans cette fonction). Jamais de garantie
+// d'autorisation d'écriture rien qu'en déposant : voir brancherDepotReprise().
+function htmlDepotDossierReprise() {
+  if (!DRAG_DROP_DOSSIER_SUPPORTED) return '';
+  return `<div class="reprise-partage"><div class="reprise-partage-titre">Glisser-déposer (facultatif)</div>
+    <div class="dropzone-mini" id="repriseDropzone" role="button" aria-label="Zone de dépôt du dossier de travail">${iconSvg('folder', 20)}<br>Glissez ici le dossier racine contenant OUVRIR_DASHBOARD.html</div>
+    <p id="repriseDropzoneEtat" class="reprise-aide" style="margin-top:var(--space-2);min-height:1em;"></p>
+    <p class="reprise-aide">Ne remplace pas le bouton « Autoriser » ci-dessous : une confirmation du navigateur reste possible.</p></div>`;
+}
+
 async function copierTexteSimple(texte) {
   try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(texte); return true; } } catch (err) { /* repli ci-dessous */ }
   try {
@@ -3610,6 +3628,7 @@ function afficherEcranReprise(etat, ctx) {
   const titre = `Reprise du dossier ${escapeHtml(c.numero || '')}${c.bt ? ' (' + escapeHtml(formatBt(c.bt)) + ')' : ''}`;
   const identite = htmlIdentiteReprise(c, infos);
   const partage = htmlPartageReprise(infos);
+  const depot = htmlDepotDossierReprise();
   const consigne = '<p class="reprise-consigne"><strong>Au prochain écran, sélectionnez seulement le dossier racine contenant OUVRIR_DASHBOARD.html. Ne choisissez pas S-001/S-002.</strong></p>';
   const conseilEdge = '<p class="reprise-aide">Dans Edge, choisissez \u00ab Autoriser à chaque visite \u00bb si cette option est proposée.</p>';
   let html;
@@ -3619,12 +3638,12 @@ function afficherEcranReprise(etat, ctx) {
     html = c.dejaConnu
       ? `<div class="reprise-box reprise-box-large"><h2>${titre}</h2>${identite}
           <p>Cet ordinateur connaît déjà ce dossier. Le navigateur va demander de confirmer l\u2019accès : choisissez \u00ab Autoriser à chaque visite \u00bb (si proposé), puis \u00ab Modifier \u00bb. Aucune sélection de dossier n\u2019est nécessaire.</p>
-          ${partage}
+          ${partage}${depot}
           <div class="reprise-actions"><button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Autoriser l\u2019accès au dossier pour continuer</button>
           <button type="button" class="btn btn-outline" id="btnRepriseFermer">Annuler</button></div></div>`
       : `<div class="reprise-box reprise-box-large"><h2>${titre}</h2>${identite}
           <p>Première utilisation de ce dossier sur cet ordinateur. <strong>Cette autorisation est demandée une seule fois sur cet ordinateur</strong> (une fois par dossier).</p>
-          ${consigne}${conseilEdge}${partage}
+          ${consigne}${conseilEdge}${partage}${depot}
           <div class="reprise-actions"><button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Autoriser l\u2019accès au dossier pour continuer</button>
           <button type="button" class="btn btn-outline" id="btnRepriseFermer">Annuler</button></div></div>`;
   } else if (etat === 'nonSupporte') {
@@ -3633,7 +3652,7 @@ function afficherEcranReprise(etat, ctx) {
   } else {
     const reessayable = c.reessayable !== false;
     html = `<div class="reprise-box reprise-box-large"><h2>${titre}</h2><p role="alert">${escapeHtml(c.message || 'La reprise a échoué.')}</p>
-      ${reessayable ? identite : ''}${reessayable ? consigne : ''}${reessayable ? partage : ''}
+      ${reessayable ? identite : ''}${reessayable ? consigne : ''}${reessayable ? partage : ''}${reessayable ? depot : ''}
       <div class="reprise-actions">${reessayable ? '<button type="button" class="btn btn-primary" id="btnRepriseAutoriser">Réessayer</button>' : ''}
       <button type="button" class="btn btn-outline" id="btnRepriseFermer">Fermer</button></div></div>`;
   }
@@ -3650,6 +3669,57 @@ function afficherEcranReprise(etat, ctx) {
 }
 function masquerEcranReprise() { const o = $('#repriseOverlay'); if (o) o.classList.add('hidden'); }
 
+// Branche le glisser-déposer du dossier de travail sur l'écran de reprise actuellement affiché
+// (absent si DRAG_DROP_DOSSIER_SUPPORTED est faux -- #repriseDropzone n'existe alors pas, no-op).
+// Doit être rappelée à chaque réaffichage de l'écran (afficherEcranReprise régénère le HTML).
+function brancherDepotReprise(ctx, saved) {
+  const dz = $('#repriseDropzone');
+  if (!dz) return;
+  const etatEl = $('#repriseDropzoneEtat');
+  const majEtat = (msg, handleEnAttente) => {
+    if (!etatEl) return;
+    if (!msg) { etatEl.innerHTML = ''; return; }
+    etatEl.innerHTML = `<span style="color:var(--color-danger-text);">${escapeHtml(msg)}</span>`
+      + (handleEnAttente ? ' <button type="button" class="btn btn-outline" id="repriseDropzoneAutoriserEcriture" style="margin-top:var(--space-2);">Autoriser l’écriture</button>' : '');
+    const btnEcriture = $('#repriseDropzoneAutoriserEcriture');
+    if (btnEcriture) btnEcriture.addEventListener('click', async () => {
+      let p;
+      try { p = await handleEnAttente.requestPermission({ mode: 'readwrite' }); } catch (err) { p = 'denied'; }
+      if (p === 'granted') { majEtat(''); await lancerReprise(handleEnAttente, ctx, saved); }
+      else majEtat('Écriture toujours refusée. Utilisez plutôt le bouton « Autoriser l’accès » ci-dessous.');
+    });
+  };
+  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+  dz.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    // getAsFileSystemHandle() doit être appelé ici, pendant le traitement synchrone de l'événement
+    // drop, avant tout await -- sinon l'accès aux données déposées peut être perdu (exigence du
+    // navigateur, pas un choix d'implémentation).
+    const items = e.dataTransfer && e.dataTransfer.items;
+    if (!items || items.length !== 1) { majEtat('Déposez un seul dossier à la fois.'); return; }
+    const item = items[0];
+    if (item.kind !== 'file') { majEtat('Élément déposé non reconnu : déposez le dossier de travail.'); return; }
+    const handlePromise = item.getAsFileSystemHandle(); // appel synchrone, résultat attendu ensuite
+    let handle;
+    try { handle = await handlePromise; } catch (err) { majEtat('Impossible de lire l’élément déposé.'); return; }
+    if (!handle || handle.kind !== 'directory') { majEtat('Déposez le dossier, pas un fichier seul.'); return; }
+    // Le dépôt ne garantit jamais l'autorisation d'écriture : on la vérifie, puis on la redemande une
+    // fois si nécessaire (le dépôt est lui-même un geste utilisateur). Si ça échoue encore, bouton dédié.
+    let permission;
+    try { permission = await handle.queryPermission({ mode: 'readwrite' }); } catch (err) { permission = 'prompt'; }
+    if (permission !== 'granted') {
+      try { permission = await handle.requestPermission({ mode: 'readwrite' }); } catch (err) { permission = 'denied'; }
+    }
+    if (permission !== 'granted') { majEtat('Dossier reçu, mais l’autorisation d’écriture est requise.', handle); return; }
+    majEtat('');
+    // Validation du dossier (racine attendue, pas un sous-dossier S-xxx, bon numéro...) entièrement
+    // déléguée à lancerReprise() -> chargerDossierDepuisRacine(), exactement comme le bouton Autoriser --
+    // aucune deuxième logique de validation ici.
+    await lancerReprise(handle, ctx, saved);
+  });
+}
+
 // Point d'entrée : ?reprendre=1&numero=...&bt=...&mode=... (lien du Dashboard racine).
 async function reprendreDepuisDashboard(params) {
   const ctx = { numero: (params.numero || '').trim(), bt: (params.bt || '').trim(), mode: params.mode || '' };
@@ -3665,6 +3735,7 @@ async function reprendreDepuisDashboard(params) {
   if (candidat && permission === 'granted') return lancerReprise(candidat, ctx, saved);
 
   afficherEcranReprise('autoriser', { ...ctx, dejaConnu: !!candidat });
+  brancherDepotReprise(ctx, saved);
   const brancher = () => {
     const btn = $('#btnRepriseAutoriser');
     if (!btn) return;
@@ -3677,6 +3748,7 @@ async function reprendreDepuisDashboard(params) {
       } catch (err) {
         if (err && err.name === 'AbortError') return;
         afficherEcranReprise('erreur', { ...ctx, message: messageErreurReprise(err) });
+        brancherDepotReprise(ctx, saved);
         brancher();
       }
     });
@@ -3689,6 +3761,7 @@ async function lancerReprise(racine, ctx, saved) {
   afficherEcranReprise('chargement', ctx);
   const rebrancher = (message) => {
     afficherEcranReprise('erreur', { ...ctx, message });
+    brancherDepotReprise(ctx, saved);
     const btn = $('#btnRepriseAutoriser');
     if (btn) btn.addEventListener('click', async () => {
       try {
